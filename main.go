@@ -12,6 +12,6 @@ func main() {
 		kong.Description("Read-only CLI for Slack."),
 		kong.UsageOnError(),
 	)
-	err := ctx.Run()
+	err := ctx.Run(&cli)
 	ctx.FatalIfErrorf(err)
 }

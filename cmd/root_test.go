@@ -140,6 +140,9 @@ func TestSubcommands_Exist(t *testing.T) {
 		name string
 		args []string
 	}{
+		{"auth login", []string{"auth", "login"}},
+		{"auth logout", []string{"auth", "logout"}},
+		{"auth status", []string{"auth", "status"}},
 		{"channel list", []string{"channel", "list"}},
 		{"channel info", []string{"channel", "info", "C123"}},
 		{"channel members", []string{"channel", "members", "C123"}},
@@ -164,8 +167,8 @@ func TestSubcommands_Exist(t *testing.T) {
 }
 
 func TestSubcommands_NotImplemented(t *testing.T) {
-	_, ctx := mustParse(t, "user", "list")
-	err := ctx.Run()
+	cli, ctx := mustParse(t, "user", "list")
+	err := ctx.Run(cli)
 	if err == nil {
 		t.Error("expected 'not implemented' error, got nil")
 	}
