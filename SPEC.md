@@ -324,7 +324,6 @@ Precedence: flags > env vars > config file > defaults.
 
 ## Dependencies
 
-- **CLI framework**: [cobra](https://github.com/spf13/cobra) for command structure, [pflag](https://github.com/spf13/pflag) for flags.
+- **CLI framework**: [kong](https://github.com/alecthomas/kong) for command structure and flag parsing.
 - **Slack API**: [slack-go/slack](https://github.com/slack-go/slack) as the API client.
-- **Config**: [viper](https://github.com/spf13/viper) for configuration management.
 - **Output**: `encoding/json` from stdlib. A thin table formatter for text mode.

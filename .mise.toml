@@ -1,0 +1,19 @@
+[tools]
+go = "1.25"
+"go:github.com/golangci/golangci-lint/cmd/golangci-lint" = "1.64.8"
+
+[tasks.build]
+description = "Build the slack binary"
+run = "go build -o slack ."
+
+[tasks.test]
+description = "Run all tests"
+run = "go test ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run ./..."
+
+[tasks.setup-hooks]
+description = "Configure git to use .githooks/"
+run = "git config core.hooksPath .githooks"
