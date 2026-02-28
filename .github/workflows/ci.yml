@@ -13,6 +13,9 @@ jobs:
 
       - uses: jdx/mise-action@v2
 
+      - name: Verify go.mod is tidy
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+
       - name: Build
         run: mise run build
 

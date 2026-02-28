@@ -1,6 +1,6 @@
 [tools]
 go = "1.25"
-"go:github.com/golangci/golangci-lint/cmd/golangci-lint" = "latest"
+"go:github.com/golangci/golangci-lint/cmd/golangci-lint" = "1.64.8"
 
 [tasks.build]
 description = "Build the slack binary"
