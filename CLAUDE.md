@@ -1,6 +1,6 @@
 # slack-cli
 
-Read-only Slack CLI for agent/automation use. Go, cobra, slack-go/slack.
+Read-only Slack CLI for agent/automation use. Go, kong, slack-go/slack.
 
 ## On startup
 
@@ -24,10 +24,14 @@ All work is tracked in GitHub Issues. When asked to work on an issue:
 6. Each issue gets its own branch (`<issue-number>-<short-description>`) and a single PR.
 7. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
 
+## PR review
+
+After pushing a PR, spawn a sub-agent (`code-review:code-review`) to independently review the PR. The review agent should submit all feedback as PR review comments. Address its feedback before considering the PR done.
+
 ## Project structure
 
 ```
-cmd/           # cobra command definitions
+cmd/           # kong command definitions
 internal/      # internal packages (api, output, config, resolve, auth)
 ```
 
