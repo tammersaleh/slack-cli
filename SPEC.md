@@ -299,7 +299,8 @@ Precedence: flags > env vars > config file > defaults.
 - `thread list` / `thread read`
 - `user list`, `user info`
 - `reaction list`
-- JSON and text output formats
+- JSON output format
+- Text output format (`--format=text`)
 - Pagination and rate limiting
 - Channel/user name resolution
 
