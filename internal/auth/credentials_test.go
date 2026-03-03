@@ -32,7 +32,9 @@ func TestLoadCredentials_ValidFile(t *testing.T) {
 		},
 	}
 	raw, _ := json.Marshal(data)
-	os.WriteFile(path, raw, 0600)
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	creds, err := LoadCredentials(path)
 	if err != nil {
@@ -53,7 +55,9 @@ func TestLoadCredentials_ValidFile(t *testing.T) {
 func TestLoadCredentials_MalformedJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
-	os.WriteFile(path, []byte("{bad json"), 0600)
+	if err := os.WriteFile(path, []byte("{bad json"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := LoadCredentials(path)
 	if err == nil {
@@ -133,7 +137,9 @@ func TestResolveToken_EnvVarOverride(t *testing.T) {
 			"team1": {BotToken: "xoxb-stored", UserToken: "xoxp-stored"},
 		},
 	}
-	SaveCredentials(path, creds)
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
 
 	bot, user, err := ResolveToken(path, "")
 	if err != nil {
@@ -172,7 +178,9 @@ func TestResolveToken_SingleWorkspace(t *testing.T) {
 			"onlyteam": {BotToken: "xoxb-only", UserToken: "xoxp-only"},
 		},
 	}
-	SaveCredentials(path, creds)
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
 
 	bot, user, err := ResolveToken(path, "")
 	if err != nil {
@@ -196,7 +204,9 @@ func TestResolveToken_NamedWorkspace(t *testing.T) {
 			"team2": {BotToken: "xoxb-2"},
 		},
 	}
-	SaveCredentials(path, creds)
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
 
 	bot, _, err := ResolveToken(path, "team2")
 	if err != nil {
@@ -217,7 +227,9 @@ func TestResolveToken_MultipleWorkspacesNoSelection(t *testing.T) {
 			"team2": {BotToken: "xoxb-2"},
 		},
 	}
-	SaveCredentials(path, creds)
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
 
 	_, _, err := ResolveToken(path, "")
 	if err == nil {
@@ -234,7 +246,9 @@ func TestResolveToken_UnknownWorkspace(t *testing.T) {
 			"team1": {BotToken: "xoxb-1"},
 		},
 	}
-	SaveCredentials(path, creds)
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
 
 	_, _, err := ResolveToken(path, "nonexistent")
 	if err == nil {

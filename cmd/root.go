@@ -1,6 +1,13 @@
 package cmd
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/tammersaleh/slack-cli/internal/auth"
+	"github.com/tammersaleh/slack-cli/internal/output"
+)
 
 type CLI struct {
 	Workspace string `short:"w" help:"Select workspace (name or ID)." env:"SLACK_WORKSPACE"`
@@ -27,22 +34,123 @@ type AuthCmd struct {
 	Status AuthStatusCmd `cmd:"" help:"Show current authentication state."`
 }
 
-type AuthLoginCmd struct{}
-
-func (c *AuthLoginCmd) Run(cli *CLI) error {
-	return fmt.Errorf("not implemented")
+type AuthLoginCmd struct {
+	ClientID     string `env:"SLACK_CLIENT_ID" help:"Slack app client ID."`
+	ClientSecret string `env:"SLACK_CLIENT_SECRET" help:"Slack app client secret."`
 }
 
-type AuthLogoutCmd struct{}
+func (c *AuthLoginCmd) Run(cli *CLI) error {
+	if c.ClientID == "" || c.ClientSecret == "" {
+		return fmt.Errorf("SLACK_CLIENT_ID and SLACK_CLIENT_SECRET must be set; see README for setup instructions")
+	}
+
+	ws, err := auth.Login(context.Background(), c.ClientID, c.ClientSecret)
+	if err != nil {
+		return err
+	}
+
+	path := auth.DefaultCredentialsPath()
+	creds, err := auth.LoadCredentials(path)
+	if err != nil {
+		return err
+	}
+
+	creds.Workspaces[ws.TeamName] = *ws
+	if err := auth.SaveCredentials(path, creds); err != nil {
+		return err
+	}
+
+	p := &output.Printer{Out: os.Stdout, Err: os.Stderr, Quiet: cli.Quiet}
+	return p.Print(map[string]string{
+		"status":    "authenticated",
+		"workspace": ws.TeamName,
+		"team_id":   ws.TeamID,
+		"user_id":   ws.UserID,
+	})
+}
+
+type AuthLogoutCmd struct {
+	Workspace string `arg:"" optional:"" help:"Workspace to log out of (default: current)."`
+}
 
 func (c *AuthLogoutCmd) Run(cli *CLI) error {
-	return fmt.Errorf("not implemented")
+	path := auth.DefaultCredentialsPath()
+	creds, err := auth.LoadCredentials(path)
+	if err != nil {
+		return err
+	}
+
+	workspace := c.Workspace
+	if workspace == "" {
+		workspace = cli.Workspace
+	}
+
+	// If still empty, and only one workspace, use that.
+	if workspace == "" {
+		if len(creds.Workspaces) == 1 {
+			for name := range creds.Workspaces {
+				workspace = name
+			}
+		} else if len(creds.Workspaces) > 1 {
+			return fmt.Errorf("multiple workspaces configured; specify which to log out of")
+		} else {
+			return fmt.Errorf("no credentials found")
+		}
+	}
+
+	if _, ok := creds.Workspaces[workspace]; !ok {
+		return fmt.Errorf("workspace %q not found", workspace)
+	}
+
+	delete(creds.Workspaces, workspace)
+	if err := auth.SaveCredentials(path, creds); err != nil {
+		return err
+	}
+
+	p := &output.Printer{Out: os.Stdout, Err: os.Stderr, Quiet: cli.Quiet}
+	return p.Print(map[string]string{
+		"status":    "logged out",
+		"workspace": workspace,
+	})
 }
 
 type AuthStatusCmd struct{}
 
 func (c *AuthStatusCmd) Run(cli *CLI) error {
-	return fmt.Errorf("not implemented")
+	path := auth.DefaultCredentialsPath()
+	creds, err := auth.LoadCredentials(path)
+	if err != nil {
+		return err
+	}
+
+	if len(creds.Workspaces) == 0 {
+		return fmt.Errorf("not authenticated; run 'slack auth login' first")
+	}
+
+	type workspaceStatus struct {
+		Name         string `json:"name"`
+		TeamID       string `json:"team_id"`
+		UserID       string `json:"user_id"`
+		HasBotToken  bool   `json:"has_bot_token"`
+		HasUserToken bool   `json:"has_user_token"`
+	}
+
+	statuses := []workspaceStatus{}
+	for name, ws := range creds.Workspaces {
+		statuses = append(statuses, workspaceStatus{
+			Name:         name,
+			TeamID:       ws.TeamID,
+			UserID:       ws.UserID,
+			HasBotToken:  ws.BotToken != "",
+			HasUserToken: ws.UserToken != "",
+		})
+	}
+
+	p := &output.Printer{Out: os.Stdout, Err: os.Stderr, Quiet: cli.Quiet}
+	if len(statuses) == 1 {
+		return p.Print(statuses[0])
+	}
+	return p.Print(statuses)
 }
 
 type ChannelCmd struct {

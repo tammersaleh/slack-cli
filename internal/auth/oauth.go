@@ -53,8 +53,8 @@ func login(ctx context.Context, baseURL, clientID, clientSecret string) (*Worksp
 	mux := http.NewServeMux()
 	mux.Handle("/callback", callbackHandler(codeCh, errCh))
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Shutdown(context.Background())
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Shutdown(context.Background()) }()
 
 	authURL := buildAuthorizeURL(baseURL, clientID, redirectURI, state)
 	openBrowser(authURL)
@@ -181,5 +181,5 @@ func openBrowser(url string) {
 	default:
 		return
 	}
-	cmd.Start()
+	_ = cmd.Start()
 }

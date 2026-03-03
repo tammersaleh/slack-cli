@@ -74,12 +74,14 @@ func TestExchangeToken(t *testing.T) {
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/oauth.v2.access":
-			r.ParseForm()
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("ParseForm: %v", err)
+			}
 			if r.FormValue("code") != "test-code" {
 				t.Errorf("got code=%q, want %q", r.FormValue("code"), "test-code")
 			}
-			json.NewEncoder(w).Encode(map[string]any{
-				"ok": true,
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":           true,
 				"access_token": "xoxb-bot-token",
 				"authed_user": map[string]any{
 					"id":           "U123",
@@ -91,7 +93,7 @@ func TestExchangeToken(t *testing.T) {
 				},
 			})
 		case "/api/auth.test":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":      true,
 				"user_id": "U123",
 				"team_id": "T456",
@@ -127,7 +129,7 @@ func TestExchangeToken(t *testing.T) {
 
 func TestExchangeToken_APIError(t *testing.T) {
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
 			"error": "invalid_code",
 		})
