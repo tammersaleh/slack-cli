@@ -2,4 +2,9 @@ module github.com/tammersaleh/slack-cli
 
 go 1.25.0
 
-require github.com/alecthomas/kong v1.14.0
+require (
+	github.com/alecthomas/kong v1.14.0
+	github.com/slack-go/slack v0.18.0
+)
+
+require github.com/gorilla/websocket v1.5.3 // indirect
