@@ -19,23 +19,25 @@ All work is tracked in GitHub Issues. When asked to work on an issue:
 1. Read the issue (`gh issue view <number>`)
 2. Check that any dependency issues are closed. If not, raise it.
 3. Read `SPEC.md` for full context on the relevant feature.
-4. Write the implementation plan into the issue description (`gh issue edit <number> --body ...`), updating it as the work progresses.
-5. Red, green, refactor: write failing tests first, then implement, then clean up.
+4. Write the plan, complexity analysis, and scope cut recommendations into the issue description (`gh issue edit <number> --body ...`). Link the issue URL in the response.
+5. After plan approval, red-green-refactor: write failing tests first, then implement, then clean up.
 6. Each issue gets its own branch (`<issue-number>-<short-description>`) and a single PR.
 7. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
+
+Update the issue description as the plan evolves based on feedback. The issue is the source of truth for the plan.
 
 ## When to ask for input
 
 Only ask at two points:
 
-1. **Plan stage**: Present the implementation plan and get approval before writing code.
+1. **Plan stage**: Write the plan to the issue, link it, and get approval before writing code.
 2. **PR merge**: After the PR is pushed, reviewed (by sub-agent), and all feedback addressed, bring me in to merge.
+
+Everything else - implementation, testing, code review fixes, rebases - handle autonomously.
 
 ## Plan review
 
-Before presenting a plan, critically review it: What part is most likely to add complexity? What part of the scope would you recommend cutting? Include this analysis when presenting the plan.
-
-Everything else - implementation, testing, code review fixes, rebases - handle autonomously.
+Before presenting a plan, critically review it: What part is most likely to add complexity? What part of the scope would you recommend cutting? Include this analysis in the issue description.
 
 ## PR review
 
