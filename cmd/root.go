@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/auth"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
@@ -137,22 +138,41 @@ func (c *AuthStatusCmd) Run(cli *CLI) error {
 	}
 
 	type workspaceStatus struct {
-		Name         string `json:"name"`
+		TeamName     string `json:"team_name"`
 		TeamID       string `json:"team_id"`
+		User         string `json:"user"`
 		UserID       string `json:"user_id"`
+		URL          string `json:"url,omitempty"`
 		HasBotToken  bool   `json:"has_bot_token"`
 		HasUserToken bool   `json:"has_user_token"`
+		TokenValid   bool   `json:"token_valid"`
+		Error        string `json:"error,omitempty"`
 	}
 
+	ctx := context.Background()
 	statuses := []workspaceStatus{}
-	for name, ws := range creds.Workspaces {
-		statuses = append(statuses, workspaceStatus{
-			Name:         name,
+	for _, ws := range creds.Workspaces {
+		status := workspaceStatus{
+			TeamName:     ws.TeamName,
 			TeamID:       ws.TeamID,
 			UserID:       ws.UserID,
 			HasBotToken:  ws.BotToken != "",
 			HasUserToken: ws.UserToken != "",
-		})
+		}
+
+		if ws.BotToken != "" {
+			client := api.New(ws.BotToken)
+			result, err := client.AuthTest(ctx)
+			if err != nil {
+				status.Error = err.Error()
+			} else {
+				status.TokenValid = true
+				status.User = result.User
+				status.URL = result.URL
+			}
+		}
+
+		statuses = append(statuses, status)
 	}
 
 	p := &output.Printer{Out: os.Stdout, Err: os.Stderr, Quiet: cli.Quiet}
