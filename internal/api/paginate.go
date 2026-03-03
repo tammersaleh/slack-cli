@@ -72,6 +72,5 @@ func fetchWithRetry[T any](ctx context.Context, cursor string, fetch PageFunc[T]
 			return nil, "", ctx.Err()
 		}
 	}
-	// unreachable
-	return nil, "", nil
+	panic("fetchWithRetry: loop exited without returning")
 }

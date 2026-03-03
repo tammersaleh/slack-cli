@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/slack-go/slack"
 )
 
 func TestPaginate_SinglePage(t *testing.T) {
@@ -115,6 +118,58 @@ func TestPaginate_ContextCancelled(t *testing.T) {
 
 	_, err := Paginate(ctx, 0, func(cursor string) ([]string, string, error) {
 		return []string{"a"}, "more", nil
+	})
+	if err == nil {
+		t.Error("expected error from cancelled context")
+	}
+}
+
+func TestPaginate_RateLimitRetrySucceeds(t *testing.T) {
+	calls := 0
+	items, err := Paginate(context.Background(), 0, func(cursor string) ([]string, string, error) {
+		calls++
+		if calls == 1 {
+			return nil, "", &slack.RateLimitedError{RetryAfter: time.Millisecond}
+		}
+		return []string{"a"}, "", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Errorf("got %d items, want 1", len(items))
+	}
+	if calls != 2 {
+		t.Errorf("got %d calls, want 2", calls)
+	}
+}
+
+func TestPaginate_RateLimitExhausted(t *testing.T) {
+	calls := 0
+	_, err := Paginate(context.Background(), 0, func(cursor string) ([]string, string, error) {
+		calls++
+		return nil, "", &slack.RateLimitedError{RetryAfter: time.Millisecond}
+	})
+	if err == nil {
+		t.Error("expected error after exhausting retries")
+	}
+	if calls != maxRetries {
+		t.Errorf("got %d calls, want %d", calls, maxRetries)
+	}
+}
+
+func TestPaginate_RateLimitContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	calls := 0
+	_, err := Paginate(ctx, 0, func(cursor string) ([]string, string, error) {
+		calls++
+		if calls == 1 {
+			// Cancel context before the retry sleep.
+			cancel()
+			return nil, "", &slack.RateLimitedError{RetryAfter: time.Hour}
+		}
+		return []string{"a"}, "", nil
 	})
 	if err == nil {
 		t.Error("expected error from cancelled context")
