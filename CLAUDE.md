@@ -31,6 +31,10 @@ Only ask at two points:
 1. **Plan stage**: Present the implementation plan and get approval before writing code.
 2. **PR merge**: After the PR is pushed, reviewed (by sub-agent), and all feedback addressed, bring me in to merge.
 
+## Plan review
+
+Before presenting a plan, critically review it: What part is most likely to add complexity? What part of the scope would you recommend cutting? Include this analysis when presenting the plan.
+
 Everything else - implementation, testing, code review fixes, rebases - handle autonomously.
 
 ## PR review

@@ -273,21 +273,18 @@ Rate limit retries are logged to stderr when `--verbose` is set.
 
 ## Configuration
 
-`~/.config/slack-cli/config.toml`:
+All configuration is via flags and environment variables. No config file.
 
-```toml
-[defaults]
-workspace = "mycompany"
-format = "json"
-limit = 50
+Precedence: flags > env vars > defaults.
 
-[workspaces.mycompany]
-# Populated by `slack auth login`
-```
+Environment variables:
 
-Config values are overridden by environment variables, which are overridden by flags.
+- `SLACK_WORKSPACE` - default workspace (same as `--workspace`)
+- `SLACK_FORMAT` - output format (same as `--format`)
+- `SLACK_TOKEN` - bot token override (bypasses stored credentials)
+- `SLACK_USER_TOKEN` - user token override (bypasses stored credentials)
 
-Precedence: flags > env vars > config file > defaults.
+Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by workspace. This file is managed by `slack auth login` / `slack auth logout`.
 
 ## Phasing
 
