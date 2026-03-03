@@ -86,21 +86,11 @@ func slackTsToISO(ts string) (string, bool) {
 		return "", false
 	}
 
-	// Parse microseconds from the fractional part.
-	usec, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
+	// Validate the fractional part is numeric (Slack uses 6-digit microseconds).
+	if _, err := strconv.ParseInt(parts[1], 10, 64); err != nil {
 		return "", false
 	}
 
-	// Slack timestamps use up to 6-digit microsecond precision.
-	// Scale to microseconds based on the number of digits provided.
-	digits := len(parts[1])
-	if digits > 6 {
-		return "", false
-	}
-	pow10 := [7]int64{1000000, 100000, 10000, 1000, 100, 10, 1}
-	usec *= pow10[digits]
-
-	t := time.Unix(sec, usec*1000).UTC()
+	t := time.Unix(sec, 0).UTC()
 	return t.Format(time.RFC3339), true
 }
