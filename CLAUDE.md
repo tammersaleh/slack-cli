@@ -24,6 +24,15 @@ All work is tracked in GitHub Issues. When asked to work on an issue:
 6. Each issue gets its own branch (`<issue-number>-<short-description>`) and a single PR.
 7. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
 
+## When to ask for input
+
+Only ask at two points:
+
+1. **Plan stage**: Present the implementation plan and get approval before writing code.
+2. **PR merge**: After the PR is pushed, reviewed (by sub-agent), and all feedback addressed, bring me in to merge.
+
+Everything else - implementation, testing, code review fixes, rebases - handle autonomously.
+
 ## PR review
 
 After pushing a PR, spawn a sub-agent (`code-review:code-review`) to independently review the PR. The review agent should submit all feedback as PR review comments. Address its feedback before considering the PR done.
