@@ -21,9 +21,12 @@ type WorkspaceCredentials struct {
 }
 
 // DefaultCredentialsPath returns ~/.config/slack-cli/credentials.json.
-func DefaultCredentialsPath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "slack-cli", "credentials.json")
+func DefaultCredentialsPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine config directory: %w", err)
+	}
+	return filepath.Join(dir, "slack-cli", "credentials.json"), nil
 }
 
 // LoadCredentials reads and parses the credentials file.

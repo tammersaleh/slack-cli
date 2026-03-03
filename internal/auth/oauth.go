@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,7 +52,7 @@ func login(ctx context.Context, baseURL, clientID, clientSecret string) (*Worksp
 	errCh := make(chan error, 1)
 
 	mux := http.NewServeMux()
-	mux.Handle("/callback", callbackHandler(codeCh, errCh))
+	mux.Handle("/callback", callbackHandler(state, codeCh, errCh))
 	server := &http.Server{Handler: mux}
 	go func() { _ = server.Serve(listener) }()
 	defer func() { _ = server.Shutdown(context.Background()) }()
@@ -75,26 +76,36 @@ func login(ctx context.Context, baseURL, clientID, clientSecret string) (*Worksp
 	return exchangeToken(ctx, baseURL, clientID, clientSecret, code, redirectURI)
 }
 
-// callbackHandler returns an HTTP handler that extracts the authorization
-// code from the OAuth callback.
-func callbackHandler(codeCh chan<- string, errCh chan<- error) http.Handler {
+// callbackHandler returns an HTTP handler that validates the state parameter
+// and extracts the authorization code from the OAuth callback. Only the first
+// request is processed; subsequent requests get a simple acknowledgment.
+func callbackHandler(expectedState string, codeCh chan<- string, errCh chan<- error) http.Handler {
+	var once sync.Once
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
-			desc := r.URL.Query().Get("error_description")
-			errCh <- fmt.Errorf("oauth error: %s (%s)", errMsg, desc)
-			fmt.Fprint(w, "Authentication failed. You can close this tab.")
-			return
-		}
+		once.Do(func() {
+			if r.URL.Query().Get("state") != expectedState {
+				errCh <- fmt.Errorf("invalid state parameter (possible CSRF)")
+				http.Error(w, "invalid state", http.StatusBadRequest)
+				return
+			}
 
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			errCh <- fmt.Errorf("no authorization code in callback")
-			http.Error(w, "missing code", http.StatusBadRequest)
-			return
-		}
+			if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+				desc := r.URL.Query().Get("error_description")
+				errCh <- fmt.Errorf("oauth error: %s (%s)", errMsg, desc)
+				fmt.Fprint(w, "Authentication failed. You can close this tab.")
+				return
+			}
 
-		codeCh <- code
-		fmt.Fprint(w, "Authentication successful! You can close this tab.")
+			code := r.URL.Query().Get("code")
+			if code == "" {
+				errCh <- fmt.Errorf("no authorization code in callback")
+				http.Error(w, "missing code", http.StatusBadRequest)
+				return
+			}
+
+			codeCh <- code
+			fmt.Fprint(w, "Authentication successful! You can close this tab.")
+		})
 	})
 }
 

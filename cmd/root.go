@@ -49,13 +49,16 @@ func (c *AuthLoginCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	path := auth.DefaultCredentialsPath()
+	path, err := auth.DefaultCredentialsPath()
+	if err != nil {
+		return err
+	}
 	creds, err := auth.LoadCredentials(path)
 	if err != nil {
 		return err
 	}
 
-	creds.Workspaces[ws.TeamName] = *ws
+	creds.Workspaces[ws.TeamID] = *ws
 	if err := auth.SaveCredentials(path, creds); err != nil {
 		return err
 	}
@@ -74,7 +77,10 @@ type AuthLogoutCmd struct {
 }
 
 func (c *AuthLogoutCmd) Run(cli *CLI) error {
-	path := auth.DefaultCredentialsPath()
+	path, err := auth.DefaultCredentialsPath()
+	if err != nil {
+		return err
+	}
 	creds, err := auth.LoadCredentials(path)
 	if err != nil {
 		return err
@@ -117,7 +123,10 @@ func (c *AuthLogoutCmd) Run(cli *CLI) error {
 type AuthStatusCmd struct{}
 
 func (c *AuthStatusCmd) Run(cli *CLI) error {
-	path := auth.DefaultCredentialsPath()
+	path, err := auth.DefaultCredentialsPath()
+	if err != nil {
+		return err
+	}
 	creds, err := auth.LoadCredentials(path)
 	if err != nil {
 		return err

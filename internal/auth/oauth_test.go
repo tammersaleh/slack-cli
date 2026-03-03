@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestCallbackHandler_Success(t *testing.T) {
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
-	handler := callbackHandler(codeCh, errCh)
+	handler := callbackHandler("test-state", codeCh, errCh)
 
 	req := httptest.NewRequest("GET", "/callback?code=test-auth-code&state=test-state", nil)
 	rec := httptest.NewRecorder()
@@ -31,12 +32,38 @@ func TestCallbackHandler_Success(t *testing.T) {
 	}
 }
 
+func TestCallbackHandler_InvalidState(t *testing.T) {
+	codeCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+	handler := callbackHandler("expected-state", codeCh, errCh)
+
+	req := httptest.NewRequest("GET", "/callback?code=test-auth-code&state=wrong-state", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Error("expected error")
+		}
+		if !strings.Contains(err.Error(), "CSRF") {
+			t.Errorf("expected CSRF error, got: %v", err)
+		}
+	default:
+		t.Error("expected error on channel")
+	}
+}
+
 func TestCallbackHandler_Error(t *testing.T) {
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
-	handler := callbackHandler(codeCh, errCh)
+	handler := callbackHandler("test-state", codeCh, errCh)
 
-	req := httptest.NewRequest("GET", "/callback?error=access_denied&error_description=user+denied", nil)
+	req := httptest.NewRequest("GET", "/callback?error=access_denied&error_description=user+denied&state=test-state", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -53,9 +80,9 @@ func TestCallbackHandler_Error(t *testing.T) {
 func TestCallbackHandler_MissingCode(t *testing.T) {
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
-	handler := callbackHandler(codeCh, errCh)
+	handler := callbackHandler("test-state", codeCh, errCh)
 
-	req := httptest.NewRequest("GET", "/callback", nil)
+	req := httptest.NewRequest("GET", "/callback?state=test-state", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -70,39 +97,30 @@ func TestCallbackHandler_MissingCode(t *testing.T) {
 }
 
 func TestExchangeToken(t *testing.T) {
-	// Mock Slack API server.
 	slackAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/oauth.v2.access":
-			if err := r.ParseForm(); err != nil {
-				t.Errorf("ParseForm: %v", err)
-			}
-			if r.FormValue("code") != "test-code" {
-				t.Errorf("got code=%q, want %q", r.FormValue("code"), "test-code")
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":           true,
-				"access_token": "xoxb-bot-token",
-				"authed_user": map[string]any{
-					"id":           "U123",
-					"access_token": "xoxp-user-token",
-				},
-				"team": map[string]any{
-					"id":   "T456",
-					"name": "Test Team",
-				},
-			})
-		case "/api/auth.test":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":      true,
-				"user_id": "U123",
-				"team_id": "T456",
-				"team":    "Test Team",
-			})
-		default:
+		if r.URL.Path != "/api/oauth.v2.access" {
 			t.Errorf("unexpected request to %s", r.URL.Path)
 			http.Error(w, "not found", 404)
+			return
 		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		if r.FormValue("code") != "test-code" {
+			t.Errorf("got code=%q, want %q", r.FormValue("code"), "test-code")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":           true,
+			"access_token": "xoxb-bot-token",
+			"authed_user": map[string]any{
+				"id":           "U123",
+				"access_token": "xoxp-user-token",
+			},
+			"team": map[string]any{
+				"id":   "T456",
+				"name": "Test Team",
+			},
+		})
 	}))
 	defer slackAPI.Close()
 
@@ -148,24 +166,10 @@ func TestBuildAuthorizeURL(t *testing.T) {
 		t.Fatal("expected non-empty URL")
 	}
 
-	// Should contain the client_id.
-	if got := url; !contains(got, "client_id=CLIENT123") {
-		t.Errorf("URL missing client_id: %s", got)
+	if !strings.Contains(url, "client_id=CLIENT123") {
+		t.Errorf("URL missing client_id: %s", url)
 	}
-	if !contains(url, "state=test-state") {
+	if !strings.Contains(url, "state=test-state") {
 		t.Errorf("URL missing state: %s", url)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
