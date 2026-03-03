@@ -33,7 +33,7 @@ The CLI stores tokens in `~/.config/slack-cli/credentials.json`, keyed by worksp
 4. Exchanges the code for bot + user tokens.
 5. Stores both tokens in the credentials file.
 
-The CLI ships with a bundled Slack App manifest. On first `slack auth login`, if no app exists, it guides the user to create one from the manifest (or, if possible, creates it via the App Manifest API).
+The user creates a Slack app manually and provides `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` as environment variables. Setup instructions are in the README. A guided first-run experience may be added later.
 
 #### Chrome cookie extraction (future)
 

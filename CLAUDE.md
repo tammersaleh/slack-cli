@@ -24,7 +24,7 @@ All work is tracked in GitHub Issues. When asked to work on an issue:
 6. Each issue gets its own branch (`<issue-number>-<short-description>`) and a single PR.
 7. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
 
-Update the issue description as the plan evolves based on feedback. The issue is the source of truth for the plan.
+Update the issue description as the plan evolves based on feedback. The issue is the source of truth for the plan. When scope changes, update `SPEC.md` to match.
 
 ## When to ask for input
 
