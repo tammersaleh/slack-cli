@@ -4,21 +4,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 )
 
 const cacheTTL = 5 * time.Minute
 
 // Resolver resolves human-friendly channel names and user identifiers to Slack IDs.
 type Resolver struct {
-	bot *slack.Client
+	client *api.Client
 
-	mu          sync.Mutex
-	channels    map[string]string // name → ID
-	channelsAt  time.Time
+	mu         sync.RWMutex
+	channels   map[string]string // name → ID
+	channelsAt time.Time
 }
 
-// NewResolver creates a Resolver using the given bot client.
-func NewResolver(bot *slack.Client) *Resolver {
-	return &Resolver{bot: bot}
+// NewResolver creates a Resolver using the given API client.
+func NewResolver(client *api.Client) *Resolver {
+	return &Resolver{client: client}
 }

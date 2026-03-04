@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 )
 
 var channelIDPattern = regexp.MustCompile(`^[C][A-Z0-9]+$`)
@@ -38,42 +39,43 @@ func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, er
 
 // loadChannels returns the cached channel name→ID map, refreshing if expired.
 func (r *Resolver) loadChannels(ctx context.Context) (map[string]string, error) {
+	// Fast path: read lock for cache hit.
+	r.mu.RLock()
+	if r.channels != nil && time.Since(r.channelsAt) < cacheTTL {
+		ch := r.channels
+		r.mu.RUnlock()
+		return ch, nil
+	}
+	r.mu.RUnlock()
+
+	// Slow path: write lock to rebuild cache.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Re-check after acquiring write lock.
 	if r.channels != nil && time.Since(r.channelsAt) < cacheTTL {
 		return r.channels, nil
 	}
 
-	channels := map[string]string{}
-	cursor := ""
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-
-		params := &slack.GetConversationsParameters{
+	bot := r.client.Bot()
+	chans, err := api.Paginate(ctx, 0, func(cursor string) ([]slack.Channel, string, error) {
+		return bot.GetConversationsContext(ctx, &slack.GetConversationsParameters{
 			Types:           []string{"public_channel", "private_channel"},
 			Limit:           200,
 			ExcludeArchived: true,
 			Cursor:          cursor,
-		}
-		chans, next, err := r.bot.GetConversationsContext(ctx, params)
-		if err != nil {
-			return nil, err
-		}
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
 
-		for _, ch := range chans {
-			// First match wins - don't overwrite if name already seen.
-			if _, exists := channels[ch.Name]; !exists {
-				channels[ch.Name] = ch.ID
-			}
+	channels := make(map[string]string, len(chans))
+	for _, ch := range chans {
+		// First match wins - don't overwrite if name already seen.
+		if _, exists := channels[ch.Name]; !exists {
+			channels[ch.Name] = ch.ID
 		}
-
-		if next == "" {
-			break
-		}
-		cursor = next
 	}
 
 	r.channels = channels

@@ -7,19 +7,19 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 )
 
-func newTestClient(t *testing.T, handler http.Handler) *slack.Client {
+func newTestClient(t *testing.T, handler http.Handler) *api.Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return slack.New("xoxb-test", slack.OptionAPIURL(srv.URL+"/api/"))
+	return api.NewWithAPIURL("xoxb-test", srv.URL+"/api/")
 }
 
 func TestResolveChannel_IDPassthrough(t *testing.T) {
 	// No API calls needed for IDs.
-	r := NewResolver(slack.New("xoxb-unused"))
+	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"))
 	id, err := r.ResolveChannel(context.Background(), "C01ABC123")
 	if err != nil {
 		t.Fatal(err)

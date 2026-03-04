@@ -50,7 +50,7 @@ func TestAuthTest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("xoxb-test", withAPIURL(srv.URL+"/api/"))
+	c := New("xoxb-test", WithAPIURL(srv.URL+"/api/"))
 	result, err := c.AuthTest(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestAuthTest_Failure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("xoxb-bad-token", withAPIURL(srv.URL+"/api/"))
+	c := New("xoxb-bad-token", WithAPIURL(srv.URL+"/api/"))
 	_, err := c.AuthTest(context.Background())
 	if err == nil {
 		t.Error("expected error for invalid auth")

@@ -17,7 +17,7 @@ func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error
 	}
 
 	if isEmail(input) {
-		user, err := r.bot.GetUserByEmailContext(ctx, input)
+		user, err := r.client.Bot().GetUserByEmailContext(ctx, input)
 		if err != nil {
 			return "", fmt.Errorf("resolving user %q: %w", input, err)
 		}
@@ -28,5 +28,6 @@ func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error
 }
 
 func isEmail(s string) bool {
-	return strings.Contains(s, "@") && strings.Contains(s, ".")
+	at := strings.Index(s, "@")
+	return at > 0 && strings.Contains(s[at:], ".")
 }

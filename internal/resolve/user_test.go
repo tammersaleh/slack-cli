@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 )
 
 func TestResolveUser_IDPassthrough(t *testing.T) {
-	r := NewResolver(slack.New("xoxb-unused"))
+	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"))
 
 	tests := []struct {
 		name  string
@@ -78,7 +78,7 @@ func TestResolveUser_EmailNotFound(t *testing.T) {
 }
 
 func TestResolveUser_InvalidFormat(t *testing.T) {
-	r := NewResolver(slack.New("xoxb-unused"))
+	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"))
 	_, err := r.ResolveUser(context.Background(), "tammer")
 	if err == nil {
 		t.Error("expected error for bare name")

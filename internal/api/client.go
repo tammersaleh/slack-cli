@@ -25,9 +25,14 @@ func WithUserToken(token string) Option {
 	return func(c *clientConfig) { c.userToken = token }
 }
 
-// withAPIURL overrides the Slack API base URL (for testing).
-func withAPIURL(url string) Option {
+// WithAPIURL overrides the Slack API base URL (for testing).
+func WithAPIURL(url string) Option {
 	return func(c *clientConfig) { c.apiURL = url }
+}
+
+// NewWithAPIURL is a convenience for creating a test client with a custom API URL.
+func NewWithAPIURL(botToken, apiURL string) *Client {
+	return New(botToken, WithAPIURL(apiURL))
 }
 
 // New creates a Client with the given bot token and options.
