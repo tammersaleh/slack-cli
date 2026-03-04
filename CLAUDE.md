@@ -47,7 +47,11 @@ After pushing a PR, spawn a sub-agent (`code-review:code-review`) to independent
 
 ```
 cmd/           # kong command definitions
-internal/      # internal packages (api, output, config, resolve, auth)
+internal/
+  api/         # Slack API client wrapper (Client, Paginate[T], ClassifyError)
+  auth/        # credentials CRUD, OAuth flow, token resolution
+  output/      # Printer, Error with exit codes (0=success, 1=general, 2=auth, 3=rate-limit, 4=network)
+  resolve/     # channel/user name-to-ID resolution with in-memory cache
 ```
 
 ## Testing
@@ -61,3 +65,16 @@ This is a personal project. You can push and create PRs.
 ## Output
 
 JSON to stdout (default). Errors as JSON to stderr. Human-readable text via `--format=text`.
+
+## Architecture decisions
+
+- No config file. All config via flags/env vars. Kong handles precedence.
+- Workspaces keyed by `TeamID` (stable) not `TeamName` (mutable) in credentials.json.
+- User resolution: ID + email only. Display name (`@name`) deferred to #29 (expensive at scale).
+- Channel resolution: first match wins on name collision. No ambiguity errors.
+- `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). slack-go v0.18.0 has no built-in retry.
+- `api.Client` wraps `slack-go/slack` with separate bot/user token clients.
+
+## Sandbox
+
+GPG-signed git commits and `mise run` commands require `dangerouslyDisableSandbox: true` (Go build cache and GPG keyring access).
