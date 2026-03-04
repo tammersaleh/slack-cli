@@ -1,0 +1,84 @@
+package resolve
+
+import (
+	"context"
+	"fmt"
+	"regexp"
+	"time"
+
+	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
+)
+
+var channelIDPattern = regexp.MustCompile(`^[C][A-Z0-9]+$`)
+
+// ResolveChannel resolves a channel name or ID to a Slack channel ID.
+// Accepts channel IDs (passthrough), names with or without `#` prefix.
+func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, error) {
+	if channelIDPattern.MatchString(input) {
+		return input, nil
+	}
+
+	// Strip # prefix.
+	name := input
+	if len(name) > 0 && name[0] == '#' {
+		name = name[1:]
+	}
+
+	channels, err := r.loadChannels(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolving channel %q: %w", input, err)
+	}
+
+	if id, ok := channels[name]; ok {
+		return id, nil
+	}
+
+	return "", fmt.Errorf("channel %q not found", input)
+}
+
+// loadChannels returns the cached channel name→ID map, refreshing if expired.
+func (r *Resolver) loadChannels(ctx context.Context) (map[string]string, error) {
+	// Fast path: read lock for cache hit.
+	r.mu.RLock()
+	if r.channels != nil && time.Since(r.channelsAt) < cacheTTL {
+		ch := r.channels
+		r.mu.RUnlock()
+		return ch, nil
+	}
+	r.mu.RUnlock()
+
+	// Slow path: write lock to rebuild cache.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Re-check after acquiring write lock.
+	if r.channels != nil && time.Since(r.channelsAt) < cacheTTL {
+		return r.channels, nil
+	}
+
+	bot := r.client.Bot()
+	chans, err := api.Paginate(ctx, 0, func(cursor string) ([]slack.Channel, string, error) {
+		return bot.GetConversationsContext(ctx, &slack.GetConversationsParameters{
+			Types:           []string{"public_channel", "private_channel"},
+			Limit:           200,
+			ExcludeArchived: true,
+			Cursor:          cursor,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	channels := make(map[string]string, len(chans))
+	for _, ch := range chans {
+		// First match wins - don't overwrite if name already seen.
+		if _, exists := channels[ch.Name]; !exists {
+			channels[ch.Name] = ch.ID
+		}
+	}
+
+	r.channels = channels
+	r.channelsAt = time.Now()
+	return channels, nil
+}
