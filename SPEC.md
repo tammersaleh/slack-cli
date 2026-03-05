@@ -1,275 +1,901 @@
 # slack-cli Specification
 
-A read-only, non-interactive CLI for Slack, built in Go. Designed for agent and automation use, with JSON as the default output format.
+A read-only, non-interactive CLI for Slack, built in Go. Designed for agents and automation.
 
 ## Design Principles
 
-- **Read-only**: This CLI reads from Slack. It does not post messages, modify channels, or change state. The one planned exception is marking messages as read (`channel mark`), which may be added in a future phase.
-- **Agent-first**: Structured JSON output by default. No interactive prompts. Deterministic, scriptable behavior.
-- **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, and `aws`.
-- **Composable**: Works with pipes, `jq`, and shell scripts. Stdout for data, stderr for diagnostics.
-- **Handles the boring parts**: Automatic cursor-based pagination, rate limit retry with backoff, token refresh.
+- **Read-only**: No posting, modifying channels, or changing state. The one planned exception is `channel mark` (Phase 3).
+- **Agent-first**: JSONL output. No interactive prompts. Deterministic, scriptable.
+- **Thin wrapper**: One API page per call by default. No hidden pagination loops. The caller controls data volume.
+- **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, `aws`.
+- **Composable**: Pipes, `jq`, shell scripts. Stdout for data, stderr for diagnostics.
+
+## Output
+
+All commands produce JSONL (newline-delimited JSON) on stdout. Each line is a self-contained JSON object. Fields use `snake_case`, matching the Slack API.
+
+### List commands
+
+One JSON object per item, followed by a `_meta` trailer:
+
+```
+$ slack channel list --limit=2
+{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"num_members":142,"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
+{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"num_members":89,"is_member":true,"unread_count":0,"last_read":"1709251300.000200"}
+{"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
+```
+
+The `_meta` line is always present, even when there are no results:
+
+```
+$ slack channel list --query=nonexistent
+{"_meta":{"has_more":false}}
+```
+
+### Info commands
+
+Info commands accept one or more arguments. Each result includes an `input` field matching the argument that produced it:
+
+```
+$ slack channel info #general #random
+{"input":"#general","id":"C01ABC","name":"general","is_channel":true,...}
+{"input":"#random","id":"C02DEF","name":"random","is_channel":true,...}
+{"_meta":{"has_more":false}}
+```
+
+Per-item errors appear inline, interleaved with successful results:
+
+```
+$ slack channel info #general #nonexistent #random
+{"input":"#general","id":"C01ABC","name":"general",...}
+{"input":"#nonexistent","error":"channel_not_found","detail":"No channel matching '#nonexistent'"}
+{"input":"#random","id":"C02DEF","name":"random",...}
+{"_meta":{"has_more":false,"error_count":1}}
+```
+
+The `input` field is always present on info command output regardless of `--fields`.
+
+### Timestamp enrichment
+
+Fields named `ts` or ending in `_ts` get an `_iso` sibling with RFC 3339 format:
+
+```json
+{"ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z"}
+```
+
+### Field filtering
+
+`--fields` limits output to specified top-level fields. Applies to data lines only, not `_meta`:
+
+```
+$ slack channel list --limit=2 --fields=id,name,unread_count
+{"id":"C01ABC","name":"general","unread_count":5}
+{"id":"C02DEF","name":"random","unread_count":0}
+{"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
+```
+
+Nested objects are returned whole when their parent field is selected (`--fields=topic` returns the full topic object). No dot-notation for nested field access - use `jq` for that.
+
+### Errors
+
+Errors that prevent command execution entirely (auth failure, network error) go to stderr as JSON:
+
+```json
+{"error":"not_authed","detail":"No token found","hint":"Run 'slack auth login' or set SLACK_TOKEN"}
+```
+
+Per-item errors in multi-argument info commands appear inline on stdout (see above).
+
+Exit codes:
+
+- `0`: All items succeeded
+- `1`: General error (API error, invalid input, partial failure in multi-item commands)
+- `2`: Authentication error (no token, expired, insufficient scopes)
+- `3`: Rate limited (after exhausting retries)
+- `4`: Network error
+
+### Verbose output
+
+With `--verbose`, diagnostics go to stderr as JSON:
+
+```json
+{"level":"debug","msg":"rate limited, retrying in 3s","attempt":2,"endpoint":"conversations.list"}
+{"level":"debug","msg":"page fetched","items":200,"has_more":true,"endpoint":"conversations.list"}
+```
+
+## Global Flags
+
+```
+--workspace, -w   Select workspace (name or ID). Env: SLACK_WORKSPACE
+--fields          Comma-separated list of top-level fields to include
+--quiet, -q       Suppress stdout output (exit code and stderr only)
+--verbose, -v     Log diagnostics to stderr as JSON
+```
 
 ## Authentication
 
 ### Token types
 
-Two token types are relevant:
+- **Bot tokens** (`xoxb-`): Most read operations. Tied to an app.
+- **User tokens** (`xoxp-`): Required for `search`. Tied to a user.
 
-- **Bot tokens** (`xoxb-`): Cover most read operations. Tied to an app, not a user.
-- **User tokens** (`xoxp-`): Required for `search` and reading your own DND/presence state. Tied to a specific user.
+Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. `--workspace` selects the workspace when multiple exist. If only one workspace exists, it's used automatically.
 
-The CLI stores tokens in `~/.config/slack-cli/credentials.json`, keyed by workspace. Multiple workspaces are supported. A `--workspace` flag (or `SLACK_WORKSPACE` env var) selects which workspace to use when multiple are configured. If only one workspace exists, it's used automatically.
+### OAuth (primary)
 
-### Auth methods
+`slack auth login` runs a local OAuth flow:
 
-#### OAuth (primary, implemented first)
+1. Starts a temporary HTTP server on a random port.
+2. Opens Slack OAuth URL in the browser.
+3. Receives callback with authorization code.
+4. Exchanges code for bot + user tokens.
+5. Stores both in credentials file.
 
-`slack auth login` starts a local OAuth flow:
+Requires `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` environment variables. The user creates a Slack app manually - setup instructions are in the README.
 
-1. Starts a temporary local HTTP server on a random port.
-2. Opens the Slack OAuth authorize URL in the user's browser.
-3. Receives the callback with an authorization code.
-4. Exchanges the code for bot + user tokens.
-5. Stores both tokens in the credentials file.
+### Chrome cookie extraction (Phase 3)
 
-The user creates a Slack app manually and provides `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` as environment variables. Setup instructions are in the README. A guided first-run experience may be added later.
-
-#### Chrome cookie extraction (future)
-
-For organizations that restrict OAuth app installation, `slack auth login --chrome` will extract session tokens from a Chrome browser running with `--remote-debugging-port`. This is a fallback for locked-down workspaces.
-
-### Auth commands
-
-```
-slack auth login          # OAuth flow, stores tokens
-slack auth login --chrome # (future) Extract from Chrome
-slack auth logout         # Remove stored tokens for a workspace
-slack auth status         # Show current auth state (workspace, user, token types, scopes)
-slack auth switch         # Switch active workspace
-```
+`slack auth login --chrome` will extract session tokens from Chrome running with `--remote-debugging-port`. Fallback for workspaces that restrict OAuth app installation.
 
 ### Environment variable overrides
 
-`SLACK_TOKEN` and `SLACK_USER_TOKEN` override stored credentials when set. Useful in CI/CD and agent contexts where file-based config isn't practical.
+`SLACK_TOKEN` and `SLACK_USER_TOKEN` override stored credentials when set. For CI/CD and agent contexts.
 
-## Global Flags
+### auth commands
+
+#### slack auth login
 
 ```
---workspace, -w   Select workspace (name or ID)
---format, -f      Output format: json (default), text
---quiet, -q       Suppress non-essential output (only errors on stderr)
---verbose, -v     Include extra diagnostic info on stderr
---no-pager        Disable automatic paging of long output
---limit           Max items to return for list commands (0 = all)
---raw             Output raw API responses without transformation
+slack auth login
+  --client-id       Slack app client ID. Env: SLACK_CLIENT_ID
+  --client-secret   Slack app client secret. Env: SLACK_CLIENT_SECRET
 ```
 
-## Output Format
+Opens browser for OAuth flow. On success:
 
-### JSON (default)
-
-All commands output a JSON object to stdout. The structure depends on the command:
-
-- **Single item commands** (info, get): The item object directly.
-- **List commands**: An array of item objects.
-
-Fields use `snake_case`, matching the Slack API. Timestamps are Unix epoch floats (Slack's native format) with an additional `_iso` suffixed field for human readability.
-
-```json
-{"ts": "1234567890.123456", "ts_iso": "2024-01-15T10:30:00Z"}
+```
+$ slack auth login
+{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","has_bot_token":true,"has_user_token":true}
+{"_meta":{"has_more":false}}
 ```
 
-### Text format (`--format=text`)
+Errors:
 
-Human-readable columnar output. Designed for quick scanning, not parsing.
+- `missing_client_credentials` (exit 1): `SLACK_CLIENT_ID` or `SLACK_CLIENT_SECRET` not set.
+- `oauth_failed` (exit 1): OAuth flow failed (user denied, code exchange error).
 
-### Errors
+#### slack auth logout
 
-Errors go to stderr as JSON:
-
-```json
-{"error": "channel_not_found", "detail": "No channel matching '#nonexistent'", "hint": "Run 'slack channel list' to see available channels"}
+```
+slack auth logout
 ```
 
-Exit codes:
+Removes stored tokens for the active workspace:
 
-- `0`: Success
-- `1`: General error (API error, invalid input)
-- `2`: Authentication error (no token, expired, insufficient scopes)
-- `3`: Rate limited (after exhausting retries)
-- `4`: Network error
+```
+$ slack auth logout
+{"team_id":"T01ABC","team_name":"Acme Corp","status":"logged_out"}
+{"_meta":{"has_more":false}}
+```
 
-## Channel resolution
+Errors:
+
+- `not_authed` (exit 2): No credentials for the specified workspace.
+
+#### slack auth status
+
+```
+slack auth status
+```
+
+```
+$ slack auth status
+{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","has_bot_token":true,"has_user_token":true}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `not_authed` (exit 2): No credentials found.
+
+#### slack auth switch (Phase 3)
+
+```
+slack auth switch <workspace>
+```
+
+## Name Resolution
+
+### Channels
 
 Anywhere a channel is required, the CLI accepts:
 
-- Channel ID (`C01234ABCDE`)
-- Channel name with `#` prefix (`#general`)
-- Channel name without `#` (`general`)
+- Channel ID: `C01234ABCDE`
+- Name with `#`: `#general`
+- Name without `#`: `general`
 
-Names are resolved to IDs via `conversations.list` with client-side caching (cache TTL: 5 minutes). If ambiguous (e.g., multiple channels named `general` across public/private), the CLI errors with the matches listed.
+Names are resolved via `conversations.list` with in-memory caching (5-minute TTL). On name collision, first match wins.
 
-## User resolution
+### Users
 
 Anywhere a user is required, the CLI accepts:
 
-- User ID (`U01234ABCDE`)
-- Display name with `@` prefix (`@tammer`)
-- Email address (`tammer@example.com`)
+- User ID: `U01234ABCDE`
+- Email: `tammer@example.com`
 
-Same caching and ambiguity behavior as channels.
+Display name resolution (`@tammer`) deferred to Phase 2 (#29) - requires fetching and caching all user profiles, which is expensive at scale.
+
+## Pagination
+
+By default, list commands return a single page. Page size is controlled by `--limit` with per-command defaults.
+
+To continue, pass `next_cursor` from the `_meta` trailer:
+
+```
+$ slack channel list --limit=100
+...
+{"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
+
+$ slack channel list --limit=100 --cursor=dXNlcjpVMDYx
+...
+{"_meta":{"has_more":false}}
+```
+
+Use `--all` to fetch all pages in a single call. Results stream to stdout as each page arrives:
+
+```
+$ slack channel list --all
+...every channel...
+{"_meta":{"has_more":false}}
+```
+
+`--all` and `--cursor` are mutually exclusive. Providing both is an error.
+
+Pagination flags on list commands:
+
+```
+--limit    Page size (per-command default, max varies by Slack endpoint)
+--cursor   Continue from a previous page's next_cursor
+--all      Fetch all pages, streaming results
+```
+
+Some endpoints are not paginated by Slack (usergroup list, emoji list). These return all results in a single call regardless of flags.
+
+## Rate Limiting
+
+The CLI retries on HTTP 429 responses. It reads the `Retry-After` header and waits accordingly, with jitter. After 5 consecutive rate limit hits on the same request, it exits with code 3 and an error to stderr:
+
+```json
+{"error":"rate_limited","detail":"Rate limited after 5 retries","endpoint":"conversations.history"}
+```
+
+Retries are logged to stderr when `--verbose` is set.
 
 ## Commands
 
 ### channel
 
+#### slack channel list
+
 ```
 slack channel list [flags]
-  --type          public, private, mpim, im, all (default: public)
-  --exclude-archived  Exclude archived channels (default: true)
-  --member        Only channels the authenticated user is a member of
-
-slack channel info <channel>
-
-slack channel members <channel>
+  --limit              Page size (default: 100, max: 200)
+  --cursor             Continue from previous page
+  --all                Fetch all pages
+  --type               public, private, mpim, im, all (default: public)
+  --exclude-archived   Exclude archived channels (default: true)
+  --include-non-member Include channels the user hasn't joined
+  --has-unread         Only channels with unread messages
+  --query              Filter by name substring (client-side)
 ```
+
+Default behavior returns only channels the authenticated user is a member of.
+
+```
+$ slack channel list --limit=2
+{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"num_members":142,"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
+{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"num_members":89,"is_member":true,"unread_count":0,"last_read":"1709251300.000200"}
+{"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
+```
+
+```
+$ slack channel list --has-unread --fields=id,name,unread_count
+{"id":"C01ABC","name":"general","unread_count":5}
+{"id":"C03GHI","name":"engineering","unread_count":12}
+{"_meta":{"has_more":false}}
+```
+
+`--query` and `--has-unread` are client-side filters applied after the API page is fetched. The returned page may contain fewer items than `--limit`.
+
+Errors:
+
+- `not_authed` (exit 2): No token.
+
+Slack API: `conversations.list`
+
+#### slack channel info
+
+```
+slack channel info <channel>...
+```
+
+```
+$ slack channel info #general
+{"input":"#general","id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"num_members":142,"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ slack channel info #general #nonexistent
+{"input":"#general","id":"C01ABC","name":"general",...}
+{"input":"#nonexistent","error":"channel_not_found","detail":"No channel matching '#nonexistent'"}
+{"_meta":{"has_more":false,"error_count":1}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `conversations.info`
+
+#### slack channel members
+
+Returns user IDs only. Use `slack user info` to enrich with profile data.
+
+```
+slack channel members <channel> [flags]
+  --limit    Page size (default: 100, max: 200)
+  --cursor   Continue from previous page
+  --all      Fetch all pages
+```
+
+```
+$ slack channel members #general --limit=3
+{"id":"U01XYZ"}
+{"id":"U02ABC"}
+{"id":"U03DEF"}
+{"_meta":{"has_more":true,"next_cursor":"dGVhbTpD"}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `conversations.members`
 
 ### message
 
+#### slack message list
+
+Aliased as `slack message read`.
+
 ```
 slack message list <channel> [flags]
-  --limit         Number of messages (default: 20)
-  --before        Messages before this timestamp
-  --after         Messages after this timestamp
-  --oldest        Oldest timestamp to include
-  --latest        Latest timestamp to include
-  --inclusive     Include messages at oldest/latest boundary
-
-  Aliased as `slack message read`.
-
-slack message get <channel> <timestamp>
-  Retrieve a single message by its timestamp.
-
-slack message permalink <channel> <timestamp>
-  Get a permalink URL for a message.
+  --limit       Page size (default: 20, max: 200)
+  --cursor      Continue from previous page
+  --all         Fetch all pages
+  --after       Messages after this time (Unix timestamp or ISO 8601)
+  --before      Messages before this time (Unix timestamp or ISO 8601)
+  --unread      Messages since the last-read position
+  --has-replies Only messages with thread replies (client-side filter)
+  --has-reactions Only messages with reactions (client-side filter)
 ```
+
+`--unread` sets `oldest` to the channel's `last_read` timestamp. Mutually exclusive with `--after`.
+
+`--has-replies` and `--has-reactions` are client-side filters applied after the API page is fetched. The returned page may contain fewer items than `--limit`.
+
+```
+$ slack message list #general --limit=2
+{"client_msg_id":"abc-123","type":"message","user":"U01XYZ","text":"Hey team, the deploy is done.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z","thread_ts":"1709251200.000100","reply_count":3,"reply_users":["U02ABC","U03DEF"],"latest_reply":"1709251500.000200","latest_reply_iso":"2024-03-01T00:05:00Z","reactions":[{"name":"thumbsup","count":2,"users":["U02ABC","U03DEF"]}]}
+{"client_msg_id":"def-456","type":"message","user":"U02ABC","text":"Nice work! Any issues to watch for?","ts":"1709251100.000050","ts_iso":"2024-02-29T23:58:20Z"}
+{"_meta":{"has_more":true,"next_cursor":"bmV4dF90czox"}}
+```
+
+```
+$ slack message list #general --unread --fields=user,text,ts,ts_iso
+{"user":"U01XYZ","text":"Hey team, the deploy is done.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z"}
+{"user":"U02ABC","text":"Nice work! Any issues to watch for?","ts":"1709251100.000050","ts_iso":"2024-02-29T23:58:20Z"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `not_authed` (exit 2): No token.
+- `invalid_timestamp` (exit 1): `--after` or `--before` is not a valid timestamp.
+
+Slack API: `conversations.history`
+
+#### slack message get
+
+Retrieves specific messages by timestamp. Uses `conversations.history` with `oldest=ts&latest=ts&inclusive=true&limit=1`.
+
+```
+slack message get <channel> <timestamp>...
+```
+
+```
+$ slack message get #general 1709251200.000100
+{"input":"1709251200.000100","client_msg_id":"abc-123","type":"message","user":"U01XYZ","text":"Hey team, the deploy is done.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z","reply_count":3,"reactions":[{"name":"thumbsup","count":2,"users":["U02ABC","U03DEF"]}]}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ slack message get #general 1709251200.000100 9999999999.999999
+{"input":"1709251200.000100","type":"message","user":"U01XYZ","text":"Hey team, the deploy is done.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z",...}
+{"input":"9999999999.999999","error":"message_not_found","detail":"No message at timestamp 9999999999.999999 in #general"}
+{"_meta":{"has_more":false,"error_count":1}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `message_not_found` (exit 1): No message at the given timestamp.
+- `not_authed` (exit 2): No token.
+
+Slack API: `conversations.history` (filtered)
+
+#### slack message permalink (Phase 2)
+
+```
+slack message permalink <channel> <timestamp>...
+```
+
+```
+$ slack message permalink #general 1709251200.000100
+{"input":"1709251200.000100","channel":"C01ABC","ts":"1709251200.000100","permalink":"https://acme.slack.com/archives/C01ABC/p1709251200000100"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `chat.getPermalink`
 
 ### thread
 
+#### slack thread list
+
+Aliased as `slack thread read`. Includes the parent message as the first result (the parent can be identified by `ts == thread_ts`).
+
 ```
 slack thread list <channel> <timestamp> [flags]
-  --limit         Number of replies (default: 50)
-
-  Aliased as `slack thread read`.
+  --limit    Page size (default: 50, max: 200)
+  --cursor   Continue from previous page
+  --all      Fetch all pages
 ```
+
+```
+$ slack thread list #general 1709251200.000100 --limit=3
+{"type":"message","user":"U01XYZ","text":"Hey team, the deploy is done.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z","thread_ts":"1709251200.000100","reply_count":3,"reply_users":["U02ABC","U03DEF"],"latest_reply":"1709251500.000200","latest_reply_iso":"2024-03-01T00:05:00Z"}
+{"type":"message","user":"U02ABC","text":"Nice! Any issues?","ts":"1709251300.000150","ts_iso":"2024-03-01T00:01:40Z","thread_ts":"1709251200.000100"}
+{"type":"message","user":"U01XYZ","text":"All clean so far.","ts":"1709251400.000180","ts_iso":"2024-03-01T00:03:20Z","thread_ts":"1709251200.000100"}
+{"_meta":{"has_more":true,"next_cursor":"bmV4dF90czox"}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `thread_not_found` (exit 1): No message at the given timestamp, or message has no replies.
+- `not_authed` (exit 2): No token.
+
+Slack API: `conversations.replies`
 
 ### user
 
+#### slack user list
+
 ```
 slack user list [flags]
-  --presence      Include presence information (slower)
-
-slack user info <user>
-
-slack user lookup <email>
-  Find a user by email address.
+  --limit       Page size (default: 100, max: 200)
+  --cursor      Continue from previous page
+  --all         Fetch all pages
+  --query       Filter by name or email substring (client-side)
+  --presence    Include presence information (requires additional API call per user)
 ```
+
+```
+$ slack user list --limit=2
+{"id":"U01XYZ","team_id":"T01ABC","name":"tammer","real_name":"Tammer Saleh","deleted":false,"is_bot":false,"is_admin":true,"updated":1709251200,"profile":{"email":"tammer@example.com","display_name":"tammer","real_name":"Tammer Saleh","status_text":"","status_emoji":"","image_48":"https://avatars.slack-edge.com/U01XYZ_48.jpg"}}
+{"id":"U02ABC","team_id":"T01ABC","name":"alice","real_name":"Alice Smith","deleted":false,"is_bot":false,"is_admin":false,"updated":1709164800,"profile":{"email":"alice@example.com","display_name":"alice","real_name":"Alice Smith","status_text":"On vacation","status_emoji":":palm_tree:","image_48":"https://avatars.slack-edge.com/U02ABC_48.jpg"}}
+{"_meta":{"has_more":true,"next_cursor":"dXNlcjpV"}}
+```
+
+```
+$ slack user list --query=tammer --fields=id,name,profile
+{"id":"U01XYZ","name":"tammer","profile":{"email":"tammer@example.com","display_name":"tammer","real_name":"Tammer Saleh","status_text":"","status_emoji":"","image_48":"https://avatars.slack-edge.com/U01XYZ_48.jpg"}}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `not_authed` (exit 2): No token.
+
+Slack API: `users.list`
+
+#### slack user info
+
+```
+slack user info <user>...
+```
+
+```
+$ slack user info tammer@example.com
+{"input":"tammer@example.com","id":"U01XYZ","team_id":"T01ABC","name":"tammer","real_name":"Tammer Saleh","deleted":false,"is_bot":false,"is_admin":true,"updated":1709251200,"profile":{"email":"tammer@example.com","display_name":"tammer","real_name":"Tammer Saleh","status_text":"","status_emoji":"","image_48":"https://avatars.slack-edge.com/U01XYZ_48.jpg"}}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `user_not_found` (exit 1): No user matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `users.info` (by ID), `users.lookupByEmail` (by email)
+
+#### slack user lookup (Phase 2)
+
+```
+slack user lookup <email>...
+```
+
+Shorthand for `slack user info <email>`. Identical behavior; exists for discoverability.
+
+Slack API: `users.lookupByEmail`
 
 ### reaction
 
+#### slack reaction list
+
 ```
-slack reaction list <channel> <timestamp>
-  List all reactions on a message.
+slack reaction list <channel> <timestamp>...
 ```
 
-### search
+Returns individual reactions, not the full message. Each reaction is a separate JSONL line.
 
-Requires a user token (`xoxp-`). Will error with a clear message if only a bot token is available.
+```
+$ slack reaction list #general 1709251200.000100
+{"input":"1709251200.000100","name":"thumbsup","count":3,"users":["U01XYZ","U02ABC","U03DEF"]}
+{"input":"1709251200.000100","name":"tada","count":1,"users":["U02ABC"]}
+{"_meta":{"has_more":false}}
+```
+
+If the message has no reactions, only the `_meta` line is emitted.
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `message_not_found` (exit 1): No message at the given timestamp.
+- `not_authed` (exit 2): No token.
+
+Slack API: `reactions.get`
+
+### search (Phase 2)
+
+Requires a user token (`xoxp-`).
+
+#### slack search messages
 
 ```
 slack search messages <query> [flags]
-  --sort          timestamp, score (default: timestamp)
-  --sort-dir      asc, desc (default: desc)
-  --limit         Max results (default: 20)
-
-slack search files <query> [flags]
-  Same flags as search messages.
+  --limit       Page size (default: 20, max: 100)
+  --cursor      Continue from previous page
+  --all         Fetch all pages
+  --sort        timestamp, score (default: timestamp)
+  --sort-dir    asc, desc (default: desc)
 ```
 
-### file
+```
+$ slack search messages "deploy failed" --limit=2
+{"type":"message","channel":{"id":"C01ABC","name":"general"},"user":"U01XYZ","username":"tammer","text":"The deploy failed at 3am, investigating now.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z","permalink":"https://acme.slack.com/archives/C01ABC/p1709251200000100"}
+{"type":"message","channel":{"id":"C03GHI","name":"engineering"},"user":"U02ABC","username":"alice","text":"deploy failed again, same error as last week","ts":"1709164800.000050","ts_iso":"2024-02-29T00:00:00Z","permalink":"https://acme.slack.com/archives/C03GHI/p1709164800000050"}
+{"_meta":{"has_more":true,"next_cursor":"c2VhcmNo"}}
+```
+
+Supports Slack search modifiers in the query string: `in:#channel`, `from:@user`, `has:link`, `has:reaction`, `before:2024-03-01`, `after:2024-02-01`, etc.
+
+Errors:
+
+- `missing_user_token` (exit 2): Search requires a user token. Set `SLACK_USER_TOKEN` or re-run `slack auth login`.
+- `not_authed` (exit 2): No token.
+
+Slack API: `search.messages`
+
+#### slack search files
+
+Same flags as `search messages`.
+
+```
+$ slack search files "quarterly report" --limit=2
+{"id":"F01ABC","name":"Q1-report.pdf","title":"Q1 Quarterly Report","mimetype":"application/pdf","filetype":"pdf","size":1048576,"user":"U01XYZ","created":1709251200,"permalink":"https://acme.slack.com/files/U01XYZ/F01ABC/q1-report.pdf"}
+{"id":"F02DEF","name":"Q4-report.xlsx","title":"Q4 Quarterly Report","mimetype":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","filetype":"xlsx","size":524288,"user":"U02ABC","created":1701388800,"permalink":"https://acme.slack.com/files/U02ABC/F02DEF/q4-report.xlsx"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `missing_user_token` (exit 2): Search requires a user token.
+- `not_authed` (exit 2): No token.
+
+Slack API: `search.files`
+
+### file (Phase 2)
+
+#### slack file list
 
 ```
 slack file list [flags]
-  --channel       Filter by channel
-  --user          Filter by user
-  --type          Filter by file type
-  --limit         Max results (default: 20)
-
-slack file info <file-id>
-
-slack file download <file-id> [output-path]
-  Downloads file content. Defaults to original filename in current directory.
+  --limit      Page size (default: 20, max: 100)
+  --cursor     Continue from previous page
+  --all        Fetch all pages
+  --channel    Filter by channel
+  --user       Filter by user
+  --type       Filter by file type (e.g., pdf, png, zip)
 ```
 
-### pin
+```
+$ slack file list --channel=#general --limit=2
+{"id":"F01ABC","name":"Q1-report.pdf","title":"Q1 Quarterly Report","mimetype":"application/pdf","filetype":"pdf","size":1048576,"user":"U01XYZ","created":1709251200,"url_private":"https://files.slack.com/files-pri/T01ABC-F01ABC/q1-report.pdf","permalink":"https://acme.slack.com/files/U01XYZ/F01ABC/q1-report.pdf"}
+{"id":"F02DEF","name":"screenshot.png","title":"Bug Screenshot","mimetype":"image/png","filetype":"png","size":245760,"user":"U02ABC","created":1709164800,"url_private":"https://files.slack.com/files-pri/T01ABC-F02DEF/screenshot.png","permalink":"https://acme.slack.com/files/U02ABC/F02DEF/screenshot.png"}
+{"_meta":{"has_more":true,"next_cursor":"ZmlsZXM"}}
+```
+
+Errors:
+
+- `not_authed` (exit 2): No token.
+
+Slack API: `files.list`
+
+#### slack file info
+
+```
+slack file info <file-id>...
+```
+
+```
+$ slack file info F01ABC
+{"input":"F01ABC","id":"F01ABC","name":"Q1-report.pdf","title":"Q1 Quarterly Report","mimetype":"application/pdf","filetype":"pdf","size":1048576,"user":"U01XYZ","created":1709251200,"url_private":"https://files.slack.com/files-pri/T01ABC-F01ABC/q1-report.pdf","url_private_download":"https://files.slack.com/files-pri/T01ABC-F01ABC/download/q1-report.pdf","permalink":"https://acme.slack.com/files/U01XYZ/F01ABC/q1-report.pdf","channels":["C01ABC"],"comments_count":2}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `file_not_found` (exit 1): No file matching the ID.
+- `not_authed` (exit 2): No token.
+
+Slack API: `files.info`
+
+#### slack file download
+
+File content is written to disk. JSONL metadata about the download goes to stdout.
+
+```
+slack file download <file-id> [flags]
+  --output     Output path (default: original filename in current directory, "-" for stdout)
+```
+
+```
+$ slack file download F01ABC
+{"input":"F01ABC","id":"F01ABC","name":"Q1-report.pdf","size":1048576,"path":"./Q1-report.pdf"}
+{"_meta":{"has_more":false}}
+```
+
+With `--output=-`, raw file bytes go to stdout and JSONL metadata is suppressed.
+
+Errors:
+
+- `file_not_found` (exit 1): No file matching the ID.
+- `not_authed` (exit 2): No token.
+
+Slack API: `files.info` (to get download URL), then HTTP GET
+
+### pin (Phase 2)
+
+#### slack pin list
 
 ```
 slack pin list <channel>
 ```
 
-### bookmark
+```
+$ slack pin list #general
+{"type":"message","channel":"C01ABC","created":1709251200,"created_by":"U01XYZ","message":{"user":"U01XYZ","text":"Important: new deploy process starts Monday.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z"}}
+{"type":"file","channel":"C01ABC","created":1709164800,"created_by":"U02ABC","file":{"id":"F01ABC","name":"guidelines.pdf","title":"Team Guidelines","filetype":"pdf","size":524288}}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `pins.list`
+
+### bookmark (Phase 2)
+
+#### slack bookmark list
 
 ```
 slack bookmark list <channel>
 ```
 
-### status
-
 ```
-slack status get [user]
-  Returns status emoji and text. Defaults to authenticated user.
-
-slack presence get [user]
-
-slack dnd info [user]
+$ slack bookmark list #general
+{"id":"Bk01ABC","channel_id":"C01ABC","title":"Team Wiki","link":"https://wiki.example.com","emoji":":book:","type":"link","date_created":1709251200,"date_updated":1709251200}
+{"id":"Bk02DEF","channel_id":"C01ABC","title":"Sprint Board","link":"https://jira.example.com/board/123","emoji":":clipboard:","type":"link","date_created":1709164800,"date_updated":1709164800}
+{"_meta":{"has_more":false}}
 ```
 
-### usergroup
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `bookmarks.list`
+
+### status (Phase 2)
+
+#### slack status get
+
+Defaults to the authenticated user when no argument is given.
+
+```
+slack status get [user...]
+```
+
+```
+$ slack status get
+{"user_id":"U01XYZ","status_text":"In a meeting","status_emoji":":calendar:","status_expiration":1709254800}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ slack status get tammer@example.com alice@example.com
+{"input":"tammer@example.com","user_id":"U01XYZ","status_text":"In a meeting","status_emoji":":calendar:","status_expiration":1709254800}
+{"input":"alice@example.com","user_id":"U02ABC","status_text":"On vacation","status_emoji":":palm_tree:","status_expiration":0}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `user_not_found` (exit 1): No user matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `users.info` (status fields extracted from profile)
+
+#### slack presence get
+
+```
+slack presence get [user...]
+```
+
+```
+$ slack presence get tammer@example.com
+{"input":"tammer@example.com","user_id":"U01XYZ","presence":"active","online":true,"auto_away":false,"manual_away":false}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `user_not_found` (exit 1): No user matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `users.getPresence`
+
+#### slack dnd info
+
+```
+slack dnd info [user...]
+```
+
+```
+$ slack dnd info tammer@example.com
+{"input":"tammer@example.com","user_id":"U01XYZ","dnd_enabled":true,"next_dnd_start_ts":1709272800,"next_dnd_end_ts":1709308800,"snooze_enabled":false}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `user_not_found` (exit 1): No user matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `dnd.info`
+
+### usergroup (Phase 2)
+
+#### slack usergroup list
+
+Not paginated by Slack's API - returns all usergroups in a single call.
 
 ```
 slack usergroup list [flags]
   --include-disabled   Include disabled usergroups
+  --query              Filter by name substring (client-side)
+```
 
+```
+$ slack usergroup list
+{"id":"S01ABC","team_id":"T01ABC","name":"Engineering","handle":"engineering","description":"Engineering team","user_count":34,"is_external":false,"date_create":1609459200,"date_update":1709251200}
+{"id":"S02DEF","team_id":"T01ABC","name":"Design","handle":"design","description":"Design team","user_count":12,"is_external":false,"date_create":1609459200,"date_update":1709164800}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `not_authed` (exit 2): No token.
+
+Slack API: `usergroups.list`
+
+#### slack usergroup members
+
+Returns user IDs only. Use `slack user info` to enrich.
+
+```
 slack usergroup members <usergroup>
 ```
 
-### emoji
+```
+$ slack usergroup members @engineering
+{"id":"U01XYZ"}
+{"id":"U02ABC"}
+{"id":"U03DEF"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `usergroup_not_found` (exit 1): No usergroup matching the input.
+- `not_authed` (exit 2): No token.
+
+Slack API: `usergroups.users.list`
+
+### emoji (Phase 2)
+
+#### slack emoji list
+
+Not paginated - returns all custom emoji in a single call.
 
 ```
-slack emoji list
+slack emoji list [flags]
+  --query    Filter by name substring (client-side)
 ```
 
-### workspace
+```
+$ slack emoji list --query=party
+{"name":"partyparrot","url":"https://emoji.slack-edge.com/T01ABC/partyparrot/abc123.gif"}
+{"name":"party_blob","url":"https://emoji.slack-edge.com/T01ABC/party_blob/def456.png"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `not_authed` (exit 2): No token.
+
+Slack API: `emoji.list`
+
+### workspace (Phase 2)
+
+#### slack workspace info
 
 ```
 slack workspace info
-  Current workspace metadata (name, domain, plan, etc.)
 ```
 
-## Pagination
+```
+$ slack workspace info
+{"id":"T01ABC","name":"Acme Corp","domain":"acme","email_domain":"acme.com","icon":{"image_34":"https://a.slack-edge.com/icon_34.png","image_44":"https://a.slack-edge.com/icon_44.png"}}
+{"_meta":{"has_more":false}}
+```
 
-All list commands handle pagination automatically. By default, they return all results. Use `--limit` to cap the number of items returned.
+Errors:
 
-Internally, the CLI uses cursor-based pagination with a page size of 200. It follows `response_metadata.next_cursor` until exhausted or `--limit` is reached.
+- `not_authed` (exit 2): No token.
 
-For very large result sets, `--limit` should be used to avoid excessive API calls.
-
-## Rate Limiting
-
-The CLI automatically retries on HTTP 429 responses. It reads the `Retry-After` header and waits accordingly, with jitter. After 5 consecutive rate limit hits on the same request, it exits with code 3.
-
-Rate limit retries are logged to stderr when `--verbose` is set.
+Slack API: `team.info`
 
 ## Configuration
 
@@ -280,11 +906,10 @@ Precedence: flags > env vars > defaults.
 Environment variables:
 
 - `SLACK_WORKSPACE` - default workspace (same as `--workspace`)
-- `SLACK_FORMAT` - output format (same as `--format`)
 - `SLACK_TOKEN` - bot token override (bypasses stored credentials)
 - `SLACK_USER_TOKEN` - user token override (bypasses stored credentials)
 
-Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by workspace. This file is managed by `slack auth login` / `slack auth logout`.
+Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. Managed by `slack auth login` / `slack auth logout`.
 
 ## Phasing
 
@@ -296,9 +921,10 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 - `thread list` / `thread read`
 - `user list`, `user info`
 - `reaction list`
-- JSON output format
-- Text output format (`--format=text`)
-- Pagination and rate limiting
+- JSONL output with `_meta` trailer
+- `--fields` filtering
+- Single-page pagination with `--cursor` and `--all`
+- Rate limiting with retry
 - Channel/user name resolution
 
 ### Phase 2: Extended
@@ -313,6 +939,7 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 - `usergroup list`, `usergroup members`
 - `emoji list`
 - `workspace info`
+- User display name resolution (`@name`)
 
 ### Phase 3: Advanced
 
@@ -324,4 +951,4 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 - **CLI framework**: [kong](https://github.com/alecthomas/kong) for command structure and flag parsing.
 - **Slack API**: [slack-go/slack](https://github.com/slack-go/slack) as the API client.
-- **Output**: `encoding/json` from stdlib. A thin table formatter for text mode.
+- **Output**: `encoding/json` from stdlib.
