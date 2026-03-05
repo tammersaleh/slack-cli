@@ -14,30 +14,31 @@ Propose the next action and ask for confirmation before proceeding.
 
 ## Working on issues
 
-All work is tracked in GitHub Issues. When asked to work on an issue:
+All work is tracked in GitHub Issues. When working on an issue:
 
-1. Read the issue (`gh issue view <number>`)
+1. Read the issue (`gh issue view <number>`).
 2. Check that any dependency issues are closed. If not, raise it.
 3. Read `SPEC.md` for full context on the relevant feature.
-4. Write the plan, complexity analysis, and scope cut recommendations into the issue description (`gh issue edit <number> --body ...`). Link the issue URL in the response.
-5. After plan approval, red-green-refactor: write failing tests first, then implement, then clean up.
+4. Write the plan, complexity analysis, and scope cut recommendations into the issue description (`gh issue edit <number> --body ...`).
+5. Proceed to implementation. Red-green-refactor: write failing tests first, then implement, then clean up.
 6. Each issue gets its own branch (`<issue-number>-<short-description>`) and a single PR.
 7. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
 
-Update the issue description as the plan evolves based on feedback. The issue is the source of truth for the plan. When scope changes, update `SPEC.md` to match.
+Update the issue description as the plan evolves. The issue is the source of truth for the plan. When scope changes, update `SPEC.md` to match.
 
-## When to ask for input
+## Autonomy
 
-Only ask at two points:
+Work through issues independently. Only escalate when:
 
-1. **Plan stage**: Write the plan to the issue, link it, and get approval before writing code.
-2. **PR merge**: After the PR is pushed, reviewed (by sub-agent), and all feedback addressed, bring me in to merge.
+- A design decision isn't covered by `SPEC.md`.
+- A dependency issue is blocking.
+- Something feels wrong (scope creep, Slack API limitation, etc.).
 
-Everything else - implementation, testing, code review fixes, rebases - handle autonomously.
+After pushing a PR and addressing code review feedback, merge the PR yourself.
 
 ## Plan review
 
-Before presenting a plan, critically review it: What part is most likely to add complexity? What part of the scope would you recommend cutting? Include this analysis in the issue description.
+Before implementing, critically review the plan: What part is most likely to add complexity? What part of the scope would you recommend cutting? Include this analysis in the issue description.
 
 ## PR review
 
@@ -60,20 +61,24 @@ Tests live next to the code they test (`foo_test.go`). Use table-driven tests. M
 
 ## Git
 
-This is a personal project. You can push and create PRs.
+This is a personal project. You can push, create PRs, and merge.
 
 ## Output
 
-JSON to stdout (default). Errors as JSON to stderr. Human-readable text via `--format=text`.
+JSONL to stdout. Every command emits one JSON object per line, ending with a `_meta` trailer. Errors as JSON to stderr. See `SPEC.md` for the full output model.
 
 ## Architecture decisions
 
 - No config file. All config via flags/env vars. Kong handles precedence.
 - Workspaces keyed by `TeamID` (stable) not `TeamName` (mutable) in credentials.json.
-- User resolution: ID + email only. Display name (`@name`) deferred to #29 (expensive at scale).
+- User resolution: ID + email only. Display name (`@name`) deferred to Phase 2 (expensive at scale).
 - Channel resolution: first match wins on name collision. No ambiguity errors.
-- `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). slack-go v0.18.0 has no built-in retry.
+- Channel list defaults to member-only. `--include-non-member` to expand.
+- Single-page pagination by default. `--cursor` to continue, `--all` to fetch everything.
+- `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). Used by `--all` and by the resolver internally.
 - `api.Client` wraps `slack-go/slack` with separate bot/user token clients.
+- No text output format. No `--format`, `--raw`, or `--no-pager` flags.
+- `--fields` for output field filtering. `--quiet` suppresses stdout entirely.
 
 ## Sandbox
 
