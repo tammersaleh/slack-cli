@@ -70,7 +70,7 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 - Single-page pagination by default. `--cursor` to continue, `--all` to fetch everything.
 - `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). Used by `--all` and by the resolver internally.
 - `api.Client` wraps `slack-go/slack` with separate bot/user token clients. `WithCookie` injects `d` cookie via custom `http.RoundTripper` for `xoxc-` tokens.
-- Chrome auth (`--chrome`) uses `chromedp` to extract `xoxc-` tokens and `d` cookie from browser session. Supports all workspaces in a single extraction.
+- Chrome auth (`--chrome`) uses `chromedp` to extract `xoxc-` tokens and `d` cookie from browser session. Supports all workspaces in a single extraction. Does NOT work with Enterprise Grid orgs - Slack's anomaly detection signs the user out when extracted tokens are used from a non-browser context. Enterprise Grid requires a proper Slack app.
 - `auth_method` field in credentials.json tracks how each workspace was authenticated. Used for context-specific error hints.
 - `SLACK_COOKIE` env var provides the `d` cookie for `xoxc-` token auth without stored credentials.
 - No text output format. No `--format`, `--raw`, or `--no-pager` flags.

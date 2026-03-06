@@ -150,6 +150,10 @@ With `--chrome-port=PORT`, connects to an existing Chrome debug instance instead
 
 Session tokens (`xoxc-`) expire. When they do, the CLI detects the failure and hints the user to re-run `slack auth login --chrome`.
 
+#### Enterprise Grid limitation
+
+Chrome cookie extraction does not work reliably with Slack Enterprise Grid organizations. Using extracted `xoxc-` tokens from a non-browser context triggers Slack's anomaly detection, which signs the user out of the entire Enterprise Grid org. Enterprise Grid workspaces require a proper Slack app with `xoxb-`/`xoxp-` tokens installed by a workspace or org admin.
+
 ### Environment variable overrides
 
 `SLACK_TOKEN`, `SLACK_USER_TOKEN`, and `SLACK_COOKIE` override stored credentials when set. `SLACK_COOKIE` provides the `d` cookie value for `xoxc-` token authentication. For CI/CD and agent contexts.
