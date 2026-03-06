@@ -196,12 +196,20 @@ func (c *AuthStatusCmd) Run(cli *CLI) error {
 			"team_id":        ws.TeamID,
 			"team_name":      ws.TeamName,
 			"user_id":        ws.UserID,
+			"auth_method":    ws.AuthMethod,
 			"has_bot_token":  ws.BotToken != "",
 			"has_user_token": ws.UserToken != "",
 		}
 
 		if ws.BotToken != "" {
-			client := api.New(ws.BotToken)
+			var opts []api.Option
+			if ws.Cookie != "" {
+				opts = append(opts, api.WithCookie(ws.Cookie))
+			}
+			if cli.APIBaseURL != "" {
+				opts = append(opts, api.WithAPIURL(cli.APIBaseURL))
+			}
+			client := api.New(ws.BotToken, opts...)
 			result, err := client.AuthTest(ctx)
 			if err != nil {
 				item["error"] = err.Error()

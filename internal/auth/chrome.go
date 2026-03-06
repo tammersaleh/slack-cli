@@ -111,7 +111,7 @@ done:
 
 	var results []WorkspaceCredentials
 	for teamID, team := range teams {
-		ws, err := validateChromeCredentials(ctx, team.Token, cookie)
+		ws, err := validateChromeCredentials(ctx, team.Token, cookie, "https://slack.com/api/auth.test")
 		if err != nil {
 			status(fmt.Sprintf("Warning: workspace %s failed validation: %v", teamID, err))
 			continue
@@ -194,9 +194,9 @@ func extractCredentials(ctx context.Context) (cookie string, teams map[string]ch
 }
 
 // validateChromeCredentials calls auth.test with the given token and cookie
-// to get workspace metadata.
-func validateChromeCredentials(ctx context.Context, token, cookie string) (*WorkspaceCredentials, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://slack.com/api/auth.test", nil)
+// to get workspace metadata. The endpoint parameter allows testing with httptest.
+func validateChromeCredentials(ctx context.Context, token, cookie, endpoint string) (*WorkspaceCredentials, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}

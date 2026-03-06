@@ -55,6 +55,11 @@ func (c *CLI) SetOutput(out, errW io.Writer) {
 	c.err = errW
 }
 
+// SetAuthMethod overrides the auth method for testing ClassifyError hints.
+func (c *CLI) SetAuthMethod(method string) {
+	c.authMethod = method
+}
+
 // NewPrinter creates a Printer configured from global CLI flags.
 func (c *CLI) NewPrinter() *output.Printer {
 	out := io.Writer(os.Stdout)
