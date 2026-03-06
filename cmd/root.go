@@ -15,7 +15,6 @@ type CLI struct {
 	Workspace  string `short:"w" help:"Select workspace (name or ID)." env:"SLACK_WORKSPACE"`
 	Fields     string `help:"Comma-separated list of top-level fields to include." env:"SLACK_FIELDS"`
 	Quiet      bool   `short:"q" help:"Suppress stdout output (exit code and stderr only)."`
-	Verbose    bool   `short:"v" help:"Log diagnostics to stderr as JSON."`
 	APIBaseURL string `hidden:"" env:"SLACK_API_URL" help:"Override Slack API base URL (for testing)."`
 
 	// stdout/stderr overrides for testing.
