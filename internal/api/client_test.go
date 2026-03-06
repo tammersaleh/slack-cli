@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,108 @@ func TestAuthTest(t *testing.T) {
 	}
 	if result.User != "testbot" {
 		t.Errorf("got user=%q, want %q", result.User, "testbot")
+	}
+}
+
+func TestNew_WithCookie(t *testing.T) {
+	var gotCookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"url":     "https://test.slack.com/",
+			"team":    "Test",
+			"team_id": "T1",
+			"user":    "u",
+			"user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithCookie("xoxd-cookie-value"), WithAPIURL(srv.URL+"/api/"))
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCookie != "d=xoxd-cookie-value" {
+		t.Errorf("got Cookie header %q, want %q", gotCookie, "d=xoxd-cookie-value")
+	}
+}
+
+func TestNew_WithCookieOnUserClient(t *testing.T) {
+	var gotCookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"url":     "https://test.slack.com/",
+			"team":    "Test",
+			"team_id": "T1",
+			"user":    "u",
+			"user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-bot", WithUserToken("xoxc-user"), WithCookie("xoxd-cookie"), WithAPIURL(srv.URL+"/api/"))
+	// Call auth.test via the user client path - we'll use Bot() since User() doesn't
+	// have AuthTest, but both should have the cookie transport.
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCookie != "d=xoxd-cookie" {
+		t.Errorf("got Cookie header %q, want %q", gotCookie, "d=xoxd-cookie")
+	}
+}
+
+func TestNew_UserAgent(t *testing.T) {
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "url": "https://test.slack.com/", "team": "T",
+			"team_id": "T1", "user": "u", "user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithCookie("xoxd-cookie"), WithAPIURL(srv.URL+"/api/"))
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUA != ChromeUserAgent {
+		t.Errorf("got User-Agent %q, want %q", gotUA, ChromeUserAgent)
+	}
+}
+
+func TestNew_WithCookieOverTLS(t *testing.T) {
+	var gotCookie, gotUA string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		gotUA = r.Header.Get("User-Agent")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "url": "https://test.slack.com/", "team": "T",
+			"team_id": "T1", "user": "u", "user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	// Trust the httptest server's self-signed CA.
+	caPool := x509.NewCertPool()
+	caPool.AddCert(srv.Certificate())
+
+	c := New("xoxc-test", WithCookie("xoxd-tls-cookie"), WithTLSCAs(caPool), WithAPIURL(srv.URL+"/api/"))
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCookie != "d=xoxd-tls-cookie" {
+		t.Errorf("got Cookie %q, want %q", gotCookie, "d=xoxd-tls-cookie")
+	}
+	if gotUA != ChromeUserAgent {
+		t.Errorf("got User-Agent %q, want %q", gotUA, ChromeUserAgent)
 	}
 }
 

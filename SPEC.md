@@ -118,10 +118,11 @@ With `--verbose`, diagnostics go to stderr as JSON:
 
 - **Bot tokens** (`xoxb-`): Most read operations. Tied to an app.
 - **User tokens** (`xoxp-`): Required for `search`. Tied to a user.
+- **Session tokens** (`xoxc-`): Extracted from Slack Desktop app. Require a `d` cookie on every API request. Function as user tokens.
 
-Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. `--workspace` selects the workspace when multiple exist. If only one workspace exists, it's used automatically.
+Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. Each entry includes an `auth_method` field (`"oauth"` or `"desktop"`) used for context-specific error hints. `--workspace` selects the workspace when multiple exist. If only one workspace exists, it's used automatically.
 
-### OAuth (primary)
+### OAuth
 
 `slack auth login` runs a local OAuth flow:
 
@@ -129,40 +130,63 @@ Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `Tea
 2. Opens Slack OAuth URL in the browser.
 3. Receives callback with authorization code.
 4. Exchanges code for bot + user tokens.
-5. Stores both in credentials file.
+5. Stores both in credentials file with `auth_method: "oauth"`.
 
 Requires `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` environment variables. The user creates a Slack app manually - setup instructions are in the README.
 
-### Chrome cookie extraction (Phase 3)
+### Desktop extraction
 
-`slack auth login --chrome` will extract session tokens from Chrome running with `--remote-debugging-port`. Fallback for workspaces that restrict OAuth app installation.
+`slack auth login --desktop` extracts session tokens from the Slack Desktop app's local storage. Works with Enterprise Grid. Fallback for workspaces that restrict OAuth app installation.
+
+Requires `SLACK_SAFE_STORAGE_PASSWORD` env var (the Slack Safe Storage password from macOS Keychain Access - search for "Slack Safe Storage", show password, copy it).
+
+1. Copies Slack's LevelDB from `~/Library/Application Support/Slack/Local Storage/leveldb/` (avoids lock contention).
+2. Reads `localConfig_v2` (or `v3`) to extract `xoxc-` tokens per workspace.
+3. Decrypts the `d` cookie from `~/Library/Application Support/Slack/Cookies` (SQLite) using the Safe Storage password (PBKDF2 + AES-CBC).
+4. Validates each workspace via `auth.test`.
+5. Stores all valid workspaces with `auth_method: "desktop"`.
+
+All API requests use Chrome's TLS fingerprint and user-agent to avoid Slack's anomaly detection on Enterprise Grid.
+
+Session tokens (`xoxc-`) expire. When they do, the CLI detects the failure and hints the user to re-run `slack auth login --desktop`.
 
 ### Environment variable overrides
 
-`SLACK_TOKEN` and `SLACK_USER_TOKEN` override stored credentials when set. For CI/CD and agent contexts.
+`SLACK_TOKEN`, `SLACK_USER_TOKEN`, and `SLACK_COOKIE` override stored credentials when set. `SLACK_COOKIE` provides the `d` cookie value for `xoxc-` token authentication. For CI/CD and agent contexts.
 
 ### auth commands
 
 #### slack auth login
 
 ```
-slack auth login
+slack auth login [flags]
   --client-id       Slack app client ID. Env: SLACK_CLIENT_ID
   --client-secret   Slack app client secret. Env: SLACK_CLIENT_SECRET
+  --desktop         Extract credentials from Slack Desktop app. Env: SLACK_SAFE_STORAGE_PASSWORD required.
 ```
 
-Opens browser for OAuth flow. On success:
+Without `--desktop`, opens browser for OAuth flow. On success:
 
 ```
 $ slack auth login
-{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","has_bot_token":true,"has_user_token":true}
+{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","auth_method":"oauth","has_bot_token":true,"has_user_token":true}
+{"_meta":{"has_more":false}}
+```
+
+With `--desktop`, extracts credentials from Slack Desktop. Emits one line per workspace:
+
+```
+$ slack auth login --desktop
+{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","auth_method":"desktop","has_bot_token":true,"has_user_token":false}
+{"team_id":"T02DEF","team_name":"Other Corp","user_id":"U02ABC","auth_method":"desktop","has_bot_token":true,"has_user_token":false}
 {"_meta":{"has_more":false}}
 ```
 
 Errors:
 
-- `missing_client_credentials` (exit 1): `SLACK_CLIENT_ID` or `SLACK_CLIENT_SECRET` not set.
+- `missing_client_credentials` (exit 1): `SLACK_CLIENT_ID` or `SLACK_CLIENT_SECRET` not set (OAuth mode only).
 - `oauth_failed` (exit 1): OAuth flow failed (user denied, code exchange error).
+- `desktop_auth_failed` (exit 1): Desktop extraction failed (Slack not installed, password not set, no tokens found).
 
 #### slack auth logout
 
@@ -908,6 +932,7 @@ Environment variables:
 - `SLACK_WORKSPACE` - default workspace (same as `--workspace`)
 - `SLACK_TOKEN` - bot token override (bypasses stored credentials)
 - `SLACK_USER_TOKEN` - user token override (bypasses stored credentials)
+- `SLACK_COOKIE` - `d` cookie for `xoxc-` token authentication
 
 Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. Managed by `slack auth login` / `slack auth logout`.
 
@@ -915,7 +940,7 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 ### Phase 1: Core
 
-- `auth login` (OAuth), `auth status`, `auth logout`
+- `auth login` (OAuth), `auth login --desktop`, `auth status`, `auth logout`
 - `channel list`, `channel info`, `channel members`
 - `message list` / `message read`, `message get`
 - `thread list` / `thread read`
@@ -926,6 +951,7 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 - Single-page pagination with `--cursor` and `--all`
 - Rate limiting with retry
 - Channel/user name resolution
+- Cookie-based authentication for `xoxc-` tokens
 
 ### Phase 2: Extended
 
@@ -943,7 +969,6 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 ### Phase 3: Advanced
 
-- `auth login --chrome` (cookie extraction)
 - `channel mark` (mark as read - the one planned write operation)
 - `auth switch` (multi-workspace)
 
@@ -951,4 +976,7 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 - **CLI framework**: [kong](https://github.com/alecthomas/kong) for command structure and flag parsing.
 - **Slack API**: [slack-go/slack](https://github.com/slack-go/slack) as the API client.
+- **LevelDB**: [goleveldb](https://github.com/syndtr/goleveldb) for reading Slack Desktop local storage.
+- **SQLite**: [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) (pure Go) for reading Slack Desktop cookies.
+- **TLS fingerprinting**: [utls](https://github.com/refraction-networking/utls) for Chrome TLS fingerprint on API requests.
 - **Output**: `encoding/json` from stdlib.

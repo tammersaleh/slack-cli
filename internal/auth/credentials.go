@@ -13,11 +13,23 @@ type Credentials struct {
 }
 
 type WorkspaceCredentials struct {
-	BotToken  string `json:"bot_token"`
-	UserToken string `json:"user_token,omitempty"`
-	TeamID    string `json:"team_id"`
-	TeamName  string `json:"team_name"`
-	UserID    string `json:"user_id"`
+	BotToken   string `json:"bot_token"`
+	UserToken  string `json:"user_token,omitempty"`
+	Cookie     string `json:"cookie,omitempty"`
+	AuthMethod string `json:"auth_method,omitempty"`
+	TeamID     string `json:"team_id"`
+	TeamName   string `json:"team_name"`
+	UserID     string `json:"user_id"`
+}
+
+// ResolvedCredentials holds the resolved token, cookie, and auth method
+// for a single workspace.
+type ResolvedCredentials struct {
+	BotToken   string
+	UserToken  string
+	Cookie     string
+	AuthMethod string
+	TeamID     string
 }
 
 // DefaultCredentialsPath returns ~/.config/slack-cli/credentials.json.
@@ -64,38 +76,55 @@ func SaveCredentials(path string, creds *Credentials) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-// ResolveToken returns the bot and user tokens for the given workspace.
-// SLACK_TOKEN and SLACK_USER_TOKEN env vars take precedence over stored
-// credentials. If workspace is empty and only one workspace is stored,
-// it is used automatically.
-func ResolveToken(path string, workspace string) (bot, user string, err error) {
+// ResolveCredentials returns the resolved credentials for the given workspace.
+// SLACK_TOKEN, SLACK_USER_TOKEN, and SLACK_COOKIE env vars take precedence
+// over stored credentials. If workspace is empty and only one workspace is
+// stored, it is used automatically.
+func ResolveCredentials(path string, workspace string) (*ResolvedCredentials, error) {
 	envBot := os.Getenv("SLACK_TOKEN")
 	envUser := os.Getenv("SLACK_USER_TOKEN")
+	envCookie := os.Getenv("SLACK_COOKIE")
 	if envBot != "" {
-		return envBot, envUser, nil
+		return &ResolvedCredentials{
+			BotToken:  envBot,
+			UserToken: envUser,
+			Cookie:    envCookie,
+		}, nil
 	}
 
 	creds, err := LoadCredentials(path)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 
 	if len(creds.Workspaces) == 0 {
-		return "", "", fmt.Errorf("no credentials found; run 'slack auth login' first")
+		return nil, fmt.Errorf("no credentials found; run 'slack auth login' first")
 	}
 
 	if workspace == "" {
 		if len(creds.Workspaces) == 1 {
-			for _, ws := range creds.Workspaces {
-				return ws.BotToken, ws.UserToken, nil
+			for key, ws := range creds.Workspaces {
+				return &ResolvedCredentials{
+					BotToken:   ws.BotToken,
+					UserToken:  ws.UserToken,
+					Cookie:     ws.Cookie,
+					AuthMethod: ws.AuthMethod,
+					TeamID:     key,
+				}, nil
 			}
 		}
-		return "", "", fmt.Errorf("multiple workspaces configured; use --workspace to select one")
+		return nil, fmt.Errorf("multiple workspaces configured; use --workspace to select one")
 	}
 
 	ws, ok := creds.Workspaces[workspace]
 	if !ok {
-		return "", "", fmt.Errorf("workspace %q not found in credentials", workspace)
+		return nil, fmt.Errorf("workspace %q not found in credentials", workspace)
 	}
-	return ws.BotToken, ws.UserToken, nil
+	return &ResolvedCredentials{
+		BotToken:   ws.BotToken,
+		UserToken:  ws.UserToken,
+		Cookie:     ws.Cookie,
+		AuthMethod: ws.AuthMethod,
+		TeamID:     workspace,
+	}, nil
 }

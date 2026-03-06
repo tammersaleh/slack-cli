@@ -16,14 +16,25 @@ const (
 
 // Error represents a structured CLI error written to stderr as JSON.
 type Error struct {
-	Err    string `json:"error"`
-	Detail string `json:"detail,omitempty"`
-	Hint   string `json:"hint,omitempty"`
-	Code   int    `json:"-"`
+	Err      string `json:"error"`
+	Detail   string `json:"detail,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+	Code     int    `json:"-"`
 }
 
 func (e *Error) Error() string {
 	return e.Err
+}
+
+// ExitError carries an exit code without being printed to stderr.
+// Used for partial failures where per-item errors are already on stdout.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return "exit"
 }
 
 // Meta is the _meta trailer emitted after all data lines.

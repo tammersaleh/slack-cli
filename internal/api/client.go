@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/x509"
 
 	"github.com/slack-go/slack"
 )
@@ -18,6 +19,8 @@ type Option func(*clientConfig)
 type clientConfig struct {
 	userToken string
 	apiURL    string
+	cookie    string
+	tlsCAs    *x509.CertPool
 }
 
 // WithUserToken adds a user token client for APIs that require xoxp- tokens.
@@ -28,6 +31,17 @@ func WithUserToken(token string) Option {
 // WithAPIURL overrides the Slack API base URL (for testing).
 func WithAPIURL(url string) Option {
 	return func(c *clientConfig) { c.apiURL = url }
+}
+
+// WithCookie sets a cookie value to send with every API request.
+// Used for xoxc- token authentication which requires a d cookie.
+func WithCookie(cookie string) Option {
+	return func(c *clientConfig) { c.cookie = cookie }
+}
+
+// WithTLSCAs adds extra root CAs to the TLS transport. For testing only.
+func WithTLSCAs(pool *x509.CertPool) Option {
+	return func(c *clientConfig) { c.tlsCAs = pool }
 }
 
 // NewWithAPIURL is a convenience for creating a test client with a custom API URL.
@@ -46,6 +60,9 @@ func New(botToken string, opts ...Option) *Client {
 	if cfg.apiURL != "" {
 		botOpts = append(botOpts, slack.OptionAPIURL(cfg.apiURL))
 	}
+	if cfg.cookie != "" {
+		botOpts = append(botOpts, slack.OptionHTTPClient(slackHTTPClient(cfg.cookie, cfg.tlsCAs)))
+	}
 
 	c := &Client{
 		bot: slack.New(botToken, botOpts...),
@@ -56,11 +73,15 @@ func New(botToken string, opts ...Option) *Client {
 		if cfg.apiURL != "" {
 			userOpts = append(userOpts, slack.OptionAPIURL(cfg.apiURL))
 		}
+		if cfg.cookie != "" {
+			userOpts = append(userOpts, slack.OptionHTTPClient(slackHTTPClient(cfg.cookie, cfg.tlsCAs)))
+		}
 		c.user = slack.New(cfg.userToken, userOpts...)
 	}
 
 	return c
 }
+
 
 // Bot returns the bot token Slack client.
 func (c *Client) Bot() *slack.Client { return c.bot }

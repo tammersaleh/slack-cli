@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/slack-go/slack"
-	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
@@ -55,7 +54,7 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 			Cursor:          cursor,
 		})
 		if err != nil {
-			return api.ClassifyError(err)
+			return cli.ClassifyError(err)
 		}
 
 		for _, ch := range channels {
@@ -140,7 +139,7 @@ func (c *ChannelInfoCmd) Run(cli *CLI) error {
 		return err
 	}
 	if errorCount > 0 {
-		return &output.Error{Err: "channel_not_found", Code: output.ExitGeneral}
+		return &output.ExitError{Code: output.ExitGeneral}
 	}
 	return nil
 }
@@ -184,7 +183,7 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 			Cursor:    cursor,
 		})
 		if err != nil {
-			return api.ClassifyError(err)
+			return cli.ClassifyError(err)
 		}
 
 		for _, uid := range members {

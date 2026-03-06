@@ -33,9 +33,6 @@ func TestGlobalFlags_Defaults(t *testing.T) {
 	if cli.Quiet {
 		t.Error("expected quiet to default to false")
 	}
-	if cli.Verbose {
-		t.Error("expected verbose to default to false")
-	}
 }
 
 func TestGlobalFlags_Override(t *testing.T) {
@@ -43,7 +40,6 @@ func TestGlobalFlags_Override(t *testing.T) {
 		"--workspace", "myteam",
 		"--fields", "id,name",
 		"--quiet",
-		"--verbose",
 		"user", "list",
 	)
 
@@ -56,22 +52,16 @@ func TestGlobalFlags_Override(t *testing.T) {
 	if !cli.Quiet {
 		t.Error("expected quiet to be true")
 	}
-	if !cli.Verbose {
-		t.Error("expected verbose to be true")
-	}
 }
 
 func TestGlobalFlags_ShortFlags(t *testing.T) {
-	cli, _ := mustParse(t, "-w", "myteam", "-q", "-v", "user", "list")
+	cli, _ := mustParse(t, "-w", "myteam", "-q", "user", "list")
 
 	if cli.Workspace != "myteam" {
 		t.Errorf("expected workspace 'myteam', got %q", cli.Workspace)
 	}
 	if !cli.Quiet {
 		t.Error("expected quiet to be true")
-	}
-	if !cli.Verbose {
-		t.Error("expected verbose to be true")
 	}
 }
 
@@ -133,6 +123,7 @@ func TestSubcommands_Exist(t *testing.T) {
 		args []string
 	}{
 		{"auth login", []string{"auth", "login"}},
+		{"auth login desktop", []string{"auth", "login", "--desktop"}},
 		{"auth logout", []string{"auth", "logout"}},
 		{"auth status", []string{"auth", "status"}},
 		{"channel list", []string{"channel", "list"}},

@@ -124,14 +124,13 @@ func TestSaveCredentials_CreatesDirectory(t *testing.T) {
 	}
 }
 
-func TestResolveToken_EnvVarOverride(t *testing.T) {
+func TestResolveCredentials_EnvVarOverride(t *testing.T) {
 	t.Setenv("SLACK_TOKEN", "xoxb-env")
 	t.Setenv("SLACK_USER_TOKEN", "xoxp-env")
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
-	// Even with a credentials file, env vars win.
 	creds := &Credentials{
 		Workspaces: map[string]WorkspaceCredentials{
 			"team1": {BotToken: "xoxb-stored", UserToken: "xoxp-stored"},
@@ -141,60 +140,100 @@ func TestResolveToken_EnvVarOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bot, user, err := ResolveToken(path, "")
+	rc, err := ResolveCredentials(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bot != "xoxb-env" {
-		t.Errorf("got bot=%q, want %q", bot, "xoxb-env")
+	if rc.BotToken != "xoxb-env" {
+		t.Errorf("got bot=%q, want %q", rc.BotToken, "xoxb-env")
 	}
-	if user != "xoxp-env" {
-		t.Errorf("got user=%q, want %q", user, "xoxp-env")
+	if rc.UserToken != "xoxp-env" {
+		t.Errorf("got user=%q, want %q", rc.UserToken, "xoxp-env")
+	}
+	if rc.AuthMethod != "" {
+		t.Errorf("expected empty auth_method for env var, got %q", rc.AuthMethod)
 	}
 }
 
-func TestResolveToken_EnvVarPartialOverride(t *testing.T) {
-	t.Setenv("SLACK_TOKEN", "xoxb-env")
-	// SLACK_USER_TOKEN not set
+func TestResolveCredentials_EnvVarWithCookie(t *testing.T) {
+	t.Setenv("SLACK_TOKEN", "xoxc-env")
+	t.Setenv("SLACK_COOKIE", "xoxd-cookie")
 
-	bot, user, err := ResolveToken(filepath.Join(t.TempDir(), "creds.json"), "")
+	rc, err := ResolveCredentials(filepath.Join(t.TempDir(), "creds.json"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bot != "xoxb-env" {
-		t.Errorf("got bot=%q, want %q", bot, "xoxb-env")
+	if rc.BotToken != "xoxc-env" {
+		t.Errorf("got bot=%q, want %q", rc.BotToken, "xoxc-env")
 	}
-	if user != "" {
-		t.Errorf("got user=%q, want empty", user)
+	if rc.Cookie != "xoxd-cookie" {
+		t.Errorf("got cookie=%q, want %q", rc.Cookie, "xoxd-cookie")
 	}
 }
 
-func TestResolveToken_SingleWorkspace(t *testing.T) {
+func TestResolveCredentials_SingleWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
 	creds := &Credentials{
 		Workspaces: map[string]WorkspaceCredentials{
-			"onlyteam": {BotToken: "xoxb-only", UserToken: "xoxp-only"},
+			"onlyteam": {BotToken: "xoxb-only", UserToken: "xoxp-only", AuthMethod: "oauth"},
 		},
 	}
 	if err := SaveCredentials(path, creds); err != nil {
 		t.Fatal(err)
 	}
 
-	bot, user, err := ResolveToken(path, "")
+	rc, err := ResolveCredentials(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bot != "xoxb-only" {
-		t.Errorf("got bot=%q, want %q", bot, "xoxb-only")
+	if rc.BotToken != "xoxb-only" {
+		t.Errorf("got bot=%q, want %q", rc.BotToken, "xoxb-only")
 	}
-	if user != "xoxp-only" {
-		t.Errorf("got user=%q, want %q", user, "xoxp-only")
+	if rc.UserToken != "xoxp-only" {
+		t.Errorf("got user=%q, want %q", rc.UserToken, "xoxp-only")
+	}
+	if rc.AuthMethod != "oauth" {
+		t.Errorf("got auth_method=%q, want %q", rc.AuthMethod, "oauth")
 	}
 }
 
-func TestResolveToken_NamedWorkspace(t *testing.T) {
+func TestResolveCredentials_ChromeWorkspaceWithCookie(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.json")
+
+	creds := &Credentials{
+		Workspaces: map[string]WorkspaceCredentials{
+			"team1": {
+				BotToken:   "xoxc-chrome",
+				Cookie:     "xoxd-stored",
+				AuthMethod: "chrome",
+				TeamID:     "T1",
+				TeamName:   "Chrome Team",
+			},
+		},
+	}
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := ResolveCredentials(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.BotToken != "xoxc-chrome" {
+		t.Errorf("got bot=%q, want %q", rc.BotToken, "xoxc-chrome")
+	}
+	if rc.Cookie != "xoxd-stored" {
+		t.Errorf("got cookie=%q, want %q", rc.Cookie, "xoxd-stored")
+	}
+	if rc.AuthMethod != "chrome" {
+		t.Errorf("got auth_method=%q, want %q", rc.AuthMethod, "chrome")
+	}
+}
+
+func TestResolveCredentials_NamedWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
@@ -208,16 +247,16 @@ func TestResolveToken_NamedWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bot, _, err := ResolveToken(path, "team2")
+	rc, err := ResolveCredentials(path, "team2")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bot != "xoxb-2" {
-		t.Errorf("got bot=%q, want %q", bot, "xoxb-2")
+	if rc.BotToken != "xoxb-2" {
+		t.Errorf("got bot=%q, want %q", rc.BotToken, "xoxb-2")
 	}
 }
 
-func TestResolveToken_MultipleWorkspacesNoSelection(t *testing.T) {
+func TestResolveCredentials_MultipleWorkspacesNoSelection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
@@ -231,13 +270,13 @@ func TestResolveToken_MultipleWorkspacesNoSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := ResolveToken(path, "")
+	_, err := ResolveCredentials(path, "")
 	if err == nil {
 		t.Error("expected error when multiple workspaces and none selected")
 	}
 }
 
-func TestResolveToken_UnknownWorkspace(t *testing.T) {
+func TestResolveCredentials_UnknownWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
@@ -250,16 +289,50 @@ func TestResolveToken_UnknownWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := ResolveToken(path, "nonexistent")
+	_, err := ResolveCredentials(path, "nonexistent")
 	if err == nil {
 		t.Error("expected error for unknown workspace")
 	}
 }
 
-func TestResolveToken_NoCredentials(t *testing.T) {
+func TestResolveCredentials_NoCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "creds.json")
-	_, _, err := ResolveToken(path, "")
+	_, err := ResolveCredentials(path, "")
 	if err == nil {
 		t.Error("expected error when no credentials exist")
+	}
+}
+
+func TestSaveCredentials_RoundTripWithChromeFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.json")
+
+	creds := &Credentials{
+		Workspaces: map[string]WorkspaceCredentials{
+			"team1": {
+				BotToken:   "xoxc-chrome",
+				Cookie:     "xoxd-cookie",
+				AuthMethod: "chrome",
+				TeamID:     "T1",
+				TeamName:   "Team 1",
+				UserID:     "U1",
+			},
+		},
+	}
+
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := loaded.Workspaces["team1"]
+	if ws.Cookie != "xoxd-cookie" {
+		t.Errorf("got cookie=%q, want %q", ws.Cookie, "xoxd-cookie")
+	}
+	if ws.AuthMethod != "chrome" {
+		t.Errorf("got auth_method=%q, want %q", ws.AuthMethod, "chrome")
 	}
 }

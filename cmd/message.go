@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
-	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
@@ -61,7 +60,7 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 		// Fetch channel info to get last_read.
 		ch, err := client.Bot().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: channelID})
 		if err != nil {
-			return api.ClassifyError(err)
+			return cli.ClassifyError(err)
 		}
 		oldest = ch.LastRead
 	} else if c.After != "" {
@@ -92,7 +91,7 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 			Latest:    latest,
 		})
 		if err != nil {
-			return api.ClassifyError(err)
+			return cli.ClassifyError(err)
 		}
 
 		for _, msg := range resp.Messages {
@@ -151,7 +150,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 			Limit:     1,
 		})
 		if err != nil {
-			return api.ClassifyError(err)
+			return cli.ClassifyError(err)
 		}
 
 		if len(resp.Messages) == 0 {
@@ -178,7 +177,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 		return err
 	}
 	if errorCount > 0 {
-		return &output.Error{Err: "message_not_found", Code: output.ExitGeneral}
+		return &output.ExitError{Code: output.ExitGeneral}
 	}
 	return nil
 }

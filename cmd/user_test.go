@@ -2,8 +2,11 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
 func TestUserList_MockAPI(t *testing.T) {
@@ -118,6 +121,34 @@ func TestUserInfo_ByEmail(t *testing.T) {
 	user := parseJSON(t, lines[0])
 	if user["input"] != "tammer@example.com" {
 		t.Errorf("expected input='tammer@example.com', got %q", user["input"])
+	}
+}
+
+func TestUserInfo_PartialFailure_NoStderr(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		uid := r.FormValue("user")
+		if uid == "U01" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"ok":   true,
+				"user": map[string]any{"id": "U01", "name": "tammer"},
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]any{
+				"ok":    false,
+				"error": "user_not_found",
+			})
+		}
+	})
+
+	r := runWithMockFull(t, mux, "user", "info", "U01", "U99INVALID")
+	if r.err == nil {
+		t.Fatal("expected error for partial failure")
+	}
+	var oErr *output.Error
+	if errors.As(r.err, &oErr) {
+		t.Errorf("partial failure should not return *output.Error (would be printed to stderr), got: %v", r.err)
 	}
 }
 

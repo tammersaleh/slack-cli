@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,11 +12,19 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tammersaleh/slack-cli/cmd"
+	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
-// runWithMock runs a CLI command against a mock Slack API server.
-// Returns stdout content and any error from the command.
-func runWithMock(t *testing.T, handler http.Handler, args ...string) (string, error) {
+// mockResult holds the captured output from a CLI command run against a mock server.
+type mockResult struct {
+	stdout string
+	stderr string
+	err    error
+}
+
+// runWithMockFull runs a CLI command against a mock Slack API server.
+// Returns stdout, stderr, and any error from the command.
+func runWithMockFull(t *testing.T, handler http.Handler, args ...string) mockResult {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
@@ -36,14 +45,21 @@ func runWithMock(t *testing.T, handler http.Handler, args ...string) (string, er
 
 	kctx, err := parser.Parse(args)
 	if err != nil {
-		return "", err
+		return mockResult{err: err}
 	}
 
-	// Redirect printer output.
 	cli.SetOutput(&outBuf, &errBuf)
 
 	runErr := kctx.Run(&cli)
-	return outBuf.String(), runErr
+	return mockResult{stdout: outBuf.String(), stderr: errBuf.String(), err: runErr}
+}
+
+// runWithMock runs a CLI command against a mock Slack API server.
+// Returns stdout content and any error from the command.
+func runWithMock(t *testing.T, handler http.Handler, args ...string) (string, error) {
+	t.Helper()
+	r := runWithMockFull(t, handler, args...)
+	return r.stdout, r.err
 }
 
 func nonEmptyLines(s string) []string {
@@ -381,6 +397,40 @@ func TestChannelMembers_MockAPI(t *testing.T) {
 	member := parseJSON(t, lines[0])
 	if member["id"] != "U01" {
 		t.Errorf("expected first member 'U01', got %q", member["id"])
+	}
+}
+
+func TestChannelInfo_PartialFailure_NoStderr(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"channels": []map[string]any{{"id": "C01", "name": "general"}},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"channel": map[string]any{"id": "C01", "name": "general"},
+		})
+	})
+
+	r := runWithMockFull(t, mux, "channel", "info", "#general", "#nonexistent")
+	if r.err == nil {
+		t.Fatal("expected error for partial failure")
+	}
+
+	// The returned error must NOT be *output.Error, because main.go prints
+	// those to stderr. Per-item errors belong on stdout only.
+	var oErr *output.Error
+	if errors.As(r.err, &oErr) {
+		t.Errorf("partial failure should not return *output.Error (would be printed to stderr), got: %v", r.err)
+	}
+
+	lines := nonEmptyLines(r.stdout)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), r.stdout)
 	}
 }
 

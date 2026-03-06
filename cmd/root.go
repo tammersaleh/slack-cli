@@ -3,6 +3,7 @@ package cmd
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tammersaleh/slack-cli/internal/api"
@@ -15,12 +16,15 @@ type CLI struct {
 	Workspace  string `short:"w" help:"Select workspace (name or ID)." env:"SLACK_WORKSPACE"`
 	Fields     string `help:"Comma-separated list of top-level fields to include." env:"SLACK_FIELDS"`
 	Quiet      bool   `short:"q" help:"Suppress stdout output (exit code and stderr only)."`
-	Verbose    bool   `short:"v" help:"Log diagnostics to stderr as JSON."`
 	APIBaseURL string `hidden:"" env:"SLACK_API_URL" help:"Override Slack API base URL (for testing)."`
 
 	// stdout/stderr overrides for testing.
 	out io.Writer
 	err io.Writer
+
+	// Set by NewClient from resolved credentials.
+	authMethod string
+	teamID     string
 
 	Auth     AuthCmd     `cmd:"" help:"Manage authentication."`
 	Channel  ChannelCmd  `cmd:"" help:"Read channel information."`
@@ -52,6 +56,11 @@ func (c *CLI) SetOutput(out, errW io.Writer) {
 	c.err = errW
 }
 
+// SetAuthMethod overrides the auth method for testing ClassifyError hints.
+func (c *CLI) SetAuthMethod(method string) {
+	c.authMethod = method
+}
+
 // NewPrinter creates a Printer configured from global CLI flags.
 func (c *CLI) NewPrinter() *output.Printer {
 	out := io.Writer(os.Stdout)
@@ -77,27 +86,55 @@ func (c *CLI) NewClient() (*api.Client, error) {
 		return nil, err
 	}
 
-	bot, user, err := auth.ResolveToken(path, c.Workspace)
+	rc, err := auth.ResolveCredentials(path, c.Workspace)
 	if err != nil {
+		hint := "Run 'slack auth login' or set SLACK_TOKEN"
 		return nil, &output.Error{
-			Err:  "not_authed",
+			Err:    "not_authed",
 			Detail: err.Error(),
-			Hint: "Run 'slack auth login' or set SLACK_TOKEN",
-			Code: output.ExitAuth,
+			Hint:   hint,
+			Code:   output.ExitAuth,
 		}
 	}
 
+	c.authMethod = rc.AuthMethod
+	c.teamID = rc.TeamID
+
 	var opts []api.Option
-	if user != "" {
-		opts = append(opts, api.WithUserToken(user))
+	if rc.UserToken != "" {
+		opts = append(opts, api.WithUserToken(rc.UserToken))
+	}
+	if rc.Cookie != "" {
+		opts = append(opts, api.WithCookie(rc.Cookie))
 	}
 	if c.APIBaseURL != "" {
 		opts = append(opts, api.WithAPIURL(c.APIBaseURL))
 	}
-	return api.New(bot, opts...), nil
+	return api.New(rc.BotToken, opts...), nil
+}
+
+// ClassifyError wraps api.ClassifyError and adds an auth hint based on
+// the authentication method used for this session.
+func (c *CLI) ClassifyError(err error) *output.Error {
+	oErr := api.ClassifyError(err)
+	if oErr.Code == output.ExitAuth && oErr.Hint == "" {
+		switch c.authMethod {
+		case "desktop":
+			oErr.Hint = "Run 'slack auth login --desktop' to re-authenticate"
+		case "oauth":
+			oErr.Hint = "Run 'slack auth login' to re-authenticate"
+		default:
+			oErr.Hint = "Run 'slack auth login' or set SLACK_TOKEN"
+		}
+	}
+	return oErr
 }
 
 // NewResolver creates a channel/user name resolver from the API client.
 func (c *CLI) NewResolver(client *api.Client) *resolve.Resolver {
-	return resolve.NewResolver(client)
+	cacheDir := ""
+	if dir, err := os.UserConfigDir(); err == nil {
+		cacheDir = filepath.Join(dir, "slack-cli", "cache")
+	}
+	return resolve.NewResolver(client, c.teamID, cacheDir)
 }

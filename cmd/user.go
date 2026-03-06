@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/slack-go/slack"
-	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
@@ -59,7 +58,7 @@ func (c *UserListCmd) Run(cli *CLI) error {
 			return p.PrintMeta(output.Meta{})
 		}
 		if fetchErr != nil {
-			return api.ClassifyError(fetchErr)
+			return cli.ClassifyError(fetchErr)
 		}
 
 		for _, user := range pag.Users {
@@ -135,7 +134,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 		return err
 	}
 	if errorCount > 0 {
-		return &output.Error{Err: "user_not_found", Code: output.ExitGeneral}
+		return &output.ExitError{Code: output.ExitGeneral}
 	}
 	return nil
 }

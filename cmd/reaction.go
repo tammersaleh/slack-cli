@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/slack-go/slack"
-	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
@@ -39,7 +38,7 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 			Timestamp: ts,
 		}, slack.GetReactionsParameters{Full: true})
 		if err != nil {
-			oErr := api.ClassifyError(err)
+			oErr := cli.ClassifyError(err)
 			// If it's a specific message error, inline it.
 			if oErr.Code == output.ExitGeneral {
 				errorCount++
@@ -72,7 +71,7 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 		return err
 	}
 	if errorCount > 0 {
-		return &output.Error{Err: "message_not_found", Code: output.ExitGeneral}
+		return &output.ExitError{Code: output.ExitGeneral}
 	}
 	return nil
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func TestResolveUser_IDPassthrough(t *testing.T) {
-	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"))
+	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"), "", "")
 
 	tests := []struct {
 		name  string
@@ -52,7 +52,7 @@ func TestResolveUser_Email(t *testing.T) {
 		})
 	}))
 
-	r := NewResolver(client)
+	r := NewResolver(client, "", "")
 	id, err := r.ResolveUser(context.Background(), "tammer@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +70,7 @@ func TestResolveUser_EmailNotFound(t *testing.T) {
 		})
 	}))
 
-	r := NewResolver(client)
+	r := NewResolver(client, "", "")
 	_, err := r.ResolveUser(context.Background(), "nobody@example.com")
 	if err == nil {
 		t.Error("expected error for unknown email")
@@ -78,7 +78,7 @@ func TestResolveUser_EmailNotFound(t *testing.T) {
 }
 
 func TestResolveUser_InvalidFormat(t *testing.T) {
-	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"))
+	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"), "", "")
 	_, err := r.ResolveUser(context.Background(), "tammer")
 	if err == nil {
 		t.Error("expected error for bare name")

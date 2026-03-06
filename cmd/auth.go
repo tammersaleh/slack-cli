@@ -16,11 +16,19 @@ type AuthCmd struct {
 }
 
 type AuthLoginCmd struct {
+	Desktop      bool   `help:"Extract credentials from Slack Desktop app."`
 	ClientID     string `env:"SLACK_CLIENT_ID" help:"Slack app client ID."`
 	ClientSecret string `env:"SLACK_CLIENT_SECRET" help:"Slack app client secret."`
 }
 
 func (c *AuthLoginCmd) Run(cli *CLI) error {
+	if c.Desktop {
+		return c.runDesktop(cli)
+	}
+	return c.runOAuth(cli)
+}
+
+func (c *AuthLoginCmd) runOAuth(cli *CLI) error {
 	if c.ClientID == "" || c.ClientSecret == "" {
 		return &output.Error{
 			Err:    "missing_client_credentials",
@@ -34,7 +42,34 @@ func (c *AuthLoginCmd) Run(cli *CLI) error {
 	if err != nil {
 		return err
 	}
+	ws.AuthMethod = "oauth"
 
+	return saveAndPrintWorkspaces(cli, []auth.WorkspaceCredentials{*ws})
+}
+
+func (c *AuthLoginCmd) runDesktop(cli *CLI) error {
+	p := cli.NewPrinter()
+	ctx := context.Background()
+
+	workspaces, err := auth.DesktopLogin(ctx, auth.DesktopLoginOptions{
+		HTTPClient: api.ChromeTLSClient(),
+		StatusFunc: func(msg string) {
+			p.PrintError(&output.Error{Err: "status", Detail: msg})
+		},
+	})
+	if err != nil {
+		return &output.Error{
+			Err:    "desktop_auth_failed",
+			Detail: err.Error(),
+			Hint:   "Make sure Slack Desktop is installed and you're signed in",
+			Code:   output.ExitGeneral,
+		}
+	}
+
+	return saveAndPrintWorkspaces(cli, workspaces)
+}
+
+func saveAndPrintWorkspaces(cli *CLI, workspaces []auth.WorkspaceCredentials) error {
 	path, err := auth.DefaultCredentialsPath()
 	if err != nil {
 		return err
@@ -44,21 +79,26 @@ func (c *AuthLoginCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	creds.Workspaces[ws.TeamID] = *ws
+	p := cli.NewPrinter()
+
+	for _, ws := range workspaces {
+		creds.Workspaces[ws.TeamID] = ws
+		if err := p.PrintItem(map[string]any{
+			"team_id":        ws.TeamID,
+			"team_name":      ws.TeamName,
+			"user_id":        ws.UserID,
+			"auth_method":    ws.AuthMethod,
+			"has_bot_token":  ws.BotToken != "",
+			"has_user_token": ws.UserToken != "",
+		}); err != nil {
+			return err
+		}
+	}
+
 	if err := auth.SaveCredentials(path, creds); err != nil {
 		return err
 	}
 
-	p := cli.NewPrinter()
-	if err := p.PrintItem(map[string]any{
-		"team_id":        ws.TeamID,
-		"team_name":      ws.TeamName,
-		"user_id":        ws.UserID,
-		"has_bot_token":  ws.BotToken != "",
-		"has_user_token": ws.UserToken != "",
-	}); err != nil {
-		return err
-	}
 	return p.PrintMeta(output.Meta{})
 }
 
@@ -150,17 +190,39 @@ func (c *AuthStatusCmd) Run(cli *CLI) error {
 
 	p := cli.NewPrinter()
 	ctx := context.Background()
-	for _, ws := range creds.Workspaces {
+
+	workspaces := creds.Workspaces
+	if cli.Workspace != "" {
+		ws, ok := creds.Workspaces[cli.Workspace]
+		if !ok {
+			return &output.Error{
+				Err:    "not_authed",
+				Detail: fmt.Sprintf("Workspace %q not found", cli.Workspace),
+				Code:   output.ExitAuth,
+			}
+		}
+		workspaces = map[string]auth.WorkspaceCredentials{cli.Workspace: ws}
+	}
+
+	for _, ws := range workspaces {
 		item := map[string]any{
 			"team_id":        ws.TeamID,
 			"team_name":      ws.TeamName,
 			"user_id":        ws.UserID,
+			"auth_method":    ws.AuthMethod,
 			"has_bot_token":  ws.BotToken != "",
 			"has_user_token": ws.UserToken != "",
 		}
 
 		if ws.BotToken != "" {
-			client := api.New(ws.BotToken)
+			var opts []api.Option
+			if ws.Cookie != "" {
+				opts = append(opts, api.WithCookie(ws.Cookie))
+			}
+			if cli.APIBaseURL != "" {
+				opts = append(opts, api.WithAPIURL(cli.APIBaseURL))
+			}
+			client := api.New(ws.BotToken, opts...)
 			result, err := client.AuthTest(ctx)
 			if err != nil {
 				item["error"] = err.Error()
