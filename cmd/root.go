@@ -22,6 +22,9 @@ type CLI struct {
 	out io.Writer
 	err io.Writer
 
+	// authMethod is set by NewClient from resolved credentials.
+	authMethod string
+
 	Auth     AuthCmd     `cmd:"" help:"Manage authentication."`
 	Channel  ChannelCmd  `cmd:"" help:"Read channel information."`
 	Message  MessageCmd  `cmd:"" help:"Read messages."`
@@ -88,6 +91,8 @@ func (c *CLI) NewClient() (*api.Client, error) {
 		}
 	}
 
+	c.authMethod = rc.AuthMethod
+
 	var opts []api.Option
 	if rc.UserToken != "" {
 		opts = append(opts, api.WithUserToken(rc.UserToken))
@@ -99,6 +104,23 @@ func (c *CLI) NewClient() (*api.Client, error) {
 		opts = append(opts, api.WithAPIURL(c.APIBaseURL))
 	}
 	return api.New(rc.BotToken, opts...), nil
+}
+
+// ClassifyError wraps api.ClassifyError and adds an auth hint based on
+// the authentication method used for this session.
+func (c *CLI) ClassifyError(err error) *output.Error {
+	oErr := api.ClassifyError(err)
+	if oErr.Code == output.ExitAuth && oErr.Hint == "" {
+		switch c.authMethod {
+		case "chrome":
+			oErr.Hint = "Run 'slack auth login --chrome' to re-authenticate"
+		case "oauth":
+			oErr.Hint = "Run 'slack auth login' to re-authenticate"
+		default:
+			oErr.Hint = "Run 'slack auth login' or set SLACK_TOKEN"
+		}
+	}
+	return oErr
 }
 
 // NewResolver creates a channel/user name resolver from the API client.

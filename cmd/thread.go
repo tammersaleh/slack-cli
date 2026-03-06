@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/slack-go/slack"
-	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
@@ -53,7 +52,7 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 			Cursor:    cursor,
 		})
 		if err != nil {
-			oErr := api.ClassifyError(err)
+			oErr := cli.ClassifyError(err)
 			if oErr.Err == "thread_not_found" || oErr.Err == "channel_not_found" {
 				return oErr
 			}
