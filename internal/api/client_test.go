@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -133,6 +134,35 @@ func TestNew_UserAgent(t *testing.T) {
 	_, err := c.AuthTest(context.Background())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if gotUA != ChromeUserAgent {
+		t.Errorf("got User-Agent %q, want %q", gotUA, ChromeUserAgent)
+	}
+}
+
+func TestNew_WithCookieOverTLS(t *testing.T) {
+	var gotCookie, gotUA string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		gotUA = r.Header.Get("User-Agent")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "url": "https://test.slack.com/", "team": "T",
+			"team_id": "T1", "user": "u", "user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	// Trust the httptest server's self-signed CA.
+	caPool := x509.NewCertPool()
+	caPool.AddCert(srv.Certificate())
+
+	c := New("xoxc-test", WithCookie("xoxd-tls-cookie"), WithTLSCAs(caPool), WithAPIURL(srv.URL+"/api/"))
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCookie != "d=xoxd-tls-cookie" {
+		t.Errorf("got Cookie %q, want %q", gotCookie, "d=xoxd-tls-cookie")
 	}
 	if gotUA != ChromeUserAgent {
 		t.Errorf("got User-Agent %q, want %q", gotUA, ChromeUserAgent)

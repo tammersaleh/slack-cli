@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/alecthomas/kong v1.14.0
+	github.com/refraction-networking/utls v1.8.2
 	github.com/slack-go/slack v0.18.0
 	github.com/syndtr/goleveldb v1.0.0
 	golang.org/x/crypto v0.48.0
@@ -11,10 +12,12 @@ require (
 )
 
 require (
+	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
