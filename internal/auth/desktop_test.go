@@ -161,7 +161,7 @@ func TestValidateDesktopCredentials_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ws, err := validateDesktopCredentials(context.Background(), "xoxc-test-token", "xoxd-test-cookie", srv.URL+"/api/auth.test")
+	ws, err := validateDesktopCredentials(context.Background(), http.DefaultClient, "xoxc-test-token", "xoxd-test-cookie", srv.URL+"/api/auth.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestValidateDesktopCredentials_AuthFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := validateDesktopCredentials(context.Background(), "xoxc-bad", "xoxd-bad", srv.URL+"/api/auth.test")
+	_, err := validateDesktopCredentials(context.Background(), http.DefaultClient, "xoxc-bad", "xoxd-bad", srv.URL+"/api/auth.test")
 	if err == nil {
 		t.Fatal("expected error for invalid auth")
 	}

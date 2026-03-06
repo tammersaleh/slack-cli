@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -9,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +28,11 @@ type DesktopLoginOptions struct {
 	// SlackDir overrides the Slack Desktop data directory.
 	// Default: ~/Library/Application Support/Slack
 	SlackDir string
+
+	// HTTPClient is used for auth.test validation calls.
+	// Should include Chrome TLS fingerprint and user-agent.
+	// Falls back to http.DefaultClient if nil.
+	HTTPClient *http.Client
 
 	// StatusFunc is called with status messages for the user.
 	StatusFunc func(string)
@@ -82,9 +87,14 @@ func DesktopLogin(ctx context.Context, opts DesktopLoginOptions) ([]WorkspaceCre
 
 	status(fmt.Sprintf("Found %d workspace(s). Validating...", len(teams)))
 
+	httpClient := opts.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
 	var results []WorkspaceCredentials
 	for teamID, team := range teams {
-		ws, err := validateDesktopCredentials(ctx, team.Token, cookie, "https://slack.com/api/auth.test")
+		ws, err := validateDesktopCredentials(ctx, httpClient, team.Token, cookie, "https://slack.com/api/auth.test")
 		if err != nil {
 			status(fmt.Sprintf("Warning: workspace %s (%s) failed validation: %v", team.Name, teamID, err))
 			continue
@@ -109,7 +119,8 @@ type desktopTeam struct {
 }
 
 // extractTokensFromLevelDB reads workspace tokens from Slack's LevelDB.
-// Looks for localConfig_v2 or localConfig_v3 keys and extracts xoxc- tokens.
+// Chromium prefixes localStorage keys with the origin and separator bytes,
+// so we scan all keys for ones containing "localConfig_v2" or "localConfig_v3".
 func extractTokensFromLevelDB(dbPath string) (map[string]desktopTeam, error) {
 	db, err := leveldb.OpenFile(dbPath, &opt.Options{ReadOnly: true})
 	if err != nil {
@@ -117,18 +128,26 @@ func extractTokensFromLevelDB(dbPath string) (map[string]desktopTeam, error) {
 	}
 	defer db.Close()
 
-	// Try v3 first, fall back to v2.
 	var configData []byte
-	for _, key := range []string{"localConfig_v3", "localConfig_v2"} {
-		data, err := db.Get([]byte(key), nil)
-		if err == nil {
-			configData = data
+	iter := db.NewIterator(nil, nil)
+	defer iter.Release()
+	for iter.Next() {
+		key := string(iter.Key())
+		if strings.Contains(key, "localConfig_v3") || strings.Contains(key, "localConfig_v2") {
+			configData = iter.Value()
 			break
 		}
 	}
 	if configData == nil {
 		return nil, fmt.Errorf("localConfig_v2/v3 not found in LevelDB")
 	}
+
+	// Chromium LevelDB values may have a binary prefix before the JSON.
+	jsonStart := bytes.IndexByte(configData, '{')
+	if jsonStart < 0 {
+		return nil, fmt.Errorf("no JSON found in localConfig value")
+	}
+	configData = configData[jsonStart:]
 
 	var config struct {
 		Teams map[string]desktopTeam `json:"teams"`
@@ -194,15 +213,11 @@ func extractCookie(cookiesPath, password string) (string, error) {
 				continue
 			}
 			// Extract xoxd- token from decrypted value.
+			// Keep the URL-encoded form - Slack requires it.
 			re := regexp.MustCompile(`xoxd-[A-Za-z0-9%/+_=.-]+`)
 			m := re.FindString(decrypted)
 			if m != "" {
-				// URL-decode the cookie value.
-				decoded, err := url.QueryUnescape(m)
-				if err != nil {
-					return m, nil
-				}
-				return decoded, nil
+				return m, nil
 			}
 		}
 	}
@@ -260,15 +275,16 @@ func decryptCookie(encrypted []byte, password string) (string, error) {
 
 // validateDesktopCredentials calls auth.test with the given token and cookie
 // to get workspace metadata. The endpoint parameter allows testing with httptest.
-func validateDesktopCredentials(ctx context.Context, token, cookie, endpoint string) (*WorkspaceCredentials, error) {
+func validateDesktopCredentials(ctx context.Context, client *http.Client, token, cookie, endpoint string) (*WorkspaceCredentials, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Cookie", "d="+cookie)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -298,17 +314,17 @@ func validateDesktopCredentials(ctx context.Context, token, cookie, endpoint str
 	}, nil
 }
 
-// copyDir copies a directory using cp -cR (copy-on-write on APFS).
+// copyDir copies a directory recursively.
 // Returns the path to the temporary copy.
 func copyDir(src string) (string, error) {
 	tmp, err := os.MkdirTemp("", "slack-leveldb-*")
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command("cp", "-cR", src+"/.", tmp)
+	cmd := exec.Command("cp", "-R", src+"/.", tmp)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.RemoveAll(tmp)
-		return "", fmt.Errorf("cp -cR: %s: %w", out, err)
+		return "", fmt.Errorf("cp: %s: %w", out, err)
 	}
 	// Remove LOCK file so goleveldb can open it.
 	os.Remove(filepath.Join(tmp, "LOCK"))
