@@ -43,7 +43,7 @@ cmd/
   reaction.go    # reaction list
 internal/
   api/           # Slack API client wrapper (Client, Paginate[T], ClassifyError, WithCookie)
-  auth/          # credentials CRUD, OAuth flow, Chrome CDP extraction, token resolution
+  auth/          # credentials CRUD, OAuth flow, Desktop extraction, token resolution
   output/        # Printer (JSONL), Meta, Error with exit codes
   resolve/       # channel/user name-to-ID resolution with in-memory cache
 ```
@@ -69,9 +69,9 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 - Channel list defaults to member-only. `--include-non-member` to expand.
 - Single-page pagination by default. `--cursor` to continue, `--all` to fetch everything.
 - `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). Used by `--all` and by the resolver internally.
-- `api.Client` wraps `slack-go/slack` with separate bot/user token clients. `WithCookie` injects `d` cookie via custom `http.RoundTripper` for `xoxc-` tokens.
-- Chrome auth (`--chrome`) uses `chromedp` to extract `xoxc-` tokens and `d` cookie from browser session. Supports all workspaces in a single extraction. Does NOT work with Enterprise Grid orgs - Slack's anomaly detection signs the user out when extracted tokens are used from a non-browser context. Enterprise Grid requires a proper Slack app.
-- `auth_method` field in credentials.json tracks how each workspace was authenticated. Used for context-specific error hints.
+- `api.Client` wraps `slack-go/slack` with separate bot/user token clients. `WithCookie` injects `d` cookie + Chrome user-agent via custom `http.RoundTripper` for `xoxc-` tokens.
+- Desktop auth (`--desktop`) reads `xoxc-` tokens from Slack Desktop's LevelDB and decrypts the `d` cookie from its SQLite cookies DB using the Slack Safe Storage password (`SLACK_SAFE_STORAGE_PASSWORD` env var). Works with Enterprise Grid.
+- `auth_method` field in credentials.json tracks how each workspace was authenticated (`"oauth"` or `"desktop"`). Used for context-specific error hints.
 - `SLACK_COOKIE` env var provides the `d` cookie for `xoxc-` token auth without stored credentials.
 - No text output format. No `--format`, `--raw`, or `--no-pager` flags.
 - `--fields` for output field filtering. `--quiet` suppresses stdout entirely.
