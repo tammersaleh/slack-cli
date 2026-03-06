@@ -16,10 +16,11 @@ const (
 
 // Error represents a structured CLI error written to stderr as JSON.
 type Error struct {
-	Err    string `json:"error"`
-	Detail string `json:"detail,omitempty"`
-	Hint   string `json:"hint,omitempty"`
-	Code   int    `json:"-"`
+	Err      string `json:"error"`
+	Detail   string `json:"detail,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+	Code     int    `json:"-"`
 }
 
 func (e *Error) Error() string {

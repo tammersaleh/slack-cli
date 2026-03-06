@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net"
 
 	"github.com/slack-go/slack"
@@ -17,15 +18,38 @@ var authErrors = map[string]bool{
 	"token_expired":   true,
 }
 
+// RateLimitExhaustedError is returned when Paginate exhausts all retries.
+type RateLimitExhaustedError struct {
+	Err      error
+	Endpoint string
+	Retries  int
+}
+
+func (e *RateLimitExhaustedError) Error() string {
+	return fmt.Sprintf("rate limited after %d retries on %s", e.Retries, e.Endpoint)
+}
+
+func (e *RateLimitExhaustedError) Unwrap() error { return e.Err }
+
 // ClassifyError maps a Slack API error to an output.Error with the
 // appropriate exit code.
 func ClassifyError(err error) *output.Error {
+	var rlExhausted *RateLimitExhaustedError
+	if errors.As(err, &rlExhausted) {
+		return &output.Error{
+			Err:      "rate_limited",
+			Detail:   fmt.Sprintf("Rate limited after %d retries on %s", rlExhausted.Retries, rlExhausted.Endpoint),
+			Endpoint: rlExhausted.Endpoint,
+			Code:     output.ExitRateLimit,
+		}
+	}
+
 	var rateLimitErr *slack.RateLimitedError
 	if errors.As(err, &rateLimitErr) {
 		return &output.Error{
-			Err:  "rate_limited",
+			Err:    "rate_limited",
 			Detail: "Rate limited after maximum retries",
-			Code: output.ExitRateLimit,
+			Code:   output.ExitRateLimit,
 		}
 	}
 

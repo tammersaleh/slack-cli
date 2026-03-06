@@ -16,8 +16,9 @@ type PageFunc[T any] func(cursor string) (items []T, nextCursor string, err erro
 
 // Paginate collects pages of results until the cursor is exhausted or limit
 // items have been collected. A limit of 0 means no limit. Rate-limited
-// requests are retried up to maxRetries times.
-func Paginate[T any](ctx context.Context, limit uint, fetch PageFunc[T]) ([]T, error) {
+// requests are retried up to maxRetries times. The endpoint name is included
+// in rate limit errors for diagnostics.
+func Paginate[T any](ctx context.Context, endpoint string, limit uint, fetch PageFunc[T]) ([]T, error) {
 	var all []T
 	cursor := ""
 
@@ -26,7 +27,7 @@ func Paginate[T any](ctx context.Context, limit uint, fetch PageFunc[T]) ([]T, e
 			return nil, err
 		}
 
-		items, next, err := fetchWithRetry(ctx, cursor, fetch)
+		items, next, err := fetchWithRetry(ctx, endpoint, cursor, fetch)
 		if err != nil {
 			return nil, err
 		}
@@ -44,7 +45,7 @@ func Paginate[T any](ctx context.Context, limit uint, fetch PageFunc[T]) ([]T, e
 	}
 }
 
-func fetchWithRetry[T any](ctx context.Context, cursor string, fetch PageFunc[T]) ([]T, string, error) {
+func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T]) ([]T, string, error) {
 	for attempt := range maxRetries {
 		items, next, err := fetch(cursor)
 		if err == nil {
@@ -58,7 +59,7 @@ func fetchWithRetry[T any](ctx context.Context, cursor string, fetch PageFunc[T]
 
 		// Last attempt exhausted.
 		if attempt == maxRetries-1 {
-			return nil, "", err
+			return nil, "", &RateLimitExhaustedError{Err: err, Endpoint: endpoint, Retries: maxRetries}
 		}
 
 		wait := rlErr.RetryAfter

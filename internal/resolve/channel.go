@@ -58,7 +58,7 @@ func (r *Resolver) loadChannels(ctx context.Context) (map[string]string, error) 
 	}
 
 	bot := r.client.Bot()
-	chans, err := api.Paginate(ctx, 0, func(cursor string) ([]slack.Channel, string, error) {
+	chans, err := api.Paginate(ctx, "conversations.list", 0, func(cursor string) ([]slack.Channel, string, error) {
 		return bot.GetConversationsContext(ctx, &slack.GetConversationsParameters{
 			Types:           []string{"public_channel", "private_channel"},
 			Limit:           200,
