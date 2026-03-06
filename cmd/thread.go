@@ -63,6 +63,11 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 			return &output.Error{Err: "thread_not_found", Detail: "No message at timestamp " + c.Timestamp, Code: output.ExitGeneral}
 		}
 
+		// Slack returns the parent as the sole message when there are no replies.
+		if len(msgs) == 1 && msgs[0].ReplyCount == 0 {
+			return &output.Error{Err: "thread_not_found", Detail: "Message has no replies", Code: output.ExitGeneral}
+		}
+
 		for _, msg := range msgs {
 			if err := p.PrintItem(messageToMap(msg)); err != nil {
 				return err

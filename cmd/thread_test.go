@@ -60,6 +60,29 @@ func TestThreadList_EmptyThread(t *testing.T) {
 	}
 }
 
+func TestThreadList_NoReplies(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
+		// Slack API returns just the parent when there are no replies.
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"has_more": false,
+			"messages": []map[string]any{
+				{"type": "message", "user": "U01", "text": "parent only", "ts": "1709251200.000100", "reply_count": 0},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+
+	_, err := runWithMock(t, mux, "thread", "list", "C01ABC", "1709251200.000100")
+	if err == nil {
+		t.Fatal("expected thread_not_found error when message has no replies")
+	}
+	if err.Error() != "thread_not_found" {
+		t.Errorf("expected error 'thread_not_found', got %q", err.Error())
+	}
+}
+
 func TestThreadList_ReadAlias(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +90,8 @@ func TestThreadList_ReadAlias(t *testing.T) {
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{
-				{"type": "message", "text": "parent", "ts": "1709251200.000100"},
+				{"type": "message", "text": "parent", "ts": "1709251200.000100", "thread_ts": "1709251200.000100", "reply_count": 1},
+				{"type": "message", "text": "reply", "ts": "1709251300.000150", "thread_ts": "1709251200.000100"},
 			},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
@@ -79,7 +103,7 @@ func TestThreadList_ReadAlias(t *testing.T) {
 	}
 
 	lines := nonEmptyLines(out)
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d:\n%s", len(lines), out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines (parent + reply + meta), got %d:\n%s", len(lines), out)
 	}
 }
