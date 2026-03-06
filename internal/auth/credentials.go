@@ -29,6 +29,7 @@ type ResolvedCredentials struct {
 	UserToken  string
 	Cookie     string
 	AuthMethod string
+	TeamID     string
 }
 
 // DefaultCredentialsPath returns ~/.config/slack-cli/credentials.json.
@@ -102,12 +103,13 @@ func ResolveCredentials(path string, workspace string) (*ResolvedCredentials, er
 
 	if workspace == "" {
 		if len(creds.Workspaces) == 1 {
-			for _, ws := range creds.Workspaces {
+			for key, ws := range creds.Workspaces {
 				return &ResolvedCredentials{
 					BotToken:   ws.BotToken,
 					UserToken:  ws.UserToken,
 					Cookie:     ws.Cookie,
 					AuthMethod: ws.AuthMethod,
+					TeamID:     key,
 				}, nil
 			}
 		}
@@ -123,5 +125,6 @@ func ResolveCredentials(path string, workspace string) (*ResolvedCredentials, er
 		UserToken:  ws.UserToken,
 		Cookie:     ws.Cookie,
 		AuthMethod: ws.AuthMethod,
+		TeamID:     workspace,
 	}, nil
 }

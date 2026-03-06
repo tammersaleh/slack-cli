@@ -170,6 +170,99 @@ func TestPaginate_RateLimitExhausted(t *testing.T) {
 	}
 }
 
+func TestPaginateEach_AllPages(t *testing.T) {
+	calls := 0
+	var collected []string
+	err := PaginateEach(context.Background(), testEndpoint, func(cursor string) ([]string, string, error) {
+		calls++
+		switch cursor {
+		case "":
+			return []string{"a", "b"}, "page2", nil
+		case "page2":
+			return []string{"c"}, "", nil
+		default:
+			t.Fatalf("unexpected cursor %q", cursor)
+			return nil, "", nil
+		}
+	}, func(items []string) bool {
+		collected = append(collected, items...)
+		return false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collected) != 3 {
+		t.Errorf("got %d items, want 3", len(collected))
+	}
+	if calls != 2 {
+		t.Errorf("got %d calls, want 2", calls)
+	}
+}
+
+func TestPaginateEach_EarlyExit(t *testing.T) {
+	calls := 0
+	err := PaginateEach(context.Background(), testEndpoint, func(cursor string) ([]string, string, error) {
+		calls++
+		switch cursor {
+		case "":
+			return []string{"a", "b"}, "page2", nil
+		case "page2":
+			return []string{"target", "d"}, "page3", nil
+		default:
+			t.Fatalf("should not fetch cursor %q", cursor)
+			return nil, "", nil
+		}
+	}, func(items []string) bool {
+		for _, item := range items {
+			if item == "target" {
+				return true
+			}
+		}
+		return false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("got %d calls, want 2 (should stop after finding target)", calls)
+	}
+}
+
+func TestPaginateEach_FetchError(t *testing.T) {
+	err := PaginateEach(context.Background(), testEndpoint, func(cursor string) ([]string, string, error) {
+		return nil, "", errors.New("api error")
+	}, func(items []string) bool {
+		return false
+	})
+	if err == nil {
+		t.Error("expected error")
+	}
+}
+
+func TestPaginateEach_RateLimitRetry(t *testing.T) {
+	calls := 0
+	var collected []string
+	err := PaginateEach(context.Background(), testEndpoint, func(cursor string) ([]string, string, error) {
+		calls++
+		if calls == 1 {
+			return nil, "", &slack.RateLimitedError{RetryAfter: time.Millisecond}
+		}
+		return []string{"a"}, "", nil
+	}, func(items []string) bool {
+		collected = append(collected, items...)
+		return false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(collected) != 1 {
+		t.Errorf("got %d items, want 1", len(collected))
+	}
+	if calls != 2 {
+		t.Errorf("got %d calls, want 2", calls)
+	}
+}
+
 func TestPaginate_RateLimitContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 

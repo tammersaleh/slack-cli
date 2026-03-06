@@ -3,6 +3,7 @@ package cmd
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/tammersaleh/slack-cli/internal/api"
@@ -21,8 +22,9 @@ type CLI struct {
 	out io.Writer
 	err io.Writer
 
-	// authMethod is set by NewClient from resolved credentials.
+	// Set by NewClient from resolved credentials.
 	authMethod string
+	teamID     string
 
 	Auth     AuthCmd     `cmd:"" help:"Manage authentication."`
 	Channel  ChannelCmd  `cmd:"" help:"Read channel information."`
@@ -96,6 +98,7 @@ func (c *CLI) NewClient() (*api.Client, error) {
 	}
 
 	c.authMethod = rc.AuthMethod
+	c.teamID = rc.TeamID
 
 	var opts []api.Option
 	if rc.UserToken != "" {
@@ -129,5 +132,9 @@ func (c *CLI) ClassifyError(err error) *output.Error {
 
 // NewResolver creates a channel/user name resolver from the API client.
 func (c *CLI) NewResolver(client *api.Client) *resolve.Resolver {
-	return resolve.NewResolver(client)
+	cacheDir := ""
+	if dir, err := os.UserConfigDir(); err == nil {
+		cacheDir = filepath.Join(dir, "slack-cli", "cache")
+	}
+	return resolve.NewResolver(client, c.teamID, cacheDir)
 }

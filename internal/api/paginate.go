@@ -45,6 +45,32 @@ func Paginate[T any](ctx context.Context, endpoint string, limit uint, fetch Pag
 	}
 }
 
+// PaginateEach fetches pages one at a time, calling fn for each batch.
+// If fn returns true, pagination stops early (no error). Rate-limited
+// requests are retried up to maxRetries times.
+func PaginateEach[T any](ctx context.Context, endpoint string, fetch PageFunc[T], fn func(items []T) (stop bool)) error {
+	cursor := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		items, next, err := fetchWithRetry(ctx, endpoint, cursor, fetch)
+		if err != nil {
+			return err
+		}
+
+		if fn(items) {
+			return nil
+		}
+
+		if next == "" {
+			return nil
+		}
+		cursor = next
+	}
+}
+
 func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T]) ([]T, string, error) {
 	for attempt := range maxRetries {
 		items, next, err := fetch(cursor)
