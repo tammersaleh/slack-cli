@@ -16,11 +16,20 @@ type AuthCmd struct {
 }
 
 type AuthLoginCmd struct {
+	Chrome       bool   `help:"Authenticate by extracting credentials from Chrome."`
+	ChromePort   int    `help:"Connect to existing Chrome debug instance on this port." default:"0"`
 	ClientID     string `env:"SLACK_CLIENT_ID" help:"Slack app client ID."`
 	ClientSecret string `env:"SLACK_CLIENT_SECRET" help:"Slack app client secret."`
 }
 
 func (c *AuthLoginCmd) Run(cli *CLI) error {
+	if c.Chrome || c.ChromePort > 0 {
+		return c.runChrome(cli)
+	}
+	return c.runOAuth(cli)
+}
+
+func (c *AuthLoginCmd) runOAuth(cli *CLI) error {
 	if c.ClientID == "" || c.ClientSecret == "" {
 		return &output.Error{
 			Err:    "missing_client_credentials",
@@ -34,7 +43,34 @@ func (c *AuthLoginCmd) Run(cli *CLI) error {
 	if err != nil {
 		return err
 	}
+	ws.AuthMethod = "oauth"
 
+	return saveAndPrintWorkspaces(cli, []auth.WorkspaceCredentials{*ws})
+}
+
+func (c *AuthLoginCmd) runChrome(cli *CLI) error {
+	p := cli.NewPrinter()
+	ctx := context.Background()
+
+	workspaces, err := auth.ChromeLogin(ctx, auth.ChromeLoginOptions{
+		Port: c.ChromePort,
+		StatusFunc: func(msg string) {
+			p.PrintError(&output.Error{Err: "status", Detail: msg})
+		},
+	})
+	if err != nil {
+		return &output.Error{
+			Err:    "chrome_auth_failed",
+			Detail: err.Error(),
+			Hint:   "Make sure you're signed in to Slack in the Chrome window",
+			Code:   output.ExitGeneral,
+		}
+	}
+
+	return saveAndPrintWorkspaces(cli, workspaces)
+}
+
+func saveAndPrintWorkspaces(cli *CLI, workspaces []auth.WorkspaceCredentials) error {
 	path, err := auth.DefaultCredentialsPath()
 	if err != nil {
 		return err
@@ -44,21 +80,26 @@ func (c *AuthLoginCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	creds.Workspaces[ws.TeamID] = *ws
+	p := cli.NewPrinter()
+
+	for _, ws := range workspaces {
+		creds.Workspaces[ws.TeamID] = ws
+		if err := p.PrintItem(map[string]any{
+			"team_id":        ws.TeamID,
+			"team_name":      ws.TeamName,
+			"user_id":        ws.UserID,
+			"auth_method":    ws.AuthMethod,
+			"has_bot_token":  ws.BotToken != "",
+			"has_user_token": ws.UserToken != "",
+		}); err != nil {
+			return err
+		}
+	}
+
 	if err := auth.SaveCredentials(path, creds); err != nil {
 		return err
 	}
 
-	p := cli.NewPrinter()
-	if err := p.PrintItem(map[string]any{
-		"team_id":        ws.TeamID,
-		"team_name":      ws.TeamName,
-		"user_id":        ws.UserID,
-		"has_bot_token":  ws.BotToken != "",
-		"has_user_token": ws.UserToken != "",
-	}); err != nil {
-		return err
-	}
 	return p.PrintMeta(output.Meta{})
 }
 
