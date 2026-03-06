@@ -34,50 +34,25 @@ func TestErrorInterface(t *testing.T) {
 	}
 }
 
-func TestPrintJSON(t *testing.T) {
-	var out, errOut bytes.Buffer
-	p := &Printer{Out: &out, Err: &errOut}
+func TestPrintItem_CompactJSON(t *testing.T) {
+	var out bytes.Buffer
+	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
 
 	type item struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
-	err := p.Print(item{ID: "C123", Name: "general"})
-	if err != nil {
+	if err := p.PrintItem(item{ID: "C123", Name: "general"}); err != nil {
 		t.Fatal(err)
 	}
 
-	want := "{\n  \"id\": \"C123\",\n  \"name\": \"general\"\n}\n"
+	want := `{"id":"C123","name":"general"}` + "\n"
 	if out.String() != want {
-		t.Errorf("got:\n%s\nwant:\n%s", out.String(), want)
-	}
-	if errOut.Len() != 0 {
-		t.Errorf("unexpected stderr output: %s", errOut.String())
+		t.Errorf("got %q, want %q", out.String(), want)
 	}
 }
 
-func TestPrintJSONList(t *testing.T) {
-	var out bytes.Buffer
-	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
-
-	items := []map[string]string{
-		{"id": "C1"},
-		{"id": "C2"},
-	}
-	if err := p.Print(items); err != nil {
-		t.Fatal(err)
-	}
-
-	var got []map[string]string
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if len(got) != 2 {
-		t.Errorf("got %d items, want 2", len(got))
-	}
-}
-
-func TestPrintJSONTimestampEnrichment(t *testing.T) {
+func TestPrintItem_TimestampEnrichment(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
 
@@ -85,7 +60,7 @@ func TestPrintJSONTimestampEnrichment(t *testing.T) {
 		"ts":   "1705312200.123456",
 		"text": "hello",
 	}
-	if err := p.Print(msg); err != nil {
+	if err := p.PrintItem(msg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,19 +68,16 @@ func TestPrintJSONTimestampEnrichment(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if _, ok := got["ts_iso"]; !ok {
-		t.Error("missing ts_iso field")
-	}
 	iso, ok := got["ts_iso"].(string)
 	if !ok {
-		t.Fatal("ts_iso is not a string")
+		t.Fatal("missing ts_iso field")
 	}
 	if iso != "2024-01-15T09:50:00Z" {
 		t.Errorf("got ts_iso=%q, want %q", iso, "2024-01-15T09:50:00Z")
 	}
 }
 
-func TestPrintJSONTimestampEnrichmentNested(t *testing.T) {
+func TestPrintItem_TimestampEnrichmentNested(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
 
@@ -115,7 +87,7 @@ func TestPrintJSONTimestampEnrichmentNested(t *testing.T) {
 			"ts": "1705312260.654321",
 		},
 	}
-	if err := p.Print(msg); err != nil {
+	if err := p.PrintItem(msg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,13 +95,9 @@ func TestPrintJSONTimestampEnrichmentNested(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-
-	// Top-level ts_iso
 	if _, ok := got["ts_iso"]; !ok {
 		t.Error("missing top-level ts_iso")
 	}
-
-	// Nested ts_iso
 	nested, ok := got["latest_reply"].(map[string]any)
 	if !ok {
 		t.Fatal("latest_reply is not a map")
@@ -139,38 +107,15 @@ func TestPrintJSONTimestampEnrichmentNested(t *testing.T) {
 	}
 }
 
-func TestPrintJSONTimestampEnrichmentInList(t *testing.T) {
-	var out bytes.Buffer
-	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
-
-	msgs := []map[string]any{
-		{"ts": "1705312200.123456", "text": "first"},
-		{"ts": "1705312260.654321", "text": "second"},
-	}
-	if err := p.Print(msgs); err != nil {
-		t.Fatal(err)
-	}
-
-	var got []map[string]any
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	for i, item := range got {
-		if _, ok := item["ts_iso"]; !ok {
-			t.Errorf("item %d missing ts_iso", i)
-		}
-	}
-}
-
-func TestPrintJSONTimestampEnrichmentSuffixedKeys(t *testing.T) {
+func TestPrintItem_TimestampSuffixedKeys(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
 
 	msg := map[string]any{
-		"thread_ts":      "1705312200.123456",
+		"thread_ts":       "1705312200.123456",
 		"latest_reply_ts": "1705312260.654321",
 	}
-	if err := p.Print(msg); err != nil {
+	if err := p.PrintItem(msg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,7 +131,7 @@ func TestPrintJSONTimestampEnrichmentSuffixedKeys(t *testing.T) {
 	}
 }
 
-func TestPrintJSONNoEnrichmentForNonTimestamps(t *testing.T) {
+func TestPrintItem_NoEnrichmentForNonTimestamps(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
 
@@ -194,7 +139,7 @@ func TestPrintJSONNoEnrichmentForNonTimestamps(t *testing.T) {
 		"ts":     "1705312200.123456",
 		"events": "not-a-ts-field",
 	}
-	if err := p.Print(msg); err != nil {
+	if err := p.PrintItem(msg); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,7 +155,7 @@ func TestPrintJSONNoEnrichmentForNonTimestamps(t *testing.T) {
 	}
 }
 
-func TestPrintJSONStructWithTimestamp(t *testing.T) {
+func TestPrintItem_StructWithTimestamp(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
 
@@ -218,7 +163,7 @@ func TestPrintJSONStructWithTimestamp(t *testing.T) {
 		Ts   string `json:"ts"`
 		Text string `json:"text"`
 	}
-	if err := p.Print(message{Ts: "1705312200.123456", Text: "hello"}); err != nil {
+	if err := p.PrintItem(message{Ts: "1705312200.123456", Text: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -228,6 +173,48 @@ func TestPrintJSONStructWithTimestamp(t *testing.T) {
 	}
 	if _, ok := got["ts_iso"]; !ok {
 		t.Error("missing ts_iso on struct output")
+	}
+}
+
+func TestPrintMeta(t *testing.T) {
+	var out bytes.Buffer
+	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
+
+	if err := p.PrintMeta(Meta{HasMore: true, NextCursor: "abc123"}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := `{"_meta":{"has_more":true,"next_cursor":"abc123"}}` + "\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestPrintMeta_NoMore(t *testing.T) {
+	var out bytes.Buffer
+	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
+
+	if err := p.PrintMeta(Meta{HasMore: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := `{"_meta":{"has_more":false}}` + "\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestPrintMeta_WithErrorCount(t *testing.T) {
+	var out bytes.Buffer
+	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
+
+	if err := p.PrintMeta(Meta{HasMore: false, ErrorCount: 2}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := `{"_meta":{"has_more":false,"error_count":2}}` + "\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
 	}
 }
 
@@ -256,19 +243,12 @@ func TestPrintError(t *testing.T) {
 	if got["error"] != "channel_not_found" {
 		t.Errorf("got error=%q, want %q", got["error"], "channel_not_found")
 	}
-	if got["detail"] != "No channel matching '#nonexistent'" {
-		t.Errorf("wrong detail: %q", got["detail"])
-	}
-	if got["hint"] != "Run 'slack channel list' to see available channels" {
-		t.Errorf("wrong hint: %q", got["hint"])
-	}
-	// Code should not appear in JSON
 	if _, ok := got["code"]; ok {
 		t.Error("code field should not be in JSON output")
 	}
 }
 
-func TestPrintErrorOmitsEmpty(t *testing.T) {
+func TestPrintError_OmitsEmpty(t *testing.T) {
 	var errOut bytes.Buffer
 	p := &Printer{Out: &bytes.Buffer{}, Err: &errOut}
 
@@ -289,31 +269,31 @@ func TestPrintErrorOmitsEmpty(t *testing.T) {
 	}
 }
 
-func TestQuietSuppressesPrint(t *testing.T) {
+func TestQuiet_SuppressesPrintItem(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}, Quiet: true}
 
-	if err := p.Print(map[string]string{"id": "C123"}); err != nil {
+	if err := p.PrintItem(map[string]string{"id": "C123"}); err != nil {
 		t.Fatal(err)
 	}
 	if out.Len() != 0 {
-		t.Errorf("quiet mode should suppress Print output, got: %s", out.String())
+		t.Errorf("quiet mode should suppress PrintItem output, got: %s", out.String())
 	}
 }
 
-func TestQuietSuppressesPrintRaw(t *testing.T) {
+func TestQuiet_SuppressesPrintMeta(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}, Quiet: true}
 
-	if err := p.PrintRaw(json.RawMessage(`{"id":"C123"}`)); err != nil {
+	if err := p.PrintMeta(Meta{HasMore: false}); err != nil {
 		t.Fatal(err)
 	}
 	if out.Len() != 0 {
-		t.Errorf("quiet mode should suppress PrintRaw output, got: %s", out.String())
+		t.Errorf("quiet mode should suppress PrintMeta output, got: %s", out.String())
 	}
 }
 
-func TestQuietDoesNotSuppressPrintError(t *testing.T) {
+func TestQuiet_DoesNotSuppressPrintError(t *testing.T) {
 	var errOut bytes.Buffer
 	p := &Printer{Out: &bytes.Buffer{}, Err: &errOut, Quiet: true}
 
@@ -326,15 +306,78 @@ func TestQuietDoesNotSuppressPrintError(t *testing.T) {
 	}
 }
 
-func TestPrintRaw(t *testing.T) {
+func TestFieldFiltering(t *testing.T) {
+	var out bytes.Buffer
+	p := &Printer{Out: &out, Err: &bytes.Buffer{}, Fields: []string{"id", "name"}}
+
+	msg := map[string]any{
+		"id":           "C01ABC",
+		"name":         "general",
+		"num_members":  142,
+		"is_member":    true,
+		"unread_count": 5,
+	}
+	if err := p.PrintItem(msg); err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := got["id"]; !ok {
+		t.Error("expected 'id' field")
+	}
+	if _, ok := got["name"]; !ok {
+		t.Error("expected 'name' field")
+	}
+	if _, ok := got["num_members"]; ok {
+		t.Error("'num_members' should be filtered out")
+	}
+}
+
+func TestFieldFiltering_PreservesInput(t *testing.T) {
+	var out bytes.Buffer
+	p := &Printer{Out: &out, Err: &bytes.Buffer{}, Fields: []string{"id"}}
+
+	msg := map[string]any{
+		"input": "#general",
+		"id":    "C01ABC",
+		"name":  "general",
+	}
+	if err := p.PrintItem(msg); err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := got["input"]; !ok {
+		t.Error("'input' field should always be preserved")
+	}
+	if _, ok := got["id"]; !ok {
+		t.Error("expected 'id' field")
+	}
+	if _, ok := got["name"]; ok {
+		t.Error("'name' should be filtered out")
+	}
+}
+
+func TestFieldFiltering_EmptyMeansAll(t *testing.T) {
 	var out bytes.Buffer
 	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
 
-	raw := json.RawMessage(`{"ok":true,"channels":[]}`)
-	if err := p.PrintRaw(raw); err != nil {
+	msg := map[string]any{"id": "C01ABC", "name": "general"}
+	if err := p.PrintItem(msg); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != `{"ok":true,"channels":[]}`+"\n" {
-		t.Errorf("got %q, want raw JSON with trailing newline", out.String())
+
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 fields, got %d", len(got))
 	}
 }

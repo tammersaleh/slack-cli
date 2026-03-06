@@ -27,11 +27,8 @@ func mustParse(t *testing.T, args ...string) (*cmd.CLI, *kong.Context) {
 func TestGlobalFlags_Defaults(t *testing.T) {
 	cli, _ := mustParse(t, "user", "list")
 
-	if cli.Format != "json" {
-		t.Errorf("expected default format 'json', got %q", cli.Format)
-	}
-	if cli.Limit != 0 {
-		t.Errorf("expected default limit 0, got %d", cli.Limit)
+	if cli.Fields != "" {
+		t.Errorf("expected default fields empty, got %q", cli.Fields)
 	}
 	if cli.Quiet {
 		t.Error("expected quiet to default to false")
@@ -39,55 +36,34 @@ func TestGlobalFlags_Defaults(t *testing.T) {
 	if cli.Verbose {
 		t.Error("expected verbose to default to false")
 	}
-	if cli.Raw {
-		t.Error("expected raw to default to false")
-	}
-	if cli.NoPager {
-		t.Error("expected no-pager to default to false")
-	}
 }
 
 func TestGlobalFlags_Override(t *testing.T) {
 	cli, _ := mustParse(t,
-		"--format", "text",
 		"--workspace", "myteam",
+		"--fields", "id,name",
 		"--quiet",
 		"--verbose",
-		"--no-pager",
-		"--limit", "25",
-		"--raw",
 		"user", "list",
 	)
 
-	if cli.Format != "text" {
-		t.Errorf("expected format 'text', got %q", cli.Format)
-	}
 	if cli.Workspace != "myteam" {
 		t.Errorf("expected workspace 'myteam', got %q", cli.Workspace)
+	}
+	if cli.Fields != "id,name" {
+		t.Errorf("expected fields 'id,name', got %q", cli.Fields)
 	}
 	if !cli.Quiet {
 		t.Error("expected quiet to be true")
 	}
 	if !cli.Verbose {
 		t.Error("expected verbose to be true")
-	}
-	if !cli.NoPager {
-		t.Error("expected no-pager to be true")
-	}
-	if cli.Limit != 25 {
-		t.Errorf("expected limit 25, got %d", cli.Limit)
-	}
-	if !cli.Raw {
-		t.Error("expected raw to be true")
 	}
 }
 
 func TestGlobalFlags_ShortFlags(t *testing.T) {
-	cli, _ := mustParse(t, "-f", "text", "-w", "myteam", "-q", "-v", "user", "list")
+	cli, _ := mustParse(t, "-w", "myteam", "-q", "-v", "user", "list")
 
-	if cli.Format != "text" {
-		t.Errorf("expected format 'text', got %q", cli.Format)
-	}
 	if cli.Workspace != "myteam" {
 		t.Errorf("expected workspace 'myteam', got %q", cli.Workspace)
 	}
@@ -96,32 +72,16 @@ func TestGlobalFlags_ShortFlags(t *testing.T) {
 	}
 	if !cli.Verbose {
 		t.Error("expected verbose to be true")
-	}
-}
-
-func TestGlobalFlags_InvalidFormat(t *testing.T) {
-	var cli cmd.CLI
-	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = parser.Parse([]string{"--format", "xml", "user", "list"})
-	if err == nil {
-		t.Error("expected error for invalid format, got nil")
 	}
 }
 
 func TestGlobalFlags_EnvVars(t *testing.T) {
 	t.Setenv("SLACK_WORKSPACE", "envteam")
-	t.Setenv("SLACK_FORMAT", "text")
 
 	cli, _ := mustParse(t, "user", "list")
 
 	if cli.Workspace != "envteam" {
 		t.Errorf("expected workspace 'envteam' from env, got %q", cli.Workspace)
-	}
-	if cli.Format != "text" {
-		t.Errorf("expected format 'text' from env, got %q", cli.Format)
 	}
 }
 
@@ -132,6 +92,38 @@ func TestGlobalFlags_FlagsOverrideEnv(t *testing.T) {
 
 	if cli.Workspace != "flagteam" {
 		t.Errorf("expected workspace 'flagteam' from flag, got %q", cli.Workspace)
+	}
+}
+
+func TestParsedFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		expect []string
+	}{
+		{"empty", "", nil},
+		{"single", "id", []string{"id"}},
+		{"multiple", "id,name,email", []string{"id", "name", "email"}},
+		{"with spaces", "id, name , email", []string{"id", "name", "email"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cli := &cmd.CLI{Fields: tt.input}
+			got := cli.ParsedFields()
+			if tt.expect == nil && got != nil {
+				t.Errorf("expected nil, got %v", got)
+			}
+			if len(got) != len(tt.expect) {
+				t.Errorf("expected %d fields, got %d", len(tt.expect), len(got))
+				return
+			}
+			for i := range got {
+				if got[i] != tt.expect[i] {
+					t.Errorf("field %d: got %q, want %q", i, got[i], tt.expect[i])
+				}
+			}
+		})
 	}
 }
 

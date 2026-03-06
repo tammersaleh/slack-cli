@@ -3,6 +3,7 @@ package output
 import (
 	"encoding/json"
 	"io"
+	"strings"
 )
 
 const (
@@ -25,39 +26,95 @@ func (e *Error) Error() string {
 	return e.Err
 }
 
-// Printer writes command output in the configured format.
+// Meta is the _meta trailer emitted after all data lines.
+type Meta struct {
+	HasMore    bool   `json:"has_more"`
+	NextCursor string `json:"next_cursor,omitempty"`
+	ErrorCount int    `json:"error_count,omitempty"`
+}
+
+type metaWrapper struct {
+	Meta Meta `json:"_meta"`
+}
+
+// Printer writes JSONL output to stdout and errors to stderr.
 type Printer struct {
-	Out   io.Writer
-	Err   io.Writer
-	Quiet bool
-	Raw   bool
+	Out    io.Writer
+	Err    io.Writer
+	Quiet  bool
+	Fields []string // top-level field whitelist; empty means all fields
 }
 
-// Print writes v as indented JSON to Out. Slack timestamps are enriched
-// with _iso siblings. In quiet mode, output is suppressed.
-func (p *Printer) Print(v any) error {
+// PrintItem writes a single data line as compact JSON with timestamp enrichment
+// and field filtering. Each call produces one line of JSONL.
+func (p *Printer) PrintItem(v any) error {
 	if p.Quiet {
 		return nil
 	}
-	return writeEnrichedJSON(p.Out, v)
-}
 
-// PrintRaw writes raw JSON bytes to Out with a trailing newline.
-// In quiet mode, output is suppressed.
-func (p *Printer) PrintRaw(data json.RawMessage) error {
-	if p.Quiet {
-		return nil
-	}
-	if _, err := p.Out.Write(data); err != nil {
+	raw, err := json.Marshal(v)
+	if err != nil {
 		return err
 	}
-	_, err := p.Out.Write([]byte("\n"))
+
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		// Not an object - write as-is.
+		raw = append(raw, '\n')
+		_, err := p.Out.Write(raw)
+		return err
+	}
+
+	enrichTimestamps(m)
+	m = filterFields(m, p.Fields)
+
+	out, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	_, err = p.Out.Write(out)
 	return err
 }
 
-// PrintError writes an Error as JSON to Err (stderr). Not affected by quiet mode.
+// PrintMeta writes the _meta trailer line.
+func (p *Printer) PrintMeta(meta Meta) error {
+	if p.Quiet {
+		return nil
+	}
+	out, err := json.Marshal(metaWrapper{Meta: meta})
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	_, err = p.Out.Write(out)
+	return err
+}
+
+// PrintError writes an Error as compact JSON to stderr. Not affected by quiet mode.
 func (p *Printer) PrintError(e *Error) error {
-	enc := json.NewEncoder(p.Err)
-	enc.SetIndent("", "  ")
-	return enc.Encode(e)
+	return json.NewEncoder(p.Err).Encode(e)
+}
+
+// filterFields returns a copy of m containing only the specified fields.
+// If fields is empty, returns m unchanged. The "input" field is always preserved
+// (spec requirement for info commands).
+func filterFields(m map[string]any, fields []string) map[string]any {
+	if len(fields) == 0 {
+		return m
+	}
+
+	allowed := make(map[string]bool, len(fields)+1)
+	for _, f := range fields {
+		allowed[strings.TrimSpace(f)] = true
+	}
+	allowed["input"] = true
+
+	filtered := make(map[string]any, len(allowed))
+	for k, v := range m {
+		if allowed[k] {
+			filtered[k] = v
+		}
+	}
+	return filtered
 }

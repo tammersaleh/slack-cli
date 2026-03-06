@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/auth"
@@ -12,12 +13,9 @@ import (
 
 type CLI struct {
 	Workspace string `short:"w" help:"Select workspace (name or ID)." env:"SLACK_WORKSPACE"`
-	Format    string `short:"f" enum:"json,text" default:"json" help:"Output format." env:"SLACK_FORMAT"`
-	Quiet     bool   `short:"q" help:"Suppress non-essential output."`
-	Verbose   bool   `short:"v" help:"Include extra diagnostic info on stderr."`
-	NoPager   bool   `help:"Disable automatic paging of long output."`
-	Limit     uint   `help:"Max items to return for list commands (0 = all)." default:"0"`
-	Raw       bool   `help:"Output raw API responses without transformation."`
+	Fields    string `help:"Comma-separated list of top-level fields to include." env:"SLACK_FIELDS"`
+	Quiet     bool   `short:"q" help:"Suppress stdout output (exit code and stderr only)."`
+	Verbose   bool   `short:"v" help:"Log diagnostics to stderr as JSON."`
 
 	Auth     AuthCmd     `cmd:"" help:"Manage authentication."`
 	Channel  ChannelCmd  `cmd:"" help:"Read channel information."`
@@ -27,7 +25,52 @@ type CLI struct {
 	Reaction ReactionCmd `cmd:"" help:"Read reactions."`
 }
 
-// Stub subcommands. Each will be fleshed out in later issues.
+// ParsedFields returns the --fields value split into individual field names.
+func (c *CLI) ParsedFields() []string {
+	if c.Fields == "" {
+		return nil
+	}
+	parts := strings.Split(c.Fields, ",")
+	fields := make([]string, 0, len(parts))
+	for _, f := range parts {
+		f = strings.TrimSpace(f)
+		if f != "" {
+			fields = append(fields, f)
+		}
+	}
+	return fields
+}
+
+// NewPrinter creates a Printer configured from global CLI flags.
+func (c *CLI) NewPrinter() *output.Printer {
+	return &output.Printer{
+		Out:    os.Stdout,
+		Err:    os.Stderr,
+		Quiet:  c.Quiet,
+		Fields: c.ParsedFields(),
+	}
+}
+
+// NewClient creates an API client by resolving tokens from credentials or env vars.
+func (c *CLI) NewClient() (*api.Client, error) {
+	path, err := auth.DefaultCredentialsPath()
+	if err != nil {
+		return nil, err
+	}
+
+	bot, user, err := auth.ResolveToken(path, c.Workspace)
+	if err != nil {
+		return nil, err
+	}
+
+	var opts []api.Option
+	if user != "" {
+		opts = append(opts, api.WithUserToken(user))
+	}
+	return api.New(bot, opts...), nil
+}
+
+// Stub subcommands. Each will be fleshed out in its own commit.
 
 type AuthCmd struct {
 	Login  AuthLoginCmd  `cmd:"" help:"Authenticate with a Slack workspace."`
@@ -42,7 +85,12 @@ type AuthLoginCmd struct {
 
 func (c *AuthLoginCmd) Run(cli *CLI) error {
 	if c.ClientID == "" || c.ClientSecret == "" {
-		return fmt.Errorf("SLACK_CLIENT_ID and SLACK_CLIENT_SECRET must be set; see README for setup instructions")
+		return &output.Error{
+			Err:    "missing_client_credentials",
+			Detail: "SLACK_CLIENT_ID and SLACK_CLIENT_SECRET must be set",
+			Hint:   "See README for Slack app setup instructions",
+			Code:   output.ExitGeneral,
+		}
 	}
 
 	ws, err := auth.Login(context.Background(), c.ClientID, c.ClientSecret)
@@ -64,13 +112,17 @@ func (c *AuthLoginCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	p := &output.Printer{Out: os.Stdout, Err: os.Stderr, Quiet: cli.Quiet}
-	return p.Print(map[string]string{
-		"status":    "authenticated",
-		"workspace": ws.TeamName,
-		"team_id":   ws.TeamID,
-		"user_id":   ws.UserID,
-	})
+	p := cli.NewPrinter()
+	if err := p.PrintItem(map[string]any{
+		"team_id":        ws.TeamID,
+		"team_name":      ws.TeamName,
+		"user_id":        ws.UserID,
+		"has_bot_token":  ws.BotToken != "",
+		"has_user_token": ws.UserToken != "",
+	}); err != nil {
+		return err
+	}
+	return p.PrintMeta(output.Meta{})
 }
 
 type AuthLogoutCmd struct {
@@ -92,21 +144,34 @@ func (c *AuthLogoutCmd) Run(cli *CLI) error {
 		workspace = cli.Workspace
 	}
 
-	// If still empty, and only one workspace, use that.
 	if workspace == "" {
 		if len(creds.Workspaces) == 1 {
 			for name := range creds.Workspaces {
 				workspace = name
 			}
 		} else if len(creds.Workspaces) > 1 {
-			return fmt.Errorf("multiple workspaces configured; specify which to log out of")
+			return &output.Error{
+				Err:    "not_authed",
+				Detail: "Multiple workspaces configured; specify which to log out of",
+				Code:   output.ExitAuth,
+			}
 		} else {
-			return fmt.Errorf("no credentials found")
+			return &output.Error{
+				Err:  "not_authed",
+				Detail: "No credentials found",
+				Hint: "Run 'slack auth login' first",
+				Code: output.ExitAuth,
+			}
 		}
 	}
 
-	if _, ok := creds.Workspaces[workspace]; !ok {
-		return fmt.Errorf("workspace %q not found", workspace)
+	ws, ok := creds.Workspaces[workspace]
+	if !ok {
+		return &output.Error{
+			Err:    "not_authed",
+			Detail: fmt.Sprintf("Workspace %q not found", workspace),
+			Code:   output.ExitAuth,
+		}
 	}
 
 	delete(creds.Workspaces, workspace)
@@ -114,11 +179,15 @@ func (c *AuthLogoutCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	p := &output.Printer{Out: os.Stdout, Err: os.Stderr, Quiet: cli.Quiet}
-	return p.Print(map[string]string{
-		"status":    "logged out",
-		"workspace": workspace,
-	})
+	p := cli.NewPrinter()
+	if err := p.PrintItem(map[string]any{
+		"team_id":   workspace,
+		"team_name": ws.TeamName,
+		"status":    "logged_out",
+	}); err != nil {
+		return err
+	}
+	return p.PrintMeta(output.Meta{})
 }
 
 type AuthStatusCmd struct{}
@@ -134,52 +203,41 @@ func (c *AuthStatusCmd) Run(cli *CLI) error {
 	}
 
 	if len(creds.Workspaces) == 0 {
-		return fmt.Errorf("not authenticated; run 'slack auth login' first")
+		return &output.Error{
+			Err:  "not_authed",
+			Detail: "No credentials found",
+			Hint: "Run 'slack auth login' or set SLACK_TOKEN",
+			Code: output.ExitAuth,
+		}
 	}
 
-	type workspaceStatus struct {
-		TeamName     string `json:"team_name"`
-		TeamID       string `json:"team_id"`
-		User         string `json:"user"`
-		UserID       string `json:"user_id"`
-		URL          string `json:"url,omitempty"`
-		HasBotToken  bool   `json:"has_bot_token"`
-		HasUserToken bool   `json:"has_user_token"`
-		TokenValid   bool   `json:"token_valid"`
-		Error        string `json:"error,omitempty"`
-	}
-
+	p := cli.NewPrinter()
 	ctx := context.Background()
-	statuses := []workspaceStatus{}
 	for _, ws := range creds.Workspaces {
-		status := workspaceStatus{
-			TeamName:     ws.TeamName,
-			TeamID:       ws.TeamID,
-			UserID:       ws.UserID,
-			HasBotToken:  ws.BotToken != "",
-			HasUserToken: ws.UserToken != "",
+		item := map[string]any{
+			"team_id":        ws.TeamID,
+			"team_name":      ws.TeamName,
+			"user_id":        ws.UserID,
+			"has_bot_token":  ws.BotToken != "",
+			"has_user_token": ws.UserToken != "",
 		}
 
 		if ws.BotToken != "" {
 			client := api.New(ws.BotToken)
 			result, err := client.AuthTest(ctx)
 			if err != nil {
-				status.Error = err.Error()
+				item["error"] = err.Error()
 			} else {
-				status.TokenValid = true
-				status.User = result.User
-				status.URL = result.URL
+				item["user"] = result.User
+				item["url"] = result.URL
 			}
 		}
 
-		statuses = append(statuses, status)
+		if err := p.PrintItem(item); err != nil {
+			return err
+		}
 	}
-
-	p := &output.Printer{Out: os.Stdout, Err: os.Stderr, Quiet: cli.Quiet}
-	if len(statuses) == 1 {
-		return p.Print(statuses[0])
-	}
-	return p.Print(statuses)
+	return p.PrintMeta(output.Meta{})
 }
 
 type ChannelCmd struct {
@@ -195,7 +253,7 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 }
 
 type ChannelInfoCmd struct {
-	Channel string `arg:"" help:"Channel ID or name."`
+	Channel []string `arg:"" help:"Channel ID or name."`
 }
 
 func (c *ChannelInfoCmd) Run(cli *CLI) error {
@@ -212,7 +270,7 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 
 type MessageCmd struct {
 	List MessageListCmd `cmd:"" aliases:"read" help:"List messages in a channel."`
-	Get  MessageGetCmd  `cmd:"" help:"Get a single message by timestamp."`
+	Get  MessageGetCmd  `cmd:"" help:"Get specific messages by timestamp."`
 }
 
 type MessageListCmd struct {
@@ -224,8 +282,8 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 }
 
 type MessageGetCmd struct {
-	Channel   string `arg:"" help:"Channel ID or name."`
-	Timestamp string `arg:"" help:"Message timestamp."`
+	Channel    string   `arg:"" help:"Channel ID or name."`
+	Timestamps []string `arg:"" help:"Message timestamps."`
 }
 
 func (c *MessageGetCmd) Run(cli *CLI) error {
@@ -257,7 +315,7 @@ func (c *UserListCmd) Run(cli *CLI) error {
 }
 
 type UserInfoCmd struct {
-	User string `arg:"" help:"User ID, @name, or email."`
+	Users []string `arg:"" help:"User ID or email."`
 }
 
 func (c *UserInfoCmd) Run(cli *CLI) error {
@@ -269,8 +327,8 @@ type ReactionCmd struct {
 }
 
 type ReactionListCmd struct {
-	Channel   string `arg:"" help:"Channel ID or name."`
-	Timestamp string `arg:"" help:"Message timestamp."`
+	Channel    string   `arg:"" help:"Channel ID or name."`
+	Timestamps []string `arg:"" help:"Message timestamps."`
 }
 
 func (c *ReactionListCmd) Run(cli *CLI) error {
