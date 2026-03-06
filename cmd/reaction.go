@@ -71,7 +71,7 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 		return err
 	}
 	if errorCount > 0 {
-		return &output.Error{Err: "message_not_found", Code: output.ExitGeneral}
+		return &output.ExitError{Code: output.ExitGeneral}
 	}
 	return nil
 }

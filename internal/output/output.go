@@ -26,6 +26,16 @@ func (e *Error) Error() string {
 	return e.Err
 }
 
+// ExitError carries an exit code without being printed to stderr.
+// Used for partial failures where per-item errors are already on stdout.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return "exit"
+}
+
 // Meta is the _meta trailer emitted after all data lines.
 type Meta struct {
 	HasMore    bool   `json:"has_more"`

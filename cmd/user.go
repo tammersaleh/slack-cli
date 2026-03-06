@@ -134,7 +134,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 		return err
 	}
 	if errorCount > 0 {
-		return &output.Error{Err: "user_not_found", Code: output.ExitGeneral}
+		return &output.ExitError{Code: output.ExitGeneral}
 	}
 	return nil
 }

@@ -24,6 +24,11 @@ func main() {
 		return
 	}
 
+	var exitErr *output.ExitError
+	if errors.As(err, &exitErr) {
+		os.Exit(exitErr.Code)
+	}
+
 	var oErr *output.Error
 	if errors.As(err, &oErr) {
 		json.NewEncoder(os.Stderr).Encode(oErr)
