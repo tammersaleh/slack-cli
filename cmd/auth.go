@@ -190,7 +190,21 @@ func (c *AuthStatusCmd) Run(cli *CLI) error {
 
 	p := cli.NewPrinter()
 	ctx := context.Background()
-	for _, ws := range creds.Workspaces {
+
+	workspaces := creds.Workspaces
+	if cli.Workspace != "" {
+		ws, ok := creds.Workspaces[cli.Workspace]
+		if !ok {
+			return &output.Error{
+				Err:    "not_authed",
+				Detail: fmt.Sprintf("Workspace %q not found", cli.Workspace),
+				Code:   output.ExitAuth,
+			}
+		}
+		workspaces = map[string]auth.WorkspaceCredentials{cli.Workspace: ws}
+	}
+
+	for _, ws := range workspaces {
 		item := map[string]any{
 			"team_id":        ws.TeamID,
 			"team_name":      ws.TeamName,

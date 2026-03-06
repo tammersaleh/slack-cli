@@ -93,6 +93,62 @@ func TestClassifyError_AuthHints(t *testing.T) {
 	}
 }
 
+func TestAuthStatus_WorkspaceFilter(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/auth.test", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"url":     "https://test.slack.com/",
+			"team":    "Test Team",
+			"team_id": "T123",
+			"user":    "tammer",
+			"user_id": "U456",
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	creds := &auth.Credentials{
+		Workspaces: map[string]auth.WorkspaceCredentials{
+			"T123": {BotToken: "xoxb-111", AuthMethod: "oauth", TeamID: "T123", TeamName: "Team A", UserID: "U1"},
+			"T456": {BotToken: "xoxb-222", AuthMethod: "oauth", TeamID: "T456", TeamName: "Team B", UserID: "U2"},
+		},
+	}
+	credsPath, _ := auth.DefaultCredentialsPath()
+	auth.SaveCredentials(credsPath, creds)
+
+	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
+
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+
+	parser, _ := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	kctx, err := parser.Parse([]string{"--workspace", "T123", "auth", "status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetOutput(&outBuf, &errBuf)
+
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(outBuf.String())
+	// Should show 1 workspace + _meta, not 2 workspaces + _meta.
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (1 workspace + meta) when --workspace is set, got %d:\n%s", len(lines), outBuf.String())
+	}
+
+	ws := parseJSON(t, lines[0])
+	if ws["team_id"] != "T123" {
+		t.Errorf("expected team_id='T123', got %q", ws["team_id"])
+	}
+}
+
 func TestAuthStatus_DesktopWorkspace(t *testing.T) {
 	mux := http.NewServeMux()
 	var gotCookie string
