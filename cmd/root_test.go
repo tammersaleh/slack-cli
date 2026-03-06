@@ -158,14 +158,30 @@ func TestSubcommands_Exist(t *testing.T) {
 	}
 }
 
-func TestSubcommands_NotImplemented(t *testing.T) {
-	cli, ctx := mustParse(t, "user", "list")
-	err := ctx.Run(cli)
-	if err == nil {
-		t.Error("expected 'not implemented' error, got nil")
+func TestChannelList_Defaults(t *testing.T) {
+	cli, _ := mustParse(t, "channel", "list")
+	if cli.Channel.List.Limit != 100 {
+		t.Errorf("expected default limit 100, got %d", cli.Channel.List.Limit)
 	}
-	if err.Error() != "not implemented" {
-		t.Errorf("expected 'not implemented', got %q", err.Error())
+	if cli.Channel.List.Type != "public" {
+		t.Errorf("expected default type 'public', got %q", cli.Channel.List.Type)
+	}
+	if !cli.Channel.List.ExcludeArchived {
+		t.Error("expected exclude-archived to default to true")
+	}
+}
+
+func TestMessageList_Defaults(t *testing.T) {
+	cli, _ := mustParse(t, "message", "list", "#general")
+	if cli.Message.List.Limit != 20 {
+		t.Errorf("expected default limit 20, got %d", cli.Message.List.Limit)
+	}
+}
+
+func TestThreadList_Defaults(t *testing.T) {
+	cli, _ := mustParse(t, "thread", "list", "#general", "1234.5678")
+	if cli.Thread.List.Limit != 50 {
+		t.Errorf("expected default limit 50, got %d", cli.Thread.List.Limit)
 	}
 }
 
