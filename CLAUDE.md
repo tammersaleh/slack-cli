@@ -33,17 +33,24 @@ Work through features independently. Only escalate when:
 ## Project structure
 
 ```
-cmd/           # kong command definitions
+cmd/
+  root.go        # CLI struct, global flags, NewPrinter/NewClient/NewResolver helpers
+  auth.go        # auth login/logout/status
+  channel.go     # channel list/info/members
+  message.go     # message list (alias: read) / get
+  thread.go      # thread list (alias: read)
+  user.go        # user list/info
+  reaction.go    # reaction list
 internal/
-  api/         # Slack API client wrapper (Client, Paginate[T], ClassifyError)
-  auth/        # credentials CRUD, OAuth flow, token resolution
-  output/      # Printer, Error with exit codes (0=success, 1=general, 2=auth, 3=rate-limit, 4=network)
-  resolve/     # channel/user name-to-ID resolution with in-memory cache
+  api/           # Slack API client wrapper (Client, Paginate[T], ClassifyError)
+  auth/          # credentials CRUD, OAuth flow, token resolution
+  output/        # Printer (JSONL), Meta, Error with exit codes
+  resolve/       # channel/user name-to-ID resolution with in-memory cache
 ```
 
 ## Testing
 
-Tests live next to the code they test (`foo_test.go`). Use table-driven tests. Mock the Slack API client at the interface boundary - don't make real API calls in tests.
+Tests live next to the code they test (`foo_test.go`). Use table-driven tests. Mock the Slack API via httptest servers - set `SLACK_TOKEN` and `SLACK_API_URL` env vars in tests. Use `runWithMock(t, handler, args...)` helper in `cmd/channel_test.go` for end-to-end command tests.
 
 ## Git
 
