@@ -118,10 +118,11 @@ With `--verbose`, diagnostics go to stderr as JSON:
 
 - **Bot tokens** (`xoxb-`): Most read operations. Tied to an app.
 - **User tokens** (`xoxp-`): Required for `search`. Tied to a user.
+- **Session tokens** (`xoxc-`): Extracted from Chrome browser sessions. Require a `d` cookie on every API request. Function as user tokens.
 
-Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. `--workspace` selects the workspace when multiple exist. If only one workspace exists, it's used automatically.
+Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. Each entry includes an `auth_method` field (`"oauth"` or `"chrome"`) used for context-specific error hints. `--workspace` selects the workspace when multiple exist. If only one workspace exists, it's used automatically.
 
-### OAuth (primary)
+### OAuth
 
 `slack auth login` runs a local OAuth flow:
 
@@ -129,40 +130,64 @@ Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `Tea
 2. Opens Slack OAuth URL in the browser.
 3. Receives callback with authorization code.
 4. Exchanges code for bot + user tokens.
-5. Stores both in credentials file.
+5. Stores both in credentials file with `auth_method: "oauth"`.
 
 Requires `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET` environment variables. The user creates a Slack app manually - setup instructions are in the README.
 
-### Chrome cookie extraction (Phase 3)
+### Chrome cookie extraction
 
-`slack auth login --chrome` will extract session tokens from Chrome running with `--remote-debugging-port`. Fallback for workspaces that restrict OAuth app installation.
+`slack auth login --chrome` extracts session tokens from Chrome via the Chrome DevTools Protocol. Fallback for workspaces that restrict OAuth app installation.
+
+1. Launches Chrome with `--remote-debugging-port`, using a dedicated profile at `~/.config/slack-cli/chrome-profile/`.
+2. Navigates to `https://app.slack.com`.
+3. Polls every 2s for the `d` cookie and `xoxc-` tokens in `localStorage.localConfig_v2`.
+4. Extracts all workspaces found in `localConfig_v2.teams`.
+5. Validates each via `auth.test` with cookie-based authentication.
+6. Stores all valid workspaces with `auth_method: "chrome"`.
+7. Closes Chrome.
+
+With `--chrome-port=PORT`, connects to an existing Chrome debug instance instead of launching a new one.
+
+Session tokens (`xoxc-`) expire. When they do, the CLI detects the failure and hints the user to re-run `slack auth login --chrome`.
 
 ### Environment variable overrides
 
-`SLACK_TOKEN` and `SLACK_USER_TOKEN` override stored credentials when set. For CI/CD and agent contexts.
+`SLACK_TOKEN`, `SLACK_USER_TOKEN`, and `SLACK_COOKIE` override stored credentials when set. `SLACK_COOKIE` provides the `d` cookie value for `xoxc-` token authentication. For CI/CD and agent contexts.
 
 ### auth commands
 
 #### slack auth login
 
 ```
-slack auth login
+slack auth login [flags]
   --client-id       Slack app client ID. Env: SLACK_CLIENT_ID
   --client-secret   Slack app client secret. Env: SLACK_CLIENT_SECRET
+  --chrome          Authenticate via Chrome cookie extraction
+  --chrome-port     Connect to existing Chrome debug instance on this port
 ```
 
-Opens browser for OAuth flow. On success:
+Without `--chrome`, opens browser for OAuth flow. On success:
 
 ```
 $ slack auth login
-{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","has_bot_token":true,"has_user_token":true}
+{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","auth_method":"oauth","has_bot_token":true,"has_user_token":true}
+{"_meta":{"has_more":false}}
+```
+
+With `--chrome`, extracts credentials from Chrome. Emits one line per workspace:
+
+```
+$ slack auth login --chrome
+{"team_id":"T01ABC","team_name":"Acme Corp","user_id":"U01XYZ","auth_method":"chrome","has_bot_token":true,"has_user_token":false}
+{"team_id":"T02DEF","team_name":"Other Corp","user_id":"U02ABC","auth_method":"chrome","has_bot_token":true,"has_user_token":false}
 {"_meta":{"has_more":false}}
 ```
 
 Errors:
 
-- `missing_client_credentials` (exit 1): `SLACK_CLIENT_ID` or `SLACK_CLIENT_SECRET` not set.
+- `missing_client_credentials` (exit 1): `SLACK_CLIENT_ID` or `SLACK_CLIENT_SECRET` not set (OAuth mode only).
 - `oauth_failed` (exit 1): OAuth flow failed (user denied, code exchange error).
+- `chrome_auth_failed` (exit 1): Chrome extraction failed (not signed in, Chrome not running, timeout).
 
 #### slack auth logout
 
@@ -908,6 +933,7 @@ Environment variables:
 - `SLACK_WORKSPACE` - default workspace (same as `--workspace`)
 - `SLACK_TOKEN` - bot token override (bypasses stored credentials)
 - `SLACK_USER_TOKEN` - user token override (bypasses stored credentials)
+- `SLACK_COOKIE` - `d` cookie for `xoxc-` token authentication
 
 Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. Managed by `slack auth login` / `slack auth logout`.
 
@@ -915,7 +941,7 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 ### Phase 1: Core
 
-- `auth login` (OAuth), `auth status`, `auth logout`
+- `auth login` (OAuth), `auth login --chrome`, `auth status`, `auth logout`
 - `channel list`, `channel info`, `channel members`
 - `message list` / `message read`, `message get`
 - `thread list` / `thread read`
@@ -926,6 +952,7 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 - Single-page pagination with `--cursor` and `--all`
 - Rate limiting with retry
 - Channel/user name resolution
+- Cookie-based authentication for `xoxc-` tokens
 
 ### Phase 2: Extended
 
@@ -943,7 +970,6 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 ### Phase 3: Advanced
 
-- `auth login --chrome` (cookie extraction)
 - `channel mark` (mark as read - the one planned write operation)
 - `auth switch` (multi-workspace)
 
@@ -951,4 +977,5 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 - **CLI framework**: [kong](https://github.com/alecthomas/kong) for command structure and flag parsing.
 - **Slack API**: [slack-go/slack](https://github.com/slack-go/slack) as the API client.
+- **Chrome DevTools Protocol**: [chromedp](https://github.com/chromedp/chromedp) for Chrome cookie extraction.
 - **Output**: `encoding/json` from stdlib.

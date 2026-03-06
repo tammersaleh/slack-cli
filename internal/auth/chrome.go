@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
-	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
 
@@ -153,7 +153,7 @@ func extractCredentials(ctx context.Context) (cookie string, teams map[string]ch
 	}
 
 	// Get tokens from localStorage.
-	var result *runtime.RemoteObject
+	var teamsJSON string
 	err = chromedp.Run(ctx, chromedp.Evaluate(`
 		(() => {
 			try {
@@ -166,13 +166,11 @@ func extractCredentials(ctx context.Context) (cookie string, teams map[string]ch
 				return '';
 			}
 		})()
-	`, &result))
+	`, &teamsJSON))
 	if err != nil {
 		return "", nil, err
 	}
-
-	var teamsJSON string
-	if err := json.Unmarshal(result.Value, &teamsJSON); err != nil || teamsJSON == "" {
+	if teamsJSON == "" {
 		return "", nil, fmt.Errorf("localConfig_v2 not found or empty")
 	}
 
@@ -183,7 +181,7 @@ func extractCredentials(ctx context.Context) (cookie string, teams map[string]ch
 
 	// Filter to only xoxc- tokens.
 	for k, t := range teams {
-		if len(t.Token) < 5 || t.Token[:5] != "xoxc-" {
+		if !strings.HasPrefix(t.Token, "xoxc-") {
 			delete(teams, k)
 		}
 	}
