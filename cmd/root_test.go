@@ -133,7 +133,7 @@ func TestSubcommands_Exist(t *testing.T) {
 		args []string
 	}{
 		{"auth login", []string{"auth", "login"}},
-		{"auth login chrome", []string{"auth", "login", "--chrome"}},
+		{"auth login desktop", []string{"auth", "login", "--desktop"}},
 		{"auth logout", []string{"auth", "logout"}},
 		{"auth status", []string{"auth", "status"}},
 		{"channel list", []string{"channel", "list"}},

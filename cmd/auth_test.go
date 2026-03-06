@@ -15,7 +15,7 @@ import (
 )
 
 // runWithMockCookie runs a CLI command with a credentials file containing
-// a Chrome-authed workspace (xoxc- token + cookie) against a mock server.
+// a desktop-authed workspace (xoxc- token + cookie) against a mock server.
 func runWithMockCookie(t *testing.T, handler http.Handler, token, cookie string, args ...string) (string, error) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
@@ -31,7 +31,7 @@ func runWithMockCookie(t *testing.T, handler http.Handler, token, cookie string,
 			"T123": {
 				BotToken:   token,
 				Cookie:     cookie,
-				AuthMethod: "chrome",
+				AuthMethod: "desktop",
 				TeamID:     "T123",
 				TeamName:   "Test Team",
 				UserID:     "U456",
@@ -75,15 +75,13 @@ func TestClassifyError_AuthHints(t *testing.T) {
 		authMethod string
 		wantHint   string
 	}{
-		{"chrome", "chrome", "Run 'slack auth login --chrome' to re-authenticate"},
+		{"desktop", "desktop", "Run 'slack auth login --desktop' to re-authenticate"},
 		{"oauth", "oauth", "Run 'slack auth login' to re-authenticate"},
 		{"default", "", "Run 'slack auth login' or set SLACK_TOKEN"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a CLI with the given auth method by running NewClient
-			// against a mock that returns an auth error.
 			var cli cmd.CLI
 			cli.SetAuthMethod(tt.authMethod)
 
@@ -95,7 +93,7 @@ func TestClassifyError_AuthHints(t *testing.T) {
 	}
 }
 
-func TestAuthStatus_ChromeWorkspace(t *testing.T) {
+func TestAuthStatus_DesktopWorkspace(t *testing.T) {
 	mux := http.NewServeMux()
 	var gotCookie string
 	mux.HandleFunc("/api/auth.test", func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +108,7 @@ func TestAuthStatus_ChromeWorkspace(t *testing.T) {
 		})
 	})
 
-	out, err := runWithMockCookie(t, mux, "xoxc-chrome-token", "xoxd-test-cookie", "auth", "status")
+	out, err := runWithMockCookie(t, mux, "xoxc-desktop-token", "xoxd-test-cookie", "auth", "status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +126,7 @@ func TestAuthStatus_ChromeWorkspace(t *testing.T) {
 	if ws["user"] != "tammer" {
 		t.Errorf("expected user='tammer', got %q", ws["user"])
 	}
-	if ws["auth_method"] != "chrome" {
-		t.Errorf("expected auth_method='chrome', got %q", ws["auth_method"])
+	if ws["auth_method"] != "desktop" {
+		t.Errorf("expected auth_method='desktop', got %q", ws["auth_method"])
 	}
 }

@@ -16,15 +16,14 @@ type AuthCmd struct {
 }
 
 type AuthLoginCmd struct {
-	Chrome       bool   `help:"Authenticate by extracting credentials from Chrome."`
-	ChromePort   int    `help:"Connect to existing Chrome debug instance on this port." default:"0"`
+	Desktop      bool   `help:"Extract credentials from Slack Desktop app."`
 	ClientID     string `env:"SLACK_CLIENT_ID" help:"Slack app client ID."`
 	ClientSecret string `env:"SLACK_CLIENT_SECRET" help:"Slack app client secret."`
 }
 
 func (c *AuthLoginCmd) Run(cli *CLI) error {
-	if c.Chrome || c.ChromePort > 0 {
-		return c.runChrome(cli)
+	if c.Desktop {
+		return c.runDesktop(cli)
 	}
 	return c.runOAuth(cli)
 }
@@ -48,21 +47,20 @@ func (c *AuthLoginCmd) runOAuth(cli *CLI) error {
 	return saveAndPrintWorkspaces(cli, []auth.WorkspaceCredentials{*ws})
 }
 
-func (c *AuthLoginCmd) runChrome(cli *CLI) error {
+func (c *AuthLoginCmd) runDesktop(cli *CLI) error {
 	p := cli.NewPrinter()
 	ctx := context.Background()
 
-	workspaces, err := auth.ChromeLogin(ctx, auth.ChromeLoginOptions{
-		Port: c.ChromePort,
+	workspaces, err := auth.DesktopLogin(ctx, auth.DesktopLoginOptions{
 		StatusFunc: func(msg string) {
 			p.PrintError(&output.Error{Err: "status", Detail: msg})
 		},
 	})
 	if err != nil {
 		return &output.Error{
-			Err:    "chrome_auth_failed",
+			Err:    "desktop_auth_failed",
 			Detail: err.Error(),
-			Hint:   "Make sure you're signed in to Slack in the Chrome window",
+			Hint:   "Make sure Slack Desktop is installed and you're signed in",
 			Code:   output.ExitGeneral,
 		}
 	}

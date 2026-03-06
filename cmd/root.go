@@ -117,8 +117,8 @@ func (c *CLI) ClassifyError(err error) *output.Error {
 	oErr := api.ClassifyError(err)
 	if oErr.Code == output.ExitAuth && oErr.Hint == "" {
 		switch c.authMethod {
-		case "chrome":
-			oErr.Hint = "Run 'slack auth login --chrome' to re-authenticate"
+		case "desktop":
+			oErr.Hint = "Run 'slack auth login --desktop' to re-authenticate"
 		case "oauth":
 			oErr.Hint = "Run 'slack auth login' to re-authenticate"
 		default:
