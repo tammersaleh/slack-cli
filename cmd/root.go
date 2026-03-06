@@ -77,24 +77,28 @@ func (c *CLI) NewClient() (*api.Client, error) {
 		return nil, err
 	}
 
-	bot, user, err := auth.ResolveToken(path, c.Workspace)
+	rc, err := auth.ResolveCredentials(path, c.Workspace)
 	if err != nil {
+		hint := "Run 'slack auth login' or set SLACK_TOKEN"
 		return nil, &output.Error{
-			Err:  "not_authed",
+			Err:    "not_authed",
 			Detail: err.Error(),
-			Hint: "Run 'slack auth login' or set SLACK_TOKEN",
-			Code: output.ExitAuth,
+			Hint:   hint,
+			Code:   output.ExitAuth,
 		}
 	}
 
 	var opts []api.Option
-	if user != "" {
-		opts = append(opts, api.WithUserToken(user))
+	if rc.UserToken != "" {
+		opts = append(opts, api.WithUserToken(rc.UserToken))
+	}
+	if rc.Cookie != "" {
+		opts = append(opts, api.WithCookie(rc.Cookie))
 	}
 	if c.APIBaseURL != "" {
 		opts = append(opts, api.WithAPIURL(c.APIBaseURL))
 	}
-	return api.New(bot, opts...), nil
+	return api.New(rc.BotToken, opts...), nil
 }
 
 // NewResolver creates a channel/user name resolver from the API client.

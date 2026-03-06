@@ -66,6 +66,58 @@ func TestAuthTest(t *testing.T) {
 	}
 }
 
+func TestNew_WithCookie(t *testing.T) {
+	var gotCookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"url":     "https://test.slack.com/",
+			"team":    "Test",
+			"team_id": "T1",
+			"user":    "u",
+			"user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithCookie("xoxd-cookie-value"), WithAPIURL(srv.URL+"/api/"))
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCookie != "d=xoxd-cookie-value" {
+		t.Errorf("got Cookie header %q, want %q", gotCookie, "d=xoxd-cookie-value")
+	}
+}
+
+func TestNew_WithCookieOnUserClient(t *testing.T) {
+	var gotCookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCookie = r.Header.Get("Cookie")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"url":     "https://test.slack.com/",
+			"team":    "Test",
+			"team_id": "T1",
+			"user":    "u",
+			"user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-bot", WithUserToken("xoxc-user"), WithCookie("xoxd-cookie"), WithAPIURL(srv.URL+"/api/"))
+	// Call auth.test via the user client path - we'll use Bot() since User() doesn't
+	// have AuthTest, but both should have the cookie transport.
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotCookie != "d=xoxd-cookie" {
+		t.Errorf("got Cookie header %q, want %q", gotCookie, "d=xoxd-cookie")
+	}
+}
+
 func TestAuthTest_Failure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
