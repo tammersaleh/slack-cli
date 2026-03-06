@@ -6,43 +6,29 @@ Read-only Slack CLI for agent/automation use. Go, kong, slack-go/slack.
 
 Every time you start in this repo, figure out where we left off and propose continuing. Check:
 
-1. Any open PRs with your commits (`gh pr list`)
-2. Which issues are closed vs open (`gh issue list`)
-3. Any in-progress branches (`git branch`)
+1. Any open PRs (`gh pr list`)
+2. Any in-progress branches (`git branch`)
+3. Recent commits on main (`git log --oneline -10`)
 
 Propose the next action and ask for confirmation before proceeding.
 
-## Working on issues
+## Workflow
 
-All work is tracked in GitHub Issues. When working on an issue:
+Work is driven by `SPEC.md`. Each feature gets its own branch and PR. The workflow for each feature:
 
-1. Read the issue (`gh issue view <number>`).
-2. Check that any dependency issues are closed. If not, raise it.
-3. Read `SPEC.md` for full context on the relevant feature.
-4. Write the plan, complexity analysis, and scope cut recommendations into the issue description (`gh issue edit <number> --body ...`).
-5. Proceed to implementation. Red-green-refactor: write failing tests first, then implement, then clean up.
-6. Each issue gets its own branch (`<issue-number>-<short-description>`) and a single PR.
-7. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
-
-Update the issue description as the plan evolves. The issue is the source of truth for the plan. When scope changes, update `SPEC.md` to match.
+1. Read `SPEC.md` for the relevant command/feature.
+2. Red-green-refactor: write failing tests first, then implement, then clean up.
+3. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
+4. Push a PR. Spawn a sub-agent (`code-review:code-review`) to review it. Address feedback.
+5. Merge the PR.
+6. Move on to the next feature.
 
 ## Autonomy
 
-Work through issues independently. Only escalate when:
+Work through features independently. Only escalate when:
 
 - A design decision isn't covered by `SPEC.md`.
-- A dependency issue is blocking.
 - Something feels wrong (scope creep, Slack API limitation, etc.).
-
-After pushing a PR and addressing code review feedback, merge the PR yourself.
-
-## Plan review
-
-Before implementing, critically review the plan: What part is most likely to add complexity? What part of the scope would you recommend cutting? Include this analysis in the issue description.
-
-## PR review
-
-After pushing a PR, spawn a sub-agent (`code-review:code-review`) to independently review the PR. The review agent should submit all feedback as PR review comments. Address its feedback before considering the PR done.
 
 ## Project structure
 
