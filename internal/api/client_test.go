@@ -118,6 +118,27 @@ func TestNew_WithCookieOnUserClient(t *testing.T) {
 	}
 }
 
+func TestNew_UserAgent(t *testing.T) {
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true, "url": "https://test.slack.com/", "team": "T",
+			"team_id": "T1", "user": "u", "user_id": "U1",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithCookie("xoxd-cookie"), WithAPIURL(srv.URL+"/api/"))
+	_, err := c.AuthTest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUA != ChromeUserAgent {
+		t.Errorf("got User-Agent %q, want %q", gotUA, ChromeUserAgent)
+	}
+}
+
 func TestAuthTest_Failure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

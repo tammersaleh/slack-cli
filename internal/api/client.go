@@ -55,7 +55,7 @@ func New(botToken string, opts ...Option) *Client {
 		botOpts = append(botOpts, slack.OptionAPIURL(cfg.apiURL))
 	}
 	if cfg.cookie != "" {
-		botOpts = append(botOpts, slack.OptionHTTPClient(cookieHTTPClient(cfg.cookie)))
+		botOpts = append(botOpts, slack.OptionHTTPClient(slackHTTPClient(cfg.cookie)))
 	}
 
 	c := &Client{
@@ -68,7 +68,7 @@ func New(botToken string, opts ...Option) *Client {
 			userOpts = append(userOpts, slack.OptionAPIURL(cfg.apiURL))
 		}
 		if cfg.cookie != "" {
-			userOpts = append(userOpts, slack.OptionHTTPClient(cookieHTTPClient(cfg.cookie)))
+			userOpts = append(userOpts, slack.OptionHTTPClient(slackHTTPClient(cfg.cookie)))
 		}
 		c.user = slack.New(cfg.userToken, userOpts...)
 	}
@@ -76,25 +76,32 @@ func New(botToken string, opts ...Option) *Client {
 	return c
 }
 
-// cookieHTTPClient returns an *http.Client that injects a d cookie on every request.
-func cookieHTTPClient(cookie string) *http.Client {
+// ChromeUserAgent is the user-agent string used for all API requests when
+// cookie-based authentication is active. Matches Chrome to avoid Slack's
+// anomaly detection on Enterprise Grid.
+const ChromeUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+
+// slackHTTPClient returns an *http.Client that injects a d cookie and
+// Chrome user-agent on every request.
+func slackHTTPClient(cookie string) *http.Client {
 	return &http.Client{
-		Transport: &cookieTransport{
+		Transport: &slackTransport{
 			cookie: cookie,
 			base:   http.DefaultTransport,
 		},
 	}
 }
 
-// cookieTransport injects the Slack d cookie into every request.
-type cookieTransport struct {
+// slackTransport injects the Slack d cookie and Chrome user-agent into every request.
+type slackTransport struct {
 	cookie string
 	base   http.RoundTripper
 }
 
-func (t *cookieTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t *slackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
 	req.Header.Set("Cookie", "d="+t.cookie)
+	req.Header.Set("User-Agent", ChromeUserAgent)
 	return t.base.RoundTrip(req)
 }
 
