@@ -45,7 +45,7 @@ internal/
   api/           # Slack API client wrapper (Client, Paginate[T], ClassifyError, WithCookie)
   auth/          # credentials CRUD, OAuth flow, Desktop extraction, token resolution
   output/        # Printer (JSONL), Meta, Error with exit codes
-  resolve/       # channel/user name-to-ID resolution with in-memory cache
+  resolve/       # channel/user name-to-ID resolution with in-memory + file cache
 ```
 
 ## Testing
@@ -64,11 +64,12 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 
 - No config file. All config via flags/env vars. Kong handles precedence.
 - Workspaces keyed by `TeamID` (stable) not `TeamName` (mutable) in credentials.json.
-- User resolution: ID + email only. Display name (`@name`) deferred to Phase 2 (expensive at scale).
+- User resolution: ID + email only. Display name (`@name`) deferred to Phase 2 (expensive at scale). `users.lookupByEmail` fails with `xoxc-` tokens on Enterprise Grid (scope limitation).
 - Channel resolution: first match wins on name collision. No ambiguity errors.
 - Channel list defaults to member-only. `--include-non-member` to expand.
 - Single-page pagination by default. `--cursor` to continue, `--all` to fetch everything.
-- `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). Used by `--all` and by the resolver internally.
+- `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). `api.PaginateEach[T]` adds per-page callback with early exit. Both accept an endpoint name for diagnostics.
+- Channel resolver uses `PaginateEach` for early exit (stops paginating once target is found). File cache at `~/.config/slack-cli/cache/channels-{teamID}.json` (1h TTL) persists across invocations. In-memory cache (5min TTL) for session reuse.
 - `api.Client` wraps `slack-go/slack` with separate bot/user token clients. `WithCookie` injects `d` cookie + Chrome user-agent via custom `http.RoundTripper` for `xoxc-` tokens.
 - Desktop auth (`--desktop`) reads `xoxc-` tokens from Slack Desktop's LevelDB and decrypts the `d` cookie from its SQLite cookies DB using the Slack Safe Storage password (`SLACK_SAFE_STORAGE_PASSWORD` env var). Works with Enterprise Grid.
 - `auth_method` field in credentials.json tracks how each workspace was authenticated (`"oauth"` or `"desktop"`). Used for context-specific error hints.
@@ -83,8 +84,10 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 - utls + Chrome fingerprint negotiates HTTP/2 via ALPN. `net/http.Transport` can't handle h2 with custom `DialTLSContext`. Custom `RoundTripper` detects ALPN and delegates to `http2.Transport`.
 - LevelDB is locked by running Slack. Must copy the directory first, remove the LOCK file, then open read-only.
 - `SLACK_COOKIE` env var provides the `d` cookie for `xoxc-` token auth without stored credentials.
-- No text output format. No `--format`, `--raw`, or `--no-pager` flags.
+- No text output format. No `--format`, `--raw`, `--verbose`, or `--no-pager` flags.
 - `--fields` for output field filtering. `--quiet` suppresses stdout entirely.
+- Per-item errors go to stdout (one JSON per item). Fatal errors go to stderr. `ExitError` carries exit code without stderr output for partial-failure commands.
+- Rate limit errors include `endpoint` field for diagnostics.
 
 ## Sandbox
 
