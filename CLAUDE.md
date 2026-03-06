@@ -72,6 +72,16 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 - `api.Client` wraps `slack-go/slack` with separate bot/user token clients. `WithCookie` injects `d` cookie + Chrome user-agent via custom `http.RoundTripper` for `xoxc-` tokens.
 - Desktop auth (`--desktop`) reads `xoxc-` tokens from Slack Desktop's LevelDB and decrypts the `d` cookie from its SQLite cookies DB using the Slack Safe Storage password (`SLACK_SAFE_STORAGE_PASSWORD` env var). Works with Enterprise Grid.
 - `auth_method` field in credentials.json tracks how each workspace was authenticated (`"oauth"` or `"desktop"`). Used for context-specific error hints.
+- Chrome TLS fingerprinting (`utls`) + user-agent on all cookie-based API requests. Required for Enterprise Grid.
+- `E`-prefix workspace IDs are Enterprise Grid org-level contexts. `conversations.list` fails on these. The `T`-prefix workspace within the same org works.
+
+### Desktop auth gotchas
+
+- Chromium LevelDB keys are prefixed with origin (`_https://app.slack.com\x00\x01`), not bare key names. Must scan with `strings.Contains`.
+- LevelDB values have a `0x01` binary prefix before JSON. Strip by finding first `{`.
+- The `d` cookie MUST stay URL-encoded. Decoding `%2B` etc. causes `invalid_auth`.
+- utls + Chrome fingerprint negotiates HTTP/2 via ALPN. `net/http.Transport` can't handle h2 with custom `DialTLSContext`. Custom `RoundTripper` detects ALPN and delegates to `http2.Transport`.
+- LevelDB is locked by running Slack. Must copy the directory first, remove the LOCK file, then open read-only.
 - `SLACK_COOKIE` env var provides the `d` cookie for `xoxc-` token auth without stored credentials.
 - No text output format. No `--format`, `--raw`, or `--no-pager` flags.
 - `--fields` for output field filtering. `--quiet` suppresses stdout entirely.
