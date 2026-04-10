@@ -21,14 +21,6 @@ func searchResponse(matches []map[string]any, page, pageCount, total int) map[st
 				"page":  page,
 				"pages": pageCount,
 			},
-			"pagination": map[string]any{
-				"total_count": total,
-				"page":        page,
-				"per_page":    20,
-				"page_count":  pageCount,
-				"first":       1,
-				"last":        pageCount,
-			},
 			"total": total,
 		},
 	}
@@ -250,6 +242,30 @@ func TestSearchMessages_MissingUserToken(t *testing.T) {
 	}
 	if oErr.Err != "missing_user_token" {
 		t.Errorf("expected error 'missing_user_token', got %q", oErr.Err)
+	}
+	if oErr.Code != output.ExitAuth {
+		t.Errorf("expected exit code %d, got %d", output.ExitAuth, oErr.Code)
+	}
+}
+
+func TestSearchMessages_NotAuthed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/search.messages", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"ok":    false,
+			"error": "not_authed",
+		})
+	})
+
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-expired")
+	_, err := runWithMock(t, mux, "search", "messages", "test query")
+	if err == nil {
+		t.Fatal("expected error for not_authed API response")
+	}
+
+	var oErr *output.Error
+	if !errors.As(err, &oErr) {
+		t.Fatalf("expected *output.Error, got %T: %v", err, err)
 	}
 	if oErr.Code != output.ExitAuth {
 		t.Errorf("expected exit code %d, got %d", output.ExitAuth, oErr.Code)

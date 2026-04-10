@@ -137,6 +137,7 @@ func TestSubcommands_Exist(t *testing.T) {
 		{"user list", []string{"user", "list"}},
 		{"user info", []string{"user", "info", "U123"}},
 		{"reaction list", []string{"reaction", "list", "C123", "1234567890.123456"}},
+		{"search messages", []string{"search", "messages", "test query"}},
 	}
 
 	for _, tt := range tests {

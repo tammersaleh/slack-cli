@@ -87,12 +87,12 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 			}
 		}
 
-		hasMore := msgs.Pagination.Page < msgs.Pagination.PageCount
+		hasMore := msgs.Paging.Page < msgs.Paging.Pages
 		if !c.All || !hasMore {
 			nextCursor := ""
 			if hasMore {
 				nextCursor = base64.StdEncoding.EncodeToString(
-					[]byte(fmt.Sprintf("page:%d", page+1)),
+					[]byte(fmt.Sprintf("page:%d", msgs.Paging.Page+1)),
 				)
 			}
 			return p.PrintMeta(output.Meta{
