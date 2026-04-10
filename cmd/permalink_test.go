@@ -77,6 +77,12 @@ func TestMessagePermalink_MultipleTimestamps(t *testing.T) {
 		if item["input"] != expectedInput {
 			t.Errorf("line %d: expected input=%q, got %q", i, expectedInput, item["input"])
 		}
+		if item["ts"] != expectedInput {
+			t.Errorf("line %d: expected ts=%q, got %q", i, expectedInput, item["ts"])
+		}
+		if item["permalink"] == nil || item["permalink"] == "" {
+			t.Errorf("line %d: expected non-empty permalink", i)
+		}
 	}
 }
 
@@ -169,6 +175,9 @@ func TestMessagePermalink_PartialFailure(t *testing.T) {
 	errItem := parseJSON(t, lines[1])
 	if errItem["error"] != "message_not_found" {
 		t.Errorf("expected error='message_not_found', got %q", errItem["error"])
+	}
+	if errItem["input"] != "2.0" {
+		t.Errorf("expected input='2.0' on error item, got %q", errItem["input"])
 	}
 
 	meta := parseJSON(t, lines[3])
