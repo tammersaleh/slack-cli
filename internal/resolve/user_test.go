@@ -32,13 +32,17 @@ func TestResolveUser_IDPassthrough(t *testing.T) {
 	}
 }
 
-func TestResolveUser_Email(t *testing.T) {
-	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/users.lookupByEmail" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			http.Error(w, "not found", 404)
-			return
-		}
+func TestResolveUser_EmailFallback(t *testing.T) {
+	// When the user cache bulk-load fails (e.g. no users.list handler),
+	// email resolution falls back to users.lookupByEmail.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"members": []map[string]any{},
+		})
+	})
+	mux.HandleFunc("/api/users.lookupByEmail", func(w http.ResponseWriter, r *http.Request) {
 		email := r.FormValue("email")
 		if email != "tammer@example.com" {
 			t.Errorf("got email=%q, want %q", email, "tammer@example.com")
@@ -50,7 +54,8 @@ func TestResolveUser_Email(t *testing.T) {
 				"name": "tammer",
 			},
 		})
-	}))
+	})
+	client := newTestClient(t, mux)
 
 	r := NewResolver(client, "", "")
 	id, err := r.ResolveUser(context.Background(), "tammer@example.com")
@@ -63,12 +68,20 @@ func TestResolveUser_Email(t *testing.T) {
 }
 
 func TestResolveUser_EmailNotFound(t *testing.T) {
-	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"members": []map[string]any{},
+		})
+	})
+	mux.HandleFunc("/api/users.lookupByEmail", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
 			"error": "users_not_found",
 		})
-	}))
+	})
+	client := newTestClient(t, mux)
 
 	r := NewResolver(client, "", "")
 	_, err := r.ResolveUser(context.Background(), "nobody@example.com")
