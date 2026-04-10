@@ -186,7 +186,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 func messageToMap(msg slack.Message) map[string]any {
 	data, _ := json.Marshal(msg)
 	var m map[string]any
-	json.Unmarshal(data, &m)
+	_ = json.Unmarshal(data, &m)
 	return m
 }
 

@@ -12,7 +12,7 @@ import (
 func TestUserList_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"members": []map[string]any{
 				{"id": "U01", "name": "tammer", "real_name": "Tammer Saleh", "profile": map[string]any{"email": "tammer@example.com"}},
@@ -41,7 +41,7 @@ func TestUserList_MockAPI(t *testing.T) {
 func TestUserList_QueryFilter(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"members": []map[string]any{
 				{"id": "U01", "name": "tammer", "real_name": "Tammer Saleh", "profile": map[string]any{"email": "tammer@example.com"}},
@@ -65,7 +65,7 @@ func TestUserList_QueryFilter(t *testing.T) {
 func TestUserInfo_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"user": map[string]any{
 				"id": "U01", "name": "tammer", "real_name": "Tammer Saleh",
@@ -96,13 +96,13 @@ func TestUserInfo_MockAPI(t *testing.T) {
 func TestUserInfo_ByEmail(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.lookupByEmail", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":   true,
 			"user": map[string]any{"id": "U01", "name": "tammer"},
 		})
 	})
 	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":   true,
 			"user": map[string]any{"id": "U01", "name": "tammer", "real_name": "Tammer Saleh"},
 		})
@@ -127,15 +127,15 @@ func TestUserInfo_ByEmail(t *testing.T) {
 func TestUserInfo_PartialFailure_NoStderr(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		uid := r.FormValue("user")
 		if uid == "U01" {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":   true,
 				"user": map[string]any{"id": "U01", "name": "tammer"},
 			})
 		} else {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":    false,
 				"error": "user_not_found",
 			})
@@ -155,7 +155,7 @@ func TestUserInfo_PartialFailure_NoStderr(t *testing.T) {
 func TestUserInfo_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
 			"error": "user_not_found",
 		})

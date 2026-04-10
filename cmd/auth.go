@@ -54,7 +54,7 @@ func (c *AuthLoginCmd) runDesktop(cli *CLI) error {
 	workspaces, err := auth.DesktopLogin(ctx, auth.DesktopLoginOptions{
 		HTTPClient: api.ChromeTLSClient(),
 		StatusFunc: func(msg string) {
-			p.PrintError(&output.Error{Err: "status", Detail: msg})
+			_ = p.PrintError(&output.Error{Err: "status", Detail: msg})
 		},
 	})
 	if err != nil {

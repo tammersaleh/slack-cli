@@ -9,7 +9,7 @@ import (
 func TestThreadList_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{
@@ -46,7 +46,7 @@ func TestThreadList_MockAPI(t *testing.T) {
 func TestThreadList_EmptyThread(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{},
@@ -64,7 +64,7 @@ func TestThreadList_NoReplies(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
 		// Slack API returns just the parent when there are no replies.
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{
@@ -86,7 +86,7 @@ func TestThreadList_NoReplies(t *testing.T) {
 func TestThreadList_ReadAlias(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{

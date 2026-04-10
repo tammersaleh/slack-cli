@@ -31,12 +31,12 @@ func main() {
 
 	var oErr *output.Error
 	if errors.As(err, &oErr) {
-		json.NewEncoder(os.Stderr).Encode(oErr)
+		_ = json.NewEncoder(os.Stderr).Encode(oErr)
 		os.Exit(oErr.Code)
 	}
 
 	// Unstructured errors: wrap in JSON for consistency.
-	json.NewEncoder(os.Stderr).Encode(map[string]string{
+	_ = json.NewEncoder(os.Stderr).Encode(map[string]string{
 		"error":  "general_error",
 		"detail": err.Error(),
 	})

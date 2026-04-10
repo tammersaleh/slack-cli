@@ -147,7 +147,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 func userToMap(u slack.User) map[string]any {
 	data, _ := json.Marshal(u)
 	var m map[string]any
-	json.Unmarshal(data, &m)
+	_ = json.Unmarshal(data, &m)
 	return m
 }
 
