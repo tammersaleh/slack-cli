@@ -100,10 +100,12 @@ Work is driven by `SPEC.md`. Each feature gets its own branch and PR. The workfl
 
 1. Read `SPEC.md` for the relevant command/feature.
 2. Red-green-refactor: write failing tests first, then implement, then clean up.
-3. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
-4. Push a PR. Spawn a sub-agent (`code-review:code-review`) to review it. Address feedback.
-5. Merge the PR.
-6. Move on to the next feature.
+3. Run both `mise run test` and `mise run lint` after every change. Both must pass before committing.
+4. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
+5. Push a PR. Spawn a sub-agent (`code-review:code-review`) to review it. Address feedback.
+6. Merge the PR.
+7. Retrospective: review your approach and these instructions. Update CLAUDE.md with anything you learned that would help future sessions.
+8. Move on to the next feature.
 
 ## Autonomy
 
