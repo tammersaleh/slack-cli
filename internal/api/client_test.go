@@ -292,6 +292,22 @@ func TestPostInternalForm_Success(t *testing.T) {
 	}
 }
 
+func TestPostInternalForm_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":    false,
+			"error": "not_authed",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithAPIURL(srv.URL+"/api/"))
+	_, err := c.PostInternalForm(context.Background(), "users.channelSections.list", nil)
+	if err == nil {
+		t.Fatal("expected error for ok:false response")
+	}
+}
+
 func TestPostInternal_DoesNotMutateInput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})

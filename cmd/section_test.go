@@ -135,9 +135,40 @@ func TestSectionChannels(t *testing.T) {
 		t.Fatalf("expected 3 lines (2 channels + meta), got %d:\n%s", len(lines), out)
 	}
 
-	ch := parseJSON(t, lines[0])
-	if ch["name"] == nil || ch["name"] == "" {
-		t.Error("expected non-empty channel name")
+	// Channels may arrive in either order due to concurrent resolution,
+	// but the iteration is over the deterministic channelIDs list.
+	names := make(map[string]bool)
+	for _, line := range lines[:2] {
+		ch := parseJSON(t, line)
+		names[ch["name"].(string)] = true
+		if ch["id"] == nil {
+			t.Error("expected non-empty id field")
+		}
+	}
+	if !names["ext-acme"] {
+		t.Error("expected ext-acme in results")
+	}
+	if !names["ext-globex"] {
+		t.Error("expected ext-globex in results")
+	}
+}
+
+func TestSectionChannels_NotFound(t *testing.T) {
+	sections := []map[string]any{
+		{
+			"channel_section_id": "S01ABC",
+			"name":               "Channels",
+			"type":               "channels",
+			"channel_ids_page":   map[string]any{"channel_ids": []string{}},
+		},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.channelSections.list", sectionListHandler(t, sections))
+
+	_, err := runWithMockSession(t, mux, "section", "channels", "S99NONEXISTENT")
+	if err == nil {
+		t.Fatal("expected error for nonexistent section")
 	}
 }
 
@@ -177,26 +208,35 @@ func TestSectionFind(t *testing.T) {
 		t.Fatalf("expected 3 lines (2 matches + meta), got %d:\n%s", len(lines), out)
 	}
 
+	foundNames := make(map[string]bool)
 	for _, line := range lines[:2] {
 		item := parseJSON(t, line)
 		name, _ := item["name"].(string)
+		foundNames[name] = true
 		if !strings.HasPrefix(name, "ext-") {
 			t.Errorf("expected name starting with 'ext-', got %q", name)
 		}
 		if item["section_name"] != "Customers" {
 			t.Errorf("expected section_name='Customers', got %q", item["section_name"])
 		}
+		if item["section_id"] != "S01ABC" {
+			t.Errorf("expected section_id='S01ABC', got %q", item["section_id"])
+		}
+	}
+	if !foundNames["ext-acme"] {
+		t.Error("expected ext-acme in find results")
+	}
+	if !foundNames["ext-globex"] {
+		t.Error("expected ext-globex in find results")
 	}
 }
 
 func TestSectionMove(t *testing.T) {
-	var gotChannelIDs, gotSectionID string
+	var gotPayload map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.channelSections.channels.bulkUpdate", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		var req map[string]any
-		_ = json.Unmarshal(body, &req)
-		// The bulk update payload has a specific structure.
+		_ = json.Unmarshal(body, &gotPayload)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
 	mux.HandleFunc("/api/users.channelSections.list", func(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +247,7 @@ func TestSectionMove(t *testing.T) {
 					"channel_section_id": "S01ABC",
 					"name":               "Customers",
 					"type":               "channels",
-					"channel_ids_page":   map[string]any{"channel_ids": []string{"C01"}},
+					"channel_ids_page":   map[string]any{"channel_ids": []string{"C01", "C03"}},
 				},
 				{
 					"channel_section_id": "S02DEF",
@@ -219,17 +259,64 @@ func TestSectionMove(t *testing.T) {
 		})
 	})
 
-	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01,C02", "--section", "S02DEF")
+	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01", "--section", "S02DEF")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_ = gotChannelIDs
-	_ = gotSectionID
+	// Verify the bulkUpdate payload.
+	if gotPayload == nil {
+		t.Fatal("expected bulkUpdate to be called")
+	}
+	sections, ok := gotPayload["channel_sections"].([]any)
+	if !ok {
+		t.Fatalf("expected channel_sections array, got %T", gotPayload["channel_sections"])
+	}
+	// S01ABC should have C01 removed (only C03 left).
+	// S02DEF should have C01 added.
+	for _, raw := range sections {
+		s := raw.(map[string]any)
+		sid := s["channel_section_id"].(string)
+		page := s["channel_ids_page"].(map[string]any)
+		ids := page["channel_ids"].([]any)
+		if sid == "S01ABC" {
+			if len(ids) != 1 || ids[0] != "C03" {
+				t.Errorf("S01ABC should have [C03], got %v", ids)
+			}
+		}
+		if sid == "S02DEF" {
+			if len(ids) != 1 || ids[0] != "C01" {
+				t.Errorf("S02DEF should have [C01], got %v", ids)
+			}
+		}
+	}
 
 	lines := nonEmptyLines(out)
-	if len(lines) < 1 {
-		t.Fatalf("expected at least 1 line, got %d:\n%s", len(lines), out)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (result + meta), got %d:\n%s", len(lines), out)
+	}
+	result := parseJSON(t, lines[0])
+	if result["moved_count"] != float64(1) {
+		t.Errorf("expected moved_count=1, got %v", result["moved_count"])
+	}
+	if result["target_section"] != "Archive" {
+		t.Errorf("expected target_section='Archive', got %q", result["target_section"])
+	}
+}
+
+func TestSectionMove_MissingFlags(t *testing.T) {
+	mux := http.NewServeMux()
+	_, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01")
+	if err == nil {
+		t.Fatal("expected error when neither --section nor --new-section provided")
+	}
+}
+
+func TestSectionMove_ConflictingFlags(t *testing.T) {
+	mux := http.NewServeMux()
+	_, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01", "--section", "S01", "--new-section", "New")
+	if err == nil {
+		t.Fatal("expected error when both --section and --new-section provided")
 	}
 }
 

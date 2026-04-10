@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/api"
@@ -299,8 +298,6 @@ type SectionMoveCmd struct {
 	NewSection string `help:"Create a new section with this name and move channels to it."`
 }
 
-const moveBatchSize = 50
-
 func (c *SectionMoveCmd) Run(cli *CLI) error {
 	if c.Section == "" && c.NewSection == "" {
 		return &output.Error{Err: "invalid_input", Detail: "one of --section or --new-section is required", Code: output.ExitGeneral}
@@ -352,72 +349,50 @@ func (c *SectionMoveCmd) Run(cli *CLI) error {
 		channelIDs[i] = strings.TrimSpace(channelIDs[i])
 	}
 
-	// Build the bulkUpdate payload: for each section, list its channel IDs.
-	// Move the specified channels to the target section.
 	moveSet := make(map[string]bool, len(channelIDs))
 	for _, id := range channelIDs {
 		moveSet[id] = true
 	}
 
-	// Process in batches.
-	for i := 0; i < len(channelIDs); i += moveBatchSize {
-		end := i + moveBatchSize
-		if end > len(channelIDs) {
-			end = len(channelIDs)
-		}
-		batch := channelIDs[i:end]
-
-		batchSet := make(map[string]bool, len(batch))
-		for _, id := range batch {
-			batchSet[id] = true
-		}
-
-		// Build section updates: remove batch channels from their current sections,
-		// add them to the target.
-		updates := make([]map[string]any, 0, len(sections)+1)
-		for _, s := range sections {
-			filtered := make([]string, 0)
-			for _, ch := range s.ChannelIDs.IDs {
-				if !batchSet[ch] {
-					filtered = append(filtered, ch)
-				}
-			}
-			if s.ID == targetSectionID {
-				filtered = append(filtered, batch...)
-			}
-			updates = append(updates, map[string]any{
-				"channel_section_id": s.ID,
-				"channel_ids_page":   map[string]any{"channel_ids": filtered},
-			})
-		}
-
-		// If target section is new and not in the list, add it.
-		found := false
-		for _, s := range sections {
-			if s.ID == targetSectionID {
-				found = true
-				break
+	// Build section updates: remove moved channels from current sections,
+	// add them to the target.
+	updates := make([]map[string]any, 0, len(sections)+1)
+	for _, s := range sections {
+		filtered := make([]string, 0)
+		for _, ch := range s.ChannelIDs.IDs {
+			if !moveSet[ch] {
+				filtered = append(filtered, ch)
 			}
 		}
-		if !found {
-			updates = append(updates, map[string]any{
-				"channel_section_id": targetSectionID,
-				"channel_ids_page":   map[string]any{"channel_ids": batch},
-			})
+		if s.ID == targetSectionID {
+			filtered = append(filtered, channelIDs...)
 		}
+		updates = append(updates, map[string]any{
+			"channel_section_id": s.ID,
+			"channel_ids_page":   map[string]any{"channel_ids": filtered},
+		})
+	}
 
-		body := map[string]any{
-			"channel_sections": updates,
+	// If target section is new and not in the existing list, add it.
+	found := false
+	for _, s := range sections {
+		if s.ID == targetSectionID {
+			found = true
+			break
 		}
+	}
+	if !found {
+		updates = append(updates, map[string]any{
+			"channel_section_id": targetSectionID,
+			"channel_ids_page":   map[string]any{"channel_ids": channelIDs},
+		})
+	}
 
-		_, err := client.PostInternal(ctx, "users.channelSections.channels.bulkUpdate", body)
-		if err != nil {
-			return cli.ClassifyError(err)
-		}
-
-		if end < len(channelIDs) {
-			time.Sleep(1 * time.Second)
-		}
+	_, err = client.PostInternal(ctx, "users.channelSections.channels.bulkUpdate", map[string]any{
+		"channel_sections": updates,
+	})
+	if err != nil {
+		return cli.ClassifyError(err)
 	}
 
 	result := map[string]any{
