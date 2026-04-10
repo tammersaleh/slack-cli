@@ -117,9 +117,14 @@ func (c *Client) User() *slack.Client { return c.user }
 // a JSON body. The token is included in the request body. Returns the raw
 // JSON response body. Returns an error if the response has ok:false.
 func (c *Client) PostInternal(ctx context.Context, method string, body map[string]any) (json.RawMessage, error) {
-	body["token"] = c.token
+	// Clone to avoid mutating the caller's map.
+	out := make(map[string]any, len(body)+1)
+	for k, v := range body {
+		out[k] = v
+	}
+	out["token"] = c.token
 
-	payload, err := json.Marshal(body)
+	payload, err := json.Marshal(out)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling request: %w", err)
 	}

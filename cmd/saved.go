@@ -212,7 +212,11 @@ func enrichItems(ctx context.Context, client *api.Client, items []savedItem) map
 		wg.Add(1)
 		go func(item savedItem) {
 			defer wg.Done()
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			defer func() { <-sem }()
 
 			key := item.ItemID + ":" + item.TS
