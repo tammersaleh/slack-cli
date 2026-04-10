@@ -1,16 +1,24 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/slack-go/slack"
 )
 
 // Client wraps slack-go with configured retry and optional user token.
 type Client struct {
-	bot  *slack.Client
-	user *slack.Client
+	bot        *slack.Client
+	user       *slack.Client
+	httpClient *http.Client
+	apiURL     string
+	token      string
 }
 
 // Option configures a Client.
@@ -56,16 +64,29 @@ func New(botToken string, opts ...Option) *Client {
 		o(cfg)
 	}
 
+	var httpCl *http.Client
+	if cfg.cookie != "" {
+		httpCl = slackHTTPClient(cfg.cookie, cfg.tlsCAs)
+	}
+
 	var botOpts []slack.Option
 	if cfg.apiURL != "" {
 		botOpts = append(botOpts, slack.OptionAPIURL(cfg.apiURL))
 	}
-	if cfg.cookie != "" {
-		botOpts = append(botOpts, slack.OptionHTTPClient(slackHTTPClient(cfg.cookie, cfg.tlsCAs)))
+	if httpCl != nil {
+		botOpts = append(botOpts, slack.OptionHTTPClient(httpCl))
+	}
+
+	apiURL := "https://slack.com/api/"
+	if cfg.apiURL != "" {
+		apiURL = cfg.apiURL
 	}
 
 	c := &Client{
-		bot: slack.New(botToken, botOpts...),
+		bot:        slack.New(botToken, botOpts...),
+		httpClient: httpCl,
+		apiURL:     apiURL,
+		token:      botToken,
 	}
 
 	if cfg.userToken != "" {
@@ -86,8 +107,60 @@ func New(botToken string, opts ...Option) *Client {
 // Bot returns the bot token Slack client.
 func (c *Client) Bot() *slack.Client { return c.bot }
 
+// Token returns the primary token used by this client.
+func (c *Client) Token() string { return c.token }
+
 // User returns the user token Slack client, or nil if no user token was provided.
 func (c *Client) User() *slack.Client { return c.user }
+
+// PostInternal calls an internal Slack API method via raw HTTP POST with
+// a JSON body. The token is included in the request body. Returns the raw
+// JSON response body. Returns an error if the response has ok:false.
+func (c *Client) PostInternal(ctx context.Context, method string, body map[string]any) (json.RawMessage, error) {
+	body["token"] = c.token
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling request: %w", err)
+	}
+
+	url := c.apiURL + method
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	client := c.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	var envelope struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	if !envelope.OK {
+		return nil, slack.SlackErrorResponse{Err: envelope.Error}
+	}
+
+	return json.RawMessage(data), nil
+}
 
 // AuthTestResult contains validated token metadata.
 type AuthTestResult struct {
