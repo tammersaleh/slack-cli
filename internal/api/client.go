@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/slack-go/slack"
 )
@@ -135,6 +137,53 @@ func (c *Client) PostInternal(ctx context.Context, method string, body map[strin
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	client := c.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	var envelope struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	if !envelope.OK {
+		return nil, slack.SlackErrorResponse{Err: envelope.Error}
+	}
+
+	return json.RawMessage(data), nil
+}
+
+// PostInternalForm calls an internal Slack API method via form-encoded POST.
+// Used by endpoints that expect application/x-www-form-urlencoded.
+func (c *Client) PostInternalForm(ctx context.Context, method string, params map[string]string) (json.RawMessage, error) {
+	form := url.Values{}
+	form.Set("token", c.token)
+	for k, v := range params {
+		form.Set(k, v)
+	}
+
+	reqURL := c.apiURL + method
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	client := c.httpClient

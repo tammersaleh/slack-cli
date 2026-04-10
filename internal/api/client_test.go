@@ -246,6 +246,68 @@ func TestPostInternal_Error(t *testing.T) {
 	}
 }
 
+func TestPostInternalForm_Success(t *testing.T) {
+	var gotContentType, gotAuth, gotToken, gotName string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		gotAuth = r.Header.Get("Authorization")
+		_ = r.ParseForm()
+		gotToken = r.FormValue("token")
+		gotName = r.FormValue("name")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                 true,
+			"channel_section_id": "S01ABC",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test-token", WithAPIURL(srv.URL+"/api/"))
+	data, err := c.PostInternalForm(context.Background(), "users.channelSections.create", map[string]string{
+		"name": "Archive",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotContentType != "application/x-www-form-urlencoded" {
+		t.Errorf("expected form content-type, got %q", gotContentType)
+	}
+	if gotAuth != "Bearer xoxc-test-token" {
+		t.Errorf("expected Bearer auth, got %q", gotAuth)
+	}
+	if gotToken != "xoxc-test-token" {
+		t.Errorf("expected token in form, got %q", gotToken)
+	}
+	if gotName != "Archive" {
+		t.Errorf("expected name='Archive' in form, got %q", gotName)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["channel_section_id"] != "S01ABC" {
+		t.Errorf("expected channel_section_id='S01ABC', got %v", resp["channel_section_id"])
+	}
+}
+
+func TestPostInternalForm_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":    false,
+			"error": "not_authed",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithAPIURL(srv.URL+"/api/"))
+	_, err := c.PostInternalForm(context.Background(), "users.channelSections.list", nil)
+	if err == nil {
+		t.Fatal("expected error for ok:false response")
+	}
+}
+
 func TestPostInternal_DoesNotMutateInput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})

@@ -31,6 +31,7 @@ type CLI struct {
 	Message  MessageCmd  `cmd:"" help:"Read messages."`
 	Saved    SavedCmd    `cmd:"" help:"Saved-for-later items (requires session token)."`
 	Search   SearchCmd   `cmd:"" help:"Search messages and files."`
+	Section  SectionCmd  `cmd:"" help:"Manage sidebar sections (requires session token)."`
 	Thread   ThreadCmd   `cmd:"" help:"Read thread replies."`
 	User     UserCmd     `cmd:"" help:"Read user information."`
 	Reaction ReactionCmd `cmd:"" help:"Read reactions."`
