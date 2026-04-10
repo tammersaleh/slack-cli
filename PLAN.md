@@ -130,3 +130,4 @@ These are spec'd but lower priority for the MCP replacement goal:
 - [x] message permalink (#33)
 - [x] User caching + channel cache TTL bump to 24h (#34)
 - [x] Fix all errcheck lint violations (CI was failing since chrome-auth)
+- [x] saved list + saved counts (#35)
