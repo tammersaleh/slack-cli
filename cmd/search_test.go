@@ -140,10 +140,26 @@ func TestSearchMessages_Pagination(t *testing.T) {
 	}
 
 	// Second page using cursor
+	var page2Requested string
 	callCount = 0
-	out2, err := runWithMock(t, mux, "search", "messages", "test", "--limit", "1", "--cursor", cursor)
+	mux2 := http.NewServeMux()
+	mux2.HandleFunc("/api/search.messages", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		page2Requested = r.Form.Get("page")
+		json.NewEncoder(w).Encode(searchResponse(
+			[]map[string]any{
+				searchMatch("1709164800.000050", "msg2", "U02", "alice", "C01", "general", "https://x/p2"),
+			},
+			2, 2, 2,
+		))
+	})
+	out2, err := runWithMock(t, mux2, "search", "messages", "test", "--limit", "1", "--cursor", cursor)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if page2Requested != "2" {
+		t.Errorf("expected API to receive page=2, got %q", page2Requested)
 	}
 
 	lines2 := nonEmptyLines(out2)
@@ -229,7 +245,7 @@ func TestSearchMessages_SortFlags(t *testing.T) {
 
 func TestSearchMessages_MissingUserToken(t *testing.T) {
 	mux := http.NewServeMux()
-	// No SLACK_USER_TOKEN set
+	t.Setenv("SLACK_USER_TOKEN", "")
 
 	_, err := runWithMock(t, mux, "search", "messages", "test query")
 	if err == nil {
@@ -269,6 +285,23 @@ func TestSearchMessages_NotAuthed(t *testing.T) {
 	}
 	if oErr.Code != output.ExitAuth {
 		t.Errorf("expected exit code %d, got %d", output.ExitAuth, oErr.Code)
+	}
+}
+
+func TestSearchMessages_LimitExceeded(t *testing.T) {
+	mux := http.NewServeMux()
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-test")
+	_, err := runWithMock(t, mux, "search", "messages", "test", "--limit", "150")
+	if err == nil {
+		t.Fatal("expected error for --limit > 100")
+	}
+
+	var oErr *output.Error
+	if !errors.As(err, &oErr) {
+		t.Fatalf("expected *output.Error, got %T: %v", err, err)
+	}
+	if oErr.Err != "invalid_input" {
+		t.Errorf("expected error 'invalid_input', got %q", oErr.Err)
 	}
 }
 

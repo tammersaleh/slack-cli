@@ -48,8 +48,11 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 	ctx := context.Background()
 
 	limit := c.Limit
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 {
 		limit = 20
+	}
+	if limit > 100 {
+		return &output.Error{Err: "invalid_input", Detail: "--limit must be between 1 and 100", Code: output.ExitGeneral}
 	}
 
 	page := 1
