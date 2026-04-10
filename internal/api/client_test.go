@@ -184,3 +184,82 @@ func TestAuthTest_Failure(t *testing.T) {
 		t.Error("expected error for invalid auth")
 	}
 }
+
+func TestPostInternal_Success(t *testing.T) {
+	var gotContentType, gotAuth string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"data": "test-value",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test-token", WithAPIURL(srv.URL+"/api/"))
+	data, err := c.PostInternal(context.Background(), "saved.list", map[string]any{
+		"count": 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotContentType != "application/json; charset=utf-8" {
+		t.Errorf("expected JSON content-type, got %q", gotContentType)
+	}
+	if gotAuth != "Bearer xoxc-test-token" {
+		t.Errorf("expected Bearer auth, got %q", gotAuth)
+	}
+	if gotBody["token"] != "xoxc-test-token" {
+		t.Errorf("expected token in body, got %v", gotBody["token"])
+	}
+	if gotBody["count"] != float64(20) {
+		t.Errorf("expected count=20 in body, got %v", gotBody["count"])
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["data"] != "test-value" {
+		t.Errorf("expected data='test-value', got %v", resp["data"])
+	}
+}
+
+func TestPostInternal_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":    false,
+			"error": "not_authed",
+		})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithAPIURL(srv.URL+"/api/"))
+	_, err := c.PostInternal(context.Background(), "saved.list", map[string]any{})
+	if err == nil {
+		t.Fatal("expected error for ok:false response")
+	}
+}
+
+func TestPostInternal_DoesNotMutateInput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	}))
+	defer srv.Close()
+
+	c := New("xoxc-test", WithAPIURL(srv.URL+"/api/"))
+	body := map[string]any{"count": 10}
+	_, err := c.PostInternal(context.Background(), "saved.list", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hasToken := body["token"]; hasToken {
+		t.Error("PostInternal should not mutate the input map")
+	}
+}
