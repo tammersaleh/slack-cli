@@ -109,9 +109,11 @@ Work is driven by `SPEC.md`. Each feature gets its own branch and PR. The workfl
 
 ## Autonomy
 
-Work through features independently. After merging a feature, immediately
-start the next one per `PLAN.md` priority order - do not ask for
-confirmation between features. Only escalate when:
+Work through features independently. Never stop to ask "should I
+continue?" or "want me to keep going?" - the answer is always yes.
+After merging a feature, immediately start the next one per `PLAN.md`
+priority order. After giving a status summary, keep working. Only
+escalate when:
 
 - A design decision isn't covered by `SPEC.md`.
 - Something feels wrong (scope creep, Slack API limitation, etc.).
