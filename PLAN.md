@@ -126,3 +126,7 @@ These are spec'd but lower priority for the MCP replacement goal:
 
 - [x] Phase 1: Core read operations (all complete and merged)
 - [x] QA pass: channel resolver early exit, rate limit endpoint field
+- [x] search messages (#32)
+- [x] message permalink (#33)
+- [x] User caching + channel cache TTL bump to 24h (#34)
+- [x] Fix all errcheck lint violations (CI was failing since chrome-auth)
