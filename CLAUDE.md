@@ -1,6 +1,88 @@
 # slack-cli
 
-Read-only Slack CLI for agent/automation use. Go, kong, slack-go/slack.
+Slack CLI for agent/automation use. Go, kong, slack-go/slack.
+
+## Goal: Replace the Slack MCP + custom Python scripts
+
+This CLI replaces three separate Slack integrations used in Tammer's
+`~/brain/cw` knowledge base system:
+
+1. **korotovsky/slack-mcp-server** (Docker, xoxc/xoxd auth) - search,
+   history, replies, channels list. Config in `~/.claude.json` under
+   `mcpServers.slack`. Caches channels and users to
+   `~/.cache/slack-mcp-server/` with 24h TTL via Docker volume mount.
+
+2. **slack-saved-items skill** (Python, httpx) - lists Slack saved-for-later
+   items via the internal `saved.list` API. Source:
+   `~/dotfiles/public/.claude/skills/slack-saved-items/`
+
+3. **slack-organize-channels skill** (Python, httpx) - manages Slack sidebar
+   sections via internal `channelSections.*` and `client.counts` APIs.
+   Source: `~/dotfiles/private/.claude/skills/slack-organize-channels/`
+
+Plus two helper scripts in `~/brain/cw/scripts/`:
+- `slack-permalink` (bash) - build permalink URLs from channel+ts
+- `slack-channel-ids` (python) - resolve channel names to IDs from KB files
+
+### What's done (Phase 1)
+
+All core read operations: auth (OAuth + Desktop), channel list/info/members,
+message list/get, thread list, user list/info, reaction list. JSONL output,
+field filtering, pagination, 3-tier channel caching, Chrome TLS fingerprinting.
+
+### What remains
+
+See `PLAN.md` for the full implementation roadmap. In priority order:
+
+1. **search messages** - the #1 used MCP operation. Critical path.
+2. **message permalink** - already spec'd in SPEC.md Phase 2.
+3. **User caching** - MCP caches 17MB of user data with 24h TTL. Without
+   this, user lookups are painfully slow. Extend the channel caching
+   pattern to users.
+4. **Channel cache TTL** - bump from 1h to 24h to match MCP behavior.
+5. **saved list** - internal API (`saved.list`). Replaces the Python skill.
+6. **section list/find/move/create** - internal APIs
+   (`channelSections.*`, `client.counts`). Replaces the Python skill.
+7. **message post** - `chat.postMessage`. Currently unused but closes
+   feature parity with the MCP.
+
+### Internal Slack APIs
+
+The saved items and sidebar sections features use undocumented Slack
+internal APIs (not in the public Web API docs). These require xoxc/xoxd
+session tokens and use the same auth pattern as Desktop extraction.
+
+Key endpoints:
+- `saved.list` - list saved-for-later items
+- `client.counts` - get all channels the user is in (Enterprise Grid safe)
+- `users.channelSections.list` - list sidebar sections
+- `users.channelSections.create` - create a sidebar section
+- `users.channelSections.channels.bulkUpdate` - move channels between sections
+- `conversations.info` - channel metadata (used for name resolution in sections)
+
+All use POST with `Content-Type: application/x-www-form-urlencoded` (or
+`application/json` for `client.counts`). Auth: Bearer token + Cookie header
+with `d=<xoxd_token>`. A valid User-Agent header is required - Slack
+invalidates tokens without one.
+
+### Auth for internal APIs
+
+The existing Desktop auth already handles xoxc/xoxd tokens and Chrome TLS
+fingerprinting. The internal API calls should reuse the same `api.Client`
+transport layer. The `d` cookie injection and Chrome user-agent are already
+wired into the custom `RoundTripper`.
+
+### Caching reference
+
+The MCP server (`~/.cache/slack-mcp-server/`) maintains:
+- `channels_cache_v2.json` (~961K, 24h TTL)
+- `users_cache.json` (~17MB, 24h TTL)
+
+The Python sidebar script has its own cache at
+`~/.cache/tars/channel-prefixes.json` for channel prefix lookups.
+
+The CLI should consolidate all caching under `~/.config/slack-cli/cache/`
+with configurable TTL (default 24h for both channels and users).
 
 ## On startup
 

@@ -4,7 +4,7 @@ A read-only, non-interactive CLI for Slack, built in Go. Designed for agents and
 
 ## Design Principles
 
-- **Read-only**: No posting, modifying channels, or changing state. The one planned exception is `channel mark` (Phase 3).
+- **Mostly read**: Core operations are read-only. Write operations are limited to `message post`, `channel mark`, and sidebar `section` management (personal sidebar only, no channel mutations).
 - **Agent-first**: JSONL output. No interactive prompts. Deterministic, scriptable.
 - **Thin wrapper**: One API page per call by default. No hidden pagination loops. The caller controls data volume.
 - **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, `aws`.
@@ -921,6 +921,205 @@ Errors:
 
 Slack API: `team.info`
 
+### saved (Phase 2)
+
+Uses the internal `saved.list` API. Requires `xoxc-` session token.
+
+#### slack saved list
+
+```
+slack saved list [flags]
+  --limit              Max items to return (default: 20, max: 100)
+  --cursor             Continue from previous page
+  --all                Fetch all pages
+  --enrich             Fetch message text and channel names for each item
+  --include-completed  Include completed items
+```
+
+```
+$ slack saved list --limit=2
+{"channel_id":"C01ABC","message_ts":"1709251200.000100","saved_at":"2024-03-01T00:00:00Z","todo_state":"uncompleted","permalink":"https://acme.slack.com/archives/C01ABC/p1709251200000100"}
+{"channel_id":"C02DEF","message_ts":"1709164800.000050","saved_at":"2024-02-29T00:00:00Z","todo_state":"uncompleted","permalink":"https://acme.slack.com/archives/C02DEF/p1709164800000050"}
+{"_meta":{"has_more":true,"next_cursor":"c2F2ZWQ"}}
+```
+
+With `--enrich`, each item includes `channel_name`, `text`, and `from_user`:
+
+```
+$ slack saved list --limit=1 --enrich
+{"channel_id":"C01ABC","channel_name":"general","message_ts":"1709251200.000100","saved_at":"2024-03-01T00:00:00Z","todo_state":"uncompleted","text":"Hey team, the deploy is done.","from_user":"U01XYZ","permalink":"https://acme.slack.com/archives/C01ABC/p1709251200000100"}
+{"_meta":{"has_more":true,"next_cursor":"c2F2ZWQ"}}
+```
+
+Enrichment fetches `conversations.history` (for message text) and
+`conversations.info` (for channel name) concurrently with a semaphore
+(max 10 concurrent requests). Rate limit retries apply.
+
+Errors:
+
+- `not_authed` (exit 2): No session token (requires xoxc-).
+- `session_token_required` (exit 2): Bot/user token provided but saved.list requires a session token.
+
+Slack API: `saved.list` (internal, undocumented)
+
+#### slack saved counts
+
+```
+slack saved counts
+```
+
+```
+$ slack saved counts
+{"uncompleted":12,"overdue":2,"completed":45,"total":59}
+{"_meta":{"has_more":false}}
+```
+
+Slack API: `saved.list` (counts field from response)
+
+### section (Phase 2)
+
+Manages the user's sidebar channel sections. Uses internal Slack APIs.
+Requires `xoxc-` session token. All operations affect only the
+authenticated user's sidebar - no channel mutations.
+
+#### slack section list
+
+```
+slack section list
+```
+
+```
+$ slack section list
+{"id":"S01ABC","name":"Channels","type":"channels","is_default":true,"channel_count":42}
+{"id":"S02DEF","name":"Customers","type":"channels","is_default":false,"channel_count":15}
+{"id":"S03GHI","name":"Direct Messages","type":"ims","is_default":true,"channel_count":28}
+{"_meta":{"has_more":false}}
+```
+
+Slack API: `users.channelSections.list`
+
+#### slack section channels
+
+```
+slack section channels <section-id>
+```
+
+```
+$ slack section channels S02DEF
+{"id":"C01ABC","name":"ext-acme","is_archived":false}
+{"id":"C02DEF","name":"ext-globex","is_archived":false}
+{"_meta":{"has_more":false}}
+```
+
+Channel names resolved concurrently (max 15 concurrent
+`conversations.info` calls). Uses the CLI's channel cache.
+
+Slack API: `users.channelSections.list` + `conversations.info`
+
+#### slack section find
+
+```
+slack section find <pattern>
+```
+
+Searches all user channels by name substring (case-insensitive).
+
+```
+$ slack section find ext-
+{"id":"C01ABC","name":"ext-acme","is_archived":false,"section_name":"Customers","section_id":"S02DEF"}
+{"id":"C02DEF","name":"ext-globex","is_archived":false,"section_name":"Customers","section_id":"S02DEF"}
+{"id":"C03GHI","name":"ext-initech","is_archived":false,"section_name":"Channels","section_id":"S01ABC"}
+{"_meta":{"has_more":false}}
+```
+
+Slack API: `client.counts` + `conversations.info` + `users.channelSections.list`
+
+#### slack section move
+
+```
+slack section move --channels <id>[,<id>...] (--section <id> | --new-section <name>)
+```
+
+Moves channels to an existing section or creates a new one. Processes
+in batches of 50 with 1-second delays between batches.
+
+```
+$ slack section move --channels C01ABC,C02DEF --section S02DEF
+{"moved":[{"id":"C01ABC","name":"ext-acme"},{"id":"C02DEF","name":"ext-globex"}],"target_section":"Customers","moved_count":2}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ slack section move --channels C03GHI --new-section "Archive"
+{"moved":[{"id":"C03GHI","name":"ext-initech"}],"target_section":"Archive","target_section_id":"S04JKL","moved_count":1}
+{"_meta":{"has_more":false}}
+```
+
+Slack API: `users.channelSections.channels.bulkUpdate`,
+optionally `users.channelSections.create`
+
+#### slack section create
+
+```
+slack section create <name>
+```
+
+```
+$ slack section create "Archive"
+{"id":"S04JKL","name":"Archive"}
+{"_meta":{"has_more":false}}
+```
+
+Slack API: `users.channelSections.create`
+
+### message post (Phase 2)
+
+The one planned write operation beyond `channel mark`.
+
+#### slack message post
+
+```
+slack message post <channel> [flags]
+  --text       Message text (required unless --stdin)
+  --stdin      Read message text from stdin
+  --thread     Thread timestamp to reply to
+```
+
+```
+$ slack message post #general --text "Deploy complete"
+{"channel":"C01ABC","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z"}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ echo "Multi-line message" | slack message post #general --stdin
+{"channel":"C01ABC","ts":"1709251200.000200","ts_iso":"2024-03-01T00:00:01Z"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `not_authed` (exit 2): No token.
+- `missing_text` (exit 1): No --text and --stdin not provided.
+
+Slack API: `chat.postMessage`
+
+## Caching
+
+Channel and user resolution caches are stored under
+`~/.config/slack-cli/cache/`:
+
+- `channels-{teamID}.json` - channel name-to-ID mappings (24h TTL)
+- `users-{teamID}.json` - user ID-to-profile mappings (24h TTL)
+
+TTL is configurable via `SLACK_CACHE_TTL` env var (e.g., `1h`, `24h`,
+`7d`). Default: `24h`.
+
+User cache is populated on first miss by paginating `users.list --all`,
+then point lookups hit the cache. Channel cache uses the existing
+early-exit pagination pattern.
+
 ## Configuration
 
 All configuration is via flags and environment variables. No config file.
@@ -953,14 +1152,26 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 - Channel/user name resolution
 - Cookie-based authentication for `xoxc-` tokens
 
-### Phase 2: Extended
+### Phase 2a: MCP replacement (critical path)
 
-- `search messages`, `search files`
+- `search messages` - most-used MCP operation
+- `message permalink` - replaces `slack-permalink` bash script
+- User caching (24h TTL, bulk-load `users.list`)
+- Channel cache TTL bump (1h → 24h)
+
+### Phase 2b: Python skill replacement
+
+- `saved list`, `saved counts` - replaces slack-saved-items skill
+- `section list`, `section channels`, `section find`, `section move`, `section create` - replaces slack-organize-channels skill
+- `message post` - write operation for agent use
+
+### Phase 2c: Extended read operations
+
+- `search files`
 - `file list`, `file info`, `file download`
 - `pin list`
 - `bookmark list`
 - `status get`, `presence get`, `dnd info`
-- `message permalink`
 - `user lookup`
 - `usergroup list`, `usergroup members`
 - `emoji list`
@@ -969,7 +1180,7 @@ Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by works
 
 ### Phase 3: Advanced
 
-- `channel mark` (mark as read - the one planned write operation)
+- `channel mark` (mark as read)
 - `auth switch` (multi-workspace)
 
 ## Dependencies
