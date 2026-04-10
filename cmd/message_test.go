@@ -9,7 +9,7 @@ import (
 func TestMessageList_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{
@@ -43,7 +43,7 @@ func TestMessageList_MockAPI(t *testing.T) {
 func TestMessageList_HasRepliesFilter(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{
@@ -73,7 +73,7 @@ func TestMessageList_HasRepliesFilter(t *testing.T) {
 func TestMessageList_HasReactionsFilter(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": false,
 			"messages": []map[string]any{
@@ -98,15 +98,15 @@ func TestMessageList_HasReactionsFilter(t *testing.T) {
 func TestMessageGet_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		oldest := r.FormValue("oldest")
 		if oldest == "1709251200.000100" {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":       true,
 				"messages": []map[string]any{{"type": "message", "user": "U01", "text": "found", "ts": "1709251200.000100"}},
 			})
 		} else {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":       true,
 				"messages": []map[string]any{},
 			})
@@ -132,7 +132,7 @@ func TestMessageGet_MockAPI(t *testing.T) {
 func TestMessageGet_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"messages": []map[string]any{},
 		})
@@ -157,7 +157,7 @@ func TestMessageGet_NotFound(t *testing.T) {
 func TestMessageList_Pagination(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"has_more": true,
 			"messages": []map[string]any{{"type": "message", "text": "msg1", "ts": "1709251200.000100"}},

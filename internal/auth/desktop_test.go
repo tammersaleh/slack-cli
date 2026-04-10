@@ -150,7 +150,7 @@ func TestValidateDesktopCredentials_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotCookie = r.Header.Get("Cookie")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
 			"url":     "https://acme.slack.com/",
 			"team":    "Acme Corp",
@@ -182,7 +182,7 @@ func TestValidateDesktopCredentials_Success(t *testing.T) {
 
 func TestValidateDesktopCredentials_AuthFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
 			"error": "invalid_auth",
 		})

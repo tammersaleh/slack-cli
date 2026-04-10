@@ -114,7 +114,7 @@ func TestChannelList_PaginationFlags(t *testing.T) {
 func TestChannelList_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"channels": []map[string]any{
 				{"id": "C01", "name": "general", "is_channel": true, "is_member": true, "num_members": 10},
@@ -151,7 +151,7 @@ func TestChannelList_MockAPI(t *testing.T) {
 func TestChannelList_IncludeNonMember(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"channels": []map[string]any{
 				{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
@@ -175,7 +175,7 @@ func TestChannelList_IncludeNonMember(t *testing.T) {
 func TestChannelList_QueryFilter(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"channels": []map[string]any{
 				{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
@@ -201,7 +201,7 @@ func TestChannelList_QueryFilter(t *testing.T) {
 func TestChannelList_HasUnread(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"channels": []map[string]any{
 				{"id": "C01", "name": "general", "is_channel": true, "is_member": true, "unread_count": 5},
@@ -227,17 +227,17 @@ func TestChannelList_Pagination(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		r.ParseForm()
+		_ = r.ParseForm()
 		cursor := r.FormValue("cursor")
 
 		if cursor == "" {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":       true,
 				"channels": []map[string]any{{"id": "C01", "name": "page1", "is_member": true}},
 				"response_metadata": map[string]string{"next_cursor": "page2cursor"},
 			})
 		} else {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":       true,
 				"channels": []map[string]any{{"id": "C02", "name": "page2", "is_member": true}},
 				"response_metadata": map[string]string{"next_cursor": ""},
@@ -268,16 +268,16 @@ func TestChannelList_Pagination(t *testing.T) {
 func TestChannelList_AllPages(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		cursor := r.FormValue("cursor")
 		if cursor == "" {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":       true,
 				"channels": []map[string]any{{"id": "C01", "name": "page1", "is_member": true}},
 				"response_metadata": map[string]string{"next_cursor": "page2cursor"},
 			})
 		} else {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":       true,
 				"channels": []map[string]any{{"id": "C02", "name": "page2", "is_member": true}},
 				"response_metadata": map[string]string{"next_cursor": ""},
@@ -305,14 +305,14 @@ func TestChannelList_AllPages(t *testing.T) {
 func TestChannelInfo_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"channels": []map[string]any{{"id": "C01", "name": "general"}},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
 	})
 	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
 			"channel": map[string]any{"id": "C01", "name": "general", "is_channel": true, "num_members": 42},
 		})
@@ -337,14 +337,14 @@ func TestChannelInfo_MockAPI(t *testing.T) {
 func TestChannelInfo_InlineError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"channels": []map[string]any{{"id": "C01", "name": "general"}},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
 	})
 	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
 			"channel": map[string]any{"id": "C01", "name": "general"},
 		})
@@ -377,7 +377,7 @@ func TestChannelInfo_InlineError(t *testing.T) {
 func TestChannelMembers_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.members", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":                true,
 			"members":          []string{"U01", "U02", "U03"},
 			"response_metadata": map[string]string{"next_cursor": ""},
@@ -403,14 +403,14 @@ func TestChannelMembers_MockAPI(t *testing.T) {
 func TestChannelInfo_PartialFailure_NoStderr(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":       true,
 			"channels": []map[string]any{{"id": "C01", "name": "general"}},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
 	})
 	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
 			"channel": map[string]any{"id": "C01", "name": "general"},
 		})

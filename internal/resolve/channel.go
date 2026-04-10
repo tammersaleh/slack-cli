@@ -128,7 +128,7 @@ func (r *Resolver) loadFileCache() (*channelFileCache, error) {
 		return nil, err
 	}
 
-	if time.Since(fc.UpdatedAt) > fileCacheTTL {
+	if time.Since(fc.UpdatedAt) > fileCacheTTL() {
 		return nil, nil
 	}
 

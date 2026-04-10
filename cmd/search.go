@@ -111,6 +111,6 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 func searchMessageToMap(msg slack.SearchMessage) map[string]any {
 	data, _ := json.Marshal(msg)
 	var m map[string]any
-	json.Unmarshal(data, &m)
+	_ = json.Unmarshal(data, &m)
 	return m
 }

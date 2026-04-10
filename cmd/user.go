@@ -109,20 +109,25 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 			continue
 		}
 
-		user, err := client.Bot().GetUserInfoContext(ctx, userID)
-		if err != nil {
-			errorCount++
-			if err := p.PrintItem(map[string]any{
-				"input":  input,
-				"error":  "user_not_found",
-				"detail": "No user matching '" + input + "'",
-			}); err != nil {
-				return err
+		// Try cached profile first, fall back to direct API call.
+		user, found, lookupErr := r.LookupUser(ctx, userID)
+		if lookupErr != nil || !found {
+			apiUser, err := client.Bot().GetUserInfoContext(ctx, userID)
+			if err != nil {
+				errorCount++
+				if err := p.PrintItem(map[string]any{
+					"input":  input,
+					"error":  "user_not_found",
+					"detail": "No user matching '" + input + "'",
+				}); err != nil {
+					return err
+				}
+				continue
 			}
-			continue
+			user = *apiUser
 		}
 
-		m := userToMap(*user)
+		m := userToMap(user)
 		m["input"] = input
 		if err := p.PrintItem(m); err != nil {
 			return err
@@ -142,7 +147,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 func userToMap(u slack.User) map[string]any {
 	data, _ := json.Marshal(u)
 	var m map[string]any
-	json.Unmarshal(data, &m)
+	_ = json.Unmarshal(data, &m)
 	return m
 }
 

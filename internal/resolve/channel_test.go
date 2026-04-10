@@ -231,9 +231,9 @@ func TestResolveChannel_FileCacheExpired(t *testing.T) {
 	cacheDir := t.TempDir()
 	teamID := "T123"
 
-	// Pre-populate expired file cache.
+	// Pre-populate expired file cache (older than 24h default TTL).
 	cache := channelFileCache{
-		UpdatedAt: time.Now().Add(-2 * time.Hour),
+		UpdatedAt: time.Now().Add(-25 * time.Hour),
 		Channels:  map[string]string{"stale-channel": "C888"},
 	}
 	data, _ := json.Marshal(cache)

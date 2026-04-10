@@ -221,6 +221,6 @@ func channelToMap(ch slack.Channel) map[string]any {
 	// Marshal via JSON to get a flat map with correct field names.
 	data, _ := json.Marshal(ch)
 	var m map[string]any
-	json.Unmarshal(data, &m)
+	_ = json.Unmarshal(data, &m)
 	return m
 }

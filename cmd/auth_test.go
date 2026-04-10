@@ -96,7 +96,7 @@ func TestClassifyError_AuthHints(t *testing.T) {
 func TestAuthStatus_WorkspaceFilter(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/auth.test", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
 			"url":     "https://test.slack.com/",
 			"team":    "Test Team",
@@ -119,7 +119,7 @@ func TestAuthStatus_WorkspaceFilter(t *testing.T) {
 		},
 	}
 	credsPath, _ := auth.DefaultCredentialsPath()
-	auth.SaveCredentials(credsPath, creds)
+	_ = auth.SaveCredentials(credsPath, creds)
 
 	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
 
@@ -154,7 +154,7 @@ func TestAuthStatus_DesktopWorkspace(t *testing.T) {
 	var gotCookie string
 	mux.HandleFunc("/api/auth.test", func(w http.ResponseWriter, r *http.Request) {
 		gotCookie = r.Header.Get("Cookie")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
 			"url":     "https://test.slack.com/",
 			"team":    "Test Team",

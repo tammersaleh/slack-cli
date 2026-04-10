@@ -9,8 +9,8 @@ import (
 func TestMessagePermalink_SingleTimestamp(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = r.ParseForm()
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":        true,
 			"channel":   r.FormValue("channel"),
 			"permalink": "https://acme.slack.com/archives/C01ABC/p1709251200000100",
@@ -49,10 +49,10 @@ func TestMessagePermalink_MultipleTimestamps(t *testing.T) {
 	mux := http.NewServeMux()
 	callCount := 0
 	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		callCount++
 		ts := r.FormValue("message_ts")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":        true,
 			"channel":   r.FormValue("channel"),
 			"permalink": "https://acme.slack.com/archives/C01ABC/p" + ts,
@@ -89,7 +89,7 @@ func TestMessagePermalink_MultipleTimestamps(t *testing.T) {
 func TestMessagePermalink_ChannelResolution(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"channels": []map[string]any{
 				{"id": "C01ABC", "name": "general", "is_member": true},
@@ -98,12 +98,12 @@ func TestMessagePermalink_ChannelResolution(t *testing.T) {
 		})
 	})
 	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		ch := r.FormValue("channel")
 		if ch != "C01ABC" {
 			t.Errorf("expected resolved channel C01ABC, got %q", ch)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":        true,
 			"channel":   ch,
 			"permalink": "https://acme.slack.com/archives/C01ABC/p100",
@@ -129,7 +129,7 @@ func TestMessagePermalink_ChannelResolution(t *testing.T) {
 func TestMessagePermalink_AuthError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
 			"error": "not_authed",
 		})
@@ -147,14 +147,14 @@ func TestMessagePermalink_PartialFailure(t *testing.T) {
 	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
 		call++
 		if call == 2 {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":    false,
 				"error": "message_not_found",
 			})
 			return
 		}
-		r.ParseForm()
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = r.ParseForm()
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":        true,
 			"channel":   r.FormValue("channel"),
 			"permalink": "https://acme.slack.com/archives/C01ABC/pOK",
@@ -190,7 +190,7 @@ func TestMessagePermalink_PartialFailure(t *testing.T) {
 func TestMessagePermalink_Fields(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":        true,
 			"channel":   "C01ABC",
 			"permalink": "https://acme.slack.com/archives/C01ABC/p100",

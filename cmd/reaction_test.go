@@ -9,7 +9,7 @@ import (
 func TestReactionList_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/reactions.get", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":   true,
 			"type": "message",
 			"message": map[string]any{
@@ -47,7 +47,7 @@ func TestReactionList_MockAPI(t *testing.T) {
 func TestReactionList_NoReactions(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/reactions.get", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":   true,
 			"type": "message",
 			"message": map[string]any{
@@ -71,10 +71,10 @@ func TestReactionList_NoReactions(t *testing.T) {
 func TestReactionList_MultipleTimestamps(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/reactions.get", func(w http.ResponseWriter, r *http.Request) {
-		r.ParseForm()
+		_ = r.ParseForm()
 		ts := r.FormValue("timestamp")
 		if ts == "1709251200.000100" {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":   true,
 				"type": "message",
 				"message": map[string]any{
@@ -84,7 +84,7 @@ func TestReactionList_MultipleTimestamps(t *testing.T) {
 				},
 			})
 		} else {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":    false,
 				"error": "message_not_found",
 			})
