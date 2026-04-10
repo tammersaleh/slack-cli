@@ -76,7 +76,9 @@ func (r *Resolver) ensureUserCache(ctx context.Context) error {
 	// Try file cache.
 	if fc, err := r.loadUserFileCache(); err == nil && fc != nil {
 		r.mu.Lock()
-		r.setUserMaps(fc.Users)
+		if r.users == nil || time.Since(r.usersAt) >= memoryCacheTTL {
+			r.setUserMaps(fc.Users)
+		}
 		r.mu.Unlock()
 		return nil
 	}
@@ -89,12 +91,11 @@ func (r *Resolver) ensureUserCache(ctx context.Context) error {
 // in-memory and file caches.
 func (r *Resolver) bulkLoadUsers(ctx context.Context) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Re-check after acquiring write lock.
 	if r.users != nil && time.Since(r.usersAt) < memoryCacheTTL {
+		r.mu.Unlock()
 		return nil
 	}
+	r.mu.Unlock()
 
 	users, err := r.client.Bot().GetUsersContext(ctx)
 	if err != nil {
@@ -106,8 +107,10 @@ func (r *Resolver) bulkLoadUsers(ctx context.Context) error {
 		userMap[u.ID] = u
 	}
 
+	r.mu.Lock()
 	r.setUserMaps(userMap)
 	r.saveUserFileCache(userMap)
+	r.mu.Unlock()
 	return nil
 }
 

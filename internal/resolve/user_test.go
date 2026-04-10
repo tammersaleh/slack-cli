@@ -33,8 +33,8 @@ func TestResolveUser_IDPassthrough(t *testing.T) {
 }
 
 func TestResolveUser_EmailFallback(t *testing.T) {
-	// When the user cache bulk-load fails (e.g. no users.list handler),
-	// email resolution falls back to users.lookupByEmail.
+	// When the email is not in the bulk-loaded cache,
+	// resolution falls back to users.lookupByEmail.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
