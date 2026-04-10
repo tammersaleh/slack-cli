@@ -12,8 +12,9 @@ import (
 )
 
 type MessageCmd struct {
-	List MessageListCmd `cmd:"" aliases:"read" help:"List messages in a channel."`
-	Get  MessageGetCmd  `cmd:"" help:"Get specific messages by timestamp."`
+	List      MessageListCmd      `cmd:"" aliases:"read" help:"List messages in a channel."`
+	Get       MessageGetCmd       `cmd:"" help:"Get specific messages by timestamp."`
+	Permalink MessagePermalinkCmd `cmd:"" help:"Get permalinks for messages."`
 }
 
 type MessageListCmd struct {
