@@ -29,6 +29,7 @@ type CLI struct {
 	Auth     AuthCmd     `cmd:"" help:"Manage authentication."`
 	Channel  ChannelCmd  `cmd:"" help:"Read channel information."`
 	Message  MessageCmd  `cmd:"" help:"Read messages."`
+	Search   SearchCmd   `cmd:"" help:"Search messages and files."`
 	Thread   ThreadCmd   `cmd:"" help:"Read thread replies."`
 	User     UserCmd     `cmd:"" help:"Read user information."`
 	Reaction ReactionCmd `cmd:"" help:"Read reactions."`
