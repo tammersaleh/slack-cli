@@ -28,9 +28,11 @@ type CLI struct {
 	teamID     string
 
 	Auth     AuthCmd     `cmd:"" help:"Manage authentication."`
+	Bookmark BookmarkCmd `cmd:"" help:"Channel bookmarks."`
 	Channel  ChannelCmd  `cmd:"" help:"Read channel information."`
 	File     FileCmd     `cmd:"" help:"File operations."`
 	Message  MessageCmd  `cmd:"" help:"Read messages."`
+	Pin      PinCmd      `cmd:"" help:"Pinned items."`
 	Saved    SavedCmd    `cmd:"" help:"Saved-for-later items (requires session token)."`
 	Search   SearchCmd   `cmd:"" help:"Search messages and files."`
 	Section  SectionCmd  `cmd:"" help:"Manage sidebar sections (requires session token)."`
