@@ -159,6 +159,10 @@ func TestSubcommands_Exist(t *testing.T) {
 		{"usergroup members", []string{"usergroup", "members", "S123"}},
 		{"emoji list", []string{"emoji", "list"}},
 		{"workspace info", []string{"workspace-info", "info"}},
+		{"cache info", []string{"cache", "info"}},
+		{"cache clear", []string{"cache", "clear"}},
+		{"version", []string{"version"}},
+		{"skill", []string{"skill"}},
 	}
 
 	for _, tt := range tests {

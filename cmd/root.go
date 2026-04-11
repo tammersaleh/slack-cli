@@ -31,6 +31,7 @@ type CLI struct {
 
 	Auth      AuthCmd      `cmd:"" help:"Manage authentication."`
 	Bookmark  BookmarkCmd  `cmd:"" help:"Channel bookmarks."`
+	Cache     CacheCmd     `cmd:"" help:"Cache management."`
 	Channel   ChannelCmd   `cmd:"" help:"Read channel information."`
 	Dnd       DndCmd       `cmd:"" help:"Do Not Disturb info."`
 	Emoji     EmojiCmd     `cmd:"" help:"Custom emoji."`
@@ -47,6 +48,7 @@ type CLI struct {
 	Thread    ThreadCmd    `cmd:"" help:"Read thread replies."`
 	User      UserCmd      `cmd:"" help:"Read user information."`
 	Usergroup UsergroupCmd `cmd:"" help:"User groups."`
+	Version       VersionCmd   `cmd:"" help:"Show version."`
 	WorkspaceInfo WorkspaceCmd `cmd:"" help:"Workspace info."`
 }
 
