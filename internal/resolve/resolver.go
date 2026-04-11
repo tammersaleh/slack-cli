@@ -37,6 +37,7 @@ type Resolver struct {
 
 	users        map[string]slack.User // ID -> User
 	usersByEmail map[string]string     // email -> ID
+	usersByName  map[string]string     // lowercase display name -> ID
 	usersAt      time.Time
 }
 

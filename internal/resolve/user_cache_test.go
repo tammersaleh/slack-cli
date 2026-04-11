@@ -290,3 +290,46 @@ func TestResolveUser_EmailFromFileCacheIndex(t *testing.T) {
 		t.Errorf("got %q, want %q", id, "U002")
 	}
 }
+
+func TestResolveUser_DisplayName(t *testing.T) {
+	calls := 0
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		usersListHandler(t, testUsers())(w, r)
+	}))
+
+	r := NewResolver(client, "T123", t.TempDir())
+	id, err := r.ResolveUser(context.Background(), "@alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "U001" {
+		t.Errorf("got %q, want %q", id, "U001")
+	}
+	if calls != 1 {
+		t.Errorf("got %d API calls, want 1 (users.list only)", calls)
+	}
+}
+
+func TestResolveUser_DisplayNameCaseInsensitive(t *testing.T) {
+	client := newTestClient(t, usersListHandler(t, testUsers()))
+	r := NewResolver(client, "T123", t.TempDir())
+
+	id, err := r.ResolveUser(context.Background(), "@Alice Smith")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "U001" {
+		t.Errorf("got %q, want %q", id, "U001")
+	}
+}
+
+func TestResolveUser_DisplayNameNotFound(t *testing.T) {
+	client := newTestClient(t, usersListHandler(t, testUsers()))
+	r := NewResolver(client, "T123", t.TempDir())
+
+	_, err := r.ResolveUser(context.Background(), "@nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown display name")
+	}
+}
