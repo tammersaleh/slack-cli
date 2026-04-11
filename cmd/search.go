@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -203,16 +202,5 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 	}
 }
 
-func fileToMap(f slack.File) map[string]any {
-	data, _ := json.Marshal(f)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
-
-func searchMessageToMap(msg slack.SearchMessage) map[string]any {
-	data, _ := json.Marshal(msg)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
+func fileToMap(f slack.File) map[string]any          { return toMap(f) }
+func searchMessageToMap(msg slack.SearchMessage) map[string]any { return toMap(msg) }

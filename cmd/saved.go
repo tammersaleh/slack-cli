@@ -161,17 +161,6 @@ func (c *SavedCountsCmd) Run(cli *CLI) error {
 	return p.PrintMeta(output.Meta{})
 }
 
-func requireSessionToken(client *api.Client) error {
-	if !strings.HasPrefix(client.Token(), "xoxc-") {
-		return &output.Error{
-			Err:    "session_token_required",
-			Detail: "saved commands require a session token (xoxc-)",
-			Hint:   "Run 'slack auth login --desktop' to authenticate with a session token",
-			Code:   output.ExitAuth,
-		}
-	}
-	return nil
-}
 
 func formatSavedItem(item savedItem) map[string]any {
 	tsNoDot := strings.ReplaceAll(item.TS, ".", "")

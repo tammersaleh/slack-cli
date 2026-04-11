@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -217,10 +216,4 @@ func channelTypes(t string) []string {
 	}
 }
 
-func channelToMap(ch slack.Channel) map[string]any {
-	// Marshal via JSON to get a flat map with correct field names.
-	data, _ := json.Marshal(ch)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
+func channelToMap(ch slack.Channel) map[string]any { return toMap(ch) }

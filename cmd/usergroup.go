@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -77,9 +76,4 @@ func (c *UsergroupMembersCmd) Run(cli *CLI) error {
 	return p.PrintMeta(output.Meta{})
 }
 
-func usergroupToMap(g slack.UserGroup) map[string]any {
-	data, _ := json.Marshal(g)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
+func usergroupToMap(g slack.UserGroup) map[string]any { return toMap(g) }

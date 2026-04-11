@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -144,12 +143,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 	return nil
 }
 
-func userToMap(u slack.User) map[string]any {
-	data, _ := json.Marshal(u)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
+func userToMap(u slack.User) map[string]any { return toMap(u) }
 
 func matchesUserQuery(u slack.User, query string) bool {
 	q := strings.ToLower(query)

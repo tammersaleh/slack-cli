@@ -52,11 +52,7 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 			Cursor:    cursor,
 		})
 		if err != nil {
-			oErr := cli.ClassifyError(err)
-			if oErr.Err == "thread_not_found" || oErr.Err == "channel_not_found" {
-				return oErr
-			}
-			return oErr
+			return cli.ClassifyError(err)
 		}
 
 		if len(msgs) == 0 {

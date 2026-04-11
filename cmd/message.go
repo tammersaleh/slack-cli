@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -184,12 +183,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 	return nil
 }
 
-func messageToMap(msg slack.Message) map[string]any {
-	data, _ := json.Marshal(msg)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
+func messageToMap(msg slack.Message) map[string]any { return toMap(msg) }
 
 // parseTimestamp accepts a Unix timestamp string or ISO 8601 datetime.
 func parseTimestamp(s string) (string, error) {
