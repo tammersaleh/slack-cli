@@ -184,6 +184,7 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 - `auth_method` field in credentials.json tracks how each workspace was authenticated (`"oauth"` or `"desktop"`). Used for context-specific error hints.
 - Chrome TLS fingerprinting (`utls`) + user-agent on all cookie-based API requests. Required for Enterprise Grid.
 - `E`-prefix workspace IDs are Enterprise Grid org-level contexts. `conversations.list` fails on these. The `T`-prefix workspace within the same org works.
+- Internal APIs (`saved.list`, `users.channelSections.*`) require the `E`-prefix org token on Enterprise Grid. The `T`-prefix returns `team_is_restricted`.
 
 ### Desktop auth gotchas
 
