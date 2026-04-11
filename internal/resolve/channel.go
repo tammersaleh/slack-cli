@@ -47,8 +47,7 @@ func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, er
 	if fc, err := r.loadFileCache(); err == nil && fc != nil {
 		if id, ok := fc.Channels[name]; ok {
 			r.mu.Lock()
-			r.channels = fc.Channels
-			r.channelsAt = time.Now()
+			r.setChannelMaps(fc.Channels)
 			r.mu.Unlock()
 			return id, nil
 		}
@@ -99,8 +98,7 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 	}
 
 	// Update in-memory cache with whatever we fetched.
-	r.channels = channels
-	r.channelsAt = time.Now()
+	r.setChannelMaps(channels)
 
 	// Write file cache only on full pagination (found=="" means we exhausted all pages).
 	if found == "" {
@@ -109,6 +107,26 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 	}
 
 	return found, nil
+}
+
+// setChannelMaps populates forward and reverse channel maps.
+// Must be called with r.mu held.
+func (r *Resolver) setChannelMaps(channels map[string]string) {
+	r.channels = channels
+	r.channelsAt = time.Now()
+	r.channelsByID = make(map[string]string, len(channels))
+	for name, id := range channels {
+		r.channelsByID[id] = name
+	}
+}
+
+// LookupChannelName returns the cached name for a channel ID.
+// Returns ("", false) if the channel is not in the cache.
+func (r *Resolver) LookupChannelName(id string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	name, ok := r.channelsByID[id]
+	return name, ok
 }
 
 // loadFileCache reads the channel file cache if it exists and is fresh.

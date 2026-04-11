@@ -50,10 +50,11 @@ type metaWrapper struct {
 
 // Printer writes JSONL output to stdout and errors to stderr.
 type Printer struct {
-	Out    io.Writer
-	Err    io.Writer
-	Quiet  bool
-	Fields []string // top-level field whitelist; empty means all fields
+	Out        io.Writer
+	Err        io.Writer
+	Quiet      bool
+	Fields     []string                // top-level field whitelist; empty means all fields
+	EnrichFunc func(m map[string]any)  // optional enrichment called on each item
 }
 
 // PrintItem writes a single data line as compact JSON with timestamp enrichment
@@ -77,6 +78,9 @@ func (p *Printer) PrintItem(v any) error {
 	}
 
 	enrichTimestamps(m)
+	if p.EnrichFunc != nil {
+		p.EnrichFunc(m)
+	}
 	m = filterFields(m, p.Fields)
 
 	out, err := json.Marshal(m)

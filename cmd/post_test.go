@@ -154,7 +154,8 @@ func TestMessagePost_APIError(t *testing.T) {
 
 func TestMessagePost_Stdin(t *testing.T) {
 	var gotText string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		gotText = r.FormValue("text")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -162,7 +163,11 @@ func TestMessagePost_Stdin(t *testing.T) {
 			"channel": "C01ABC",
 			"ts":      "1709251200.000100",
 		})
-	}))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "members": []any{}})
+	})
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	t.Setenv("SLACK_TOKEN", "xoxb-test")
@@ -195,7 +200,8 @@ func TestMessagePost_Stdin(t *testing.T) {
 
 func TestMessagePost_StdinTrimsCarriageReturn(t *testing.T) {
 	var gotText string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat.postMessage", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		gotText = r.FormValue("text")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -203,7 +209,11 @@ func TestMessagePost_StdinTrimsCarriageReturn(t *testing.T) {
 			"channel": "C01ABC",
 			"ts":      "1709251200.000100",
 		})
-	}))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "members": []any{}})
+	})
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	t.Setenv("SLACK_TOKEN", "xoxb-test")
