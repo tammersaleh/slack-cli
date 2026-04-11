@@ -134,3 +134,4 @@ These are spec'd but lower priority for the MCP replacement goal:
 - [x] section list/channels/find/move/create (#36)
 - [x] message post (#37)
 - [x] search files (#38)
+- [x] file list/info/download (#39)
