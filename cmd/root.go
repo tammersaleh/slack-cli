@@ -29,6 +29,7 @@ type CLI struct {
 
 	Auth     AuthCmd     `cmd:"" help:"Manage authentication."`
 	Channel  ChannelCmd  `cmd:"" help:"Read channel information."`
+	File     FileCmd     `cmd:"" help:"File operations."`
 	Message  MessageCmd  `cmd:"" help:"Read messages."`
 	Saved    SavedCmd    `cmd:"" help:"Saved-for-later items (requires session token)."`
 	Search   SearchCmd   `cmd:"" help:"Search messages and files."`
