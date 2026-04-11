@@ -9,6 +9,10 @@ import (
 func TestPresenceGet(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.getPresence", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if u := r.FormValue("user"); u != "U01ABC" {
+			t.Errorf("expected user='U01ABC', got %q", u)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":          true,
 			"presence":    "active",

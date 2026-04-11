@@ -151,7 +151,19 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 			Limit:     1,
 		})
 		if err != nil {
-			return cli.ClassifyError(err)
+			oErr := cli.ClassifyError(err)
+			if oErr.Code != output.ExitGeneral {
+				return oErr
+			}
+			errorCount++
+			if err := p.PrintItem(map[string]any{
+				"input":  ts,
+				"error":  oErr.Err,
+				"detail": oErr.Detail,
+			}); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if len(resp.Messages) == 0 {

@@ -41,7 +41,19 @@ func (c *PresenceGetCmd) Run(cli *CLI) error {
 
 		presence, err := client.Bot().GetUserPresenceContext(ctx, userID)
 		if err != nil {
-			return cli.ClassifyError(err)
+			oErr := cli.ClassifyError(err)
+			if oErr.Code != output.ExitGeneral {
+				return oErr
+			}
+			errorCount++
+			if err := p.PrintItem(map[string]any{
+				"input":  input,
+				"error":  oErr.Err,
+				"detail": oErr.Detail,
+			}); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if err := p.PrintItem(map[string]any{

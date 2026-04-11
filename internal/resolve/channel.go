@@ -143,6 +143,7 @@ func (r *Resolver) loadFileCache() (*channelFileCache, error) {
 
 	var fc channelFileCache
 	if err := json.Unmarshal(data, &fc); err != nil {
+		_ = os.Remove(path) // clean up corrupted cache
 		return nil, err
 	}
 

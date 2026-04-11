@@ -164,9 +164,6 @@ func TestMessagePost_Stdin(t *testing.T) {
 			"ts":      "1709251200.000100",
 		})
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "members": []any{}})
-	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -209,9 +206,6 @@ func TestMessagePost_StdinTrimsCarriageReturn(t *testing.T) {
 			"channel": "C01ABC",
 			"ts":      "1709251200.000100",
 		})
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "members": []any{}})
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
