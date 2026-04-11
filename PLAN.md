@@ -132,3 +132,4 @@ These are spec'd but lower priority for the MCP replacement goal:
 - [x] Fix all errcheck lint violations (CI was failing since chrome-auth)
 - [x] saved list + saved counts (#35)
 - [x] section list/channels/find/move/create (#36)
+- [x] message post (#37)
