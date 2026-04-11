@@ -48,7 +48,21 @@ func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error
 		return user.ID, nil
 	}
 
-	return "", fmt.Errorf("cannot resolve user %q: expected a user ID (U...) or email address", input)
+	// Try display name / username lookup from cache.
+	name := input
+	if len(name) > 0 && name[0] == '@' {
+		name = name[1:]
+	}
+	if err := r.ensureUserCache(ctx); err == nil {
+		r.mu.RLock()
+		id, ok := r.usersByName[strings.ToLower(name)]
+		r.mu.RUnlock()
+		if ok {
+			return id, nil
+		}
+	}
+
+	return "", fmt.Errorf("cannot resolve user %q: no match by ID, email, or name", input)
 }
 
 // LookupUser returns the full cached profile for a user ID. It populates
@@ -114,15 +128,36 @@ func (r *Resolver) bulkLoadUsers(ctx context.Context) error {
 	return nil
 }
 
-// setUserMaps populates the in-memory user and email index maps.
+// setUserMaps populates the in-memory user, email, and name index maps.
 // Must be called with r.mu held.
 func (r *Resolver) setUserMaps(users map[string]slack.User) {
 	r.users = users
 	r.usersAt = time.Now()
 	r.usersByEmail = make(map[string]string, len(users))
+	r.usersByName = make(map[string]string, len(users))
 	for id, u := range users {
 		if u.Profile.Email != "" {
 			r.usersByEmail[strings.ToLower(u.Profile.Email)] = id
+		}
+		// Index by username (first match wins on collision).
+		if u.Name != "" {
+			key := strings.ToLower(u.Name)
+			if _, exists := r.usersByName[key]; !exists {
+				r.usersByName[key] = id
+			}
+		}
+		// Also index by display name and real name.
+		if u.Profile.DisplayName != "" {
+			key := strings.ToLower(u.Profile.DisplayName)
+			if _, exists := r.usersByName[key]; !exists {
+				r.usersByName[key] = id
+			}
+		}
+		if u.RealName != "" {
+			key := strings.ToLower(u.RealName)
+			if _, exists := r.usersByName[key]; !exists {
+				r.usersByName[key] = id
+			}
 		}
 	}
 }

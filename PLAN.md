@@ -110,17 +110,13 @@ Already spec'd in SPEC.md. Lower priority than message search.
 
 Branch: `feat/search-files`
 
-### Remaining Phase 2 items from SPEC.md
+### Remaining
 
-These are spec'd but lower priority for the MCP replacement goal:
-- `file list/info/download`
-- `pin list`
-- `bookmark list`
-- `status get`, `presence get`, `dnd info`
-- `user lookup`
-- `usergroup list/members`
-- `emoji list`
-- `workspace info`
+- Display name resolution (`@name`) in `ResolveUser` - add name
+  index to user cache so all user-accepting commands support `@name`
+  input. No separate `user lookup` command needed.
+- `channel mark` (Phase 3)
+- `auth switch` (Phase 3)
 
 ## Done
 
