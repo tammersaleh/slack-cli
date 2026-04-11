@@ -300,3 +300,40 @@ func TestResolveChannel_FileCacheWrittenAfterFullPagination(t *testing.T) {
 		t.Errorf("file cache missing random, got %v", cache.Channels)
 	}
 }
+
+func TestLookupChannelName(t *testing.T) {
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"channels": []map[string]any{
+				{"id": "C111", "name": "general", "is_channel": true},
+				{"id": "C222", "name": "random", "is_channel": true},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	}))
+
+	r := NewResolver(client, "", "")
+
+	// Populate cache by resolving a channel.
+	_, err := r.ResolveChannel(context.Background(), "general")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reverse lookup should work.
+	name, ok := r.LookupChannelName("C111")
+	if !ok || name != "general" {
+		t.Errorf("expected general, got %q (ok=%v)", name, ok)
+	}
+	name, ok = r.LookupChannelName("C222")
+	if !ok || name != "random" {
+		t.Errorf("expected random, got %q (ok=%v)", name, ok)
+	}
+
+	// Unknown ID returns false.
+	_, ok = r.LookupChannelName("C999")
+	if ok {
+		t.Error("expected false for unknown channel")
+	}
+}
