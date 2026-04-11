@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ type CLI struct {
 	// Set by NewClient from resolved credentials.
 	authMethod string
 	teamID     string
+	resolver   *resolve.Resolver
 
 	Auth      AuthCmd      `cmd:"" help:"Manage authentication."`
 	Bookmark  BookmarkCmd  `cmd:"" help:"Channel bookmarks."`
@@ -103,6 +105,11 @@ func (c *CLI) NewPrinter() *output.Printer {
 		Err:    errW,
 		Quiet:  c.Quiet,
 		Fields: c.ParsedFields(),
+		EnrichFunc: func(m map[string]any) {
+			if c.resolver != nil {
+				c.resolver.Enrich(context.Background(), m)
+			}
+		},
 	}
 }
 
@@ -158,10 +165,13 @@ func (c *CLI) ClassifyError(err error) *output.Error {
 }
 
 // NewResolver creates a channel/user name resolver from the API client.
+// The resolver is also stored on CLI for use by NewPrinter's enrichment.
 func (c *CLI) NewResolver(client *api.Client) *resolve.Resolver {
 	cacheDir := ""
 	if dir, err := os.UserConfigDir(); err == nil {
 		cacheDir = filepath.Join(dir, "slack-cli", "cache")
 	}
-	return resolve.NewResolver(client, c.teamID, cacheDir)
+	r := resolve.NewResolver(client, c.teamID, cacheDir)
+	c.resolver = r
+	return r
 }
