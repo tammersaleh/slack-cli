@@ -45,6 +45,7 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 		}
 	}
 
+	cli.NewResolver(client) // populate resolver for output enrichment
 	p := cli.NewPrinter()
 	ctx := context.Background()
 
@@ -137,6 +138,7 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 		}
 	}
 
+	cli.NewResolver(client) // populate resolver for output enrichment
 	p := cli.NewPrinter()
 	ctx := context.Background()
 

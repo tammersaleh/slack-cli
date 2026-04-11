@@ -61,6 +61,7 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 		return err
 	}
 
+	cli.NewResolver(client) // populate resolver for output enrichment
 	p := cli.NewPrinter()
 	ctx := context.Background()
 

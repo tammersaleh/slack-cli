@@ -37,6 +37,7 @@ func (c *FileListCmd) Run(cli *CLI) error {
 		return err
 	}
 
+	r := cli.NewResolver(client) // also populates resolver for output enrichment
 	p := cli.NewPrinter()
 	ctx := context.Background()
 
@@ -47,7 +48,6 @@ func (c *FileListCmd) Run(cli *CLI) error {
 
 	channelID := c.Channel
 	if channelID != "" {
-		r := cli.NewResolver(client)
 		resolved, err := r.ResolveChannel(ctx, channelID)
 		if err == nil {
 			channelID = resolved
@@ -104,6 +104,7 @@ func (c *FileInfoCmd) Run(cli *CLI) error {
 		return err
 	}
 
+	cli.NewResolver(client) // populate resolver for output enrichment
 	p := cli.NewPrinter()
 	ctx := context.Background()
 	errorCount := 0
