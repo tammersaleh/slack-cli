@@ -23,12 +23,25 @@ func newTestClient(t *testing.T, handler http.Handler) *api.Client {
 func TestResolveChannel_IDPassthrough(t *testing.T) {
 	// No API calls needed for IDs.
 	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"), "", "")
-	id, err := r.ResolveChannel(context.Background(), "C01ABC123")
-	if err != nil {
-		t.Fatal(err)
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"C prefix (channel)", "C01ABC123"},
+		{"G prefix (group DM)", "G01ABC123"},
+		{"D prefix (DM)", "D01ABC123"},
 	}
-	if id != "C01ABC123" {
-		t.Errorf("got %q, want %q", id, "C01ABC123")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := r.ResolveChannel(context.Background(), tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if id != tt.input {
+				t.Errorf("got %q, want %q", id, tt.input)
+			}
+		})
 	}
 }
 

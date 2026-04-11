@@ -7,7 +7,7 @@ import (
 
 var (
 	enrichUserPattern   = regexp.MustCompile(`^[UW][A-Z0-9]+$`)
-	enrichChannelPattern = regexp.MustCompile(`^C[A-Z0-9]+$`)
+	enrichChannelPattern = regexp.MustCompile(`^[CDG][A-Z0-9]+$`)
 )
 
 // enrichUserFields are top-level map keys that contain user IDs.

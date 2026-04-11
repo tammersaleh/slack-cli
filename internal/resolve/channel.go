@@ -13,7 +13,7 @@ import (
 	"github.com/tammersaleh/slack-cli/internal/api"
 )
 
-var channelIDPattern = regexp.MustCompile(`^[C][A-Z0-9]+$`)
+var channelIDPattern = regexp.MustCompile(`^[CDG][A-Z0-9]+$`)
 
 // channelFileCache is the on-disk format for the channel name cache.
 type channelFileCache struct {

@@ -158,6 +158,6 @@ everything, or use the ` + "`next_cursor`" + ` from ` + "`_meta`" + ` with ` + "
 
 ## Channel and User Resolution
 
-Channels accept IDs (C...) or #names. Users accept IDs (U...), emails,
+Channels accept IDs (C.../G.../D...) or #names. Users accept IDs (U...), emails,
 or @display-names.
 `
