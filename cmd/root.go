@@ -39,6 +39,7 @@ type CLI struct {
 	Reaction  ReactionCmd  `cmd:"" help:"Read reactions."`
 	Saved     SavedCmd     `cmd:"" help:"Saved-for-later items (requires session token)."`
 	Search    SearchCmd    `cmd:"" help:"Search messages and files."`
+	Skill     SkillCmd     `cmd:"" help:"Print Claude skill file to stdout."`
 	Section   SectionCmd   `cmd:"" help:"Manage sidebar sections (requires session token)."`
 	Status    StatusCmd    `cmd:"" help:"User status."`
 	Thread    ThreadCmd    `cmd:"" help:"Read thread replies."`
