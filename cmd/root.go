@@ -18,9 +18,10 @@ type CLI struct {
 	Quiet      bool   `short:"q" help:"Suppress stdout output (exit code and stderr only)."`
 	APIBaseURL string `hidden:"" env:"SLACK_API_URL" help:"Override Slack API base URL (for testing)."`
 
-	// stdout/stderr overrides for testing.
+	// stdout/stderr/stdin overrides for testing.
 	out io.Writer
 	err io.Writer
+	in  io.Reader
 
 	// Set by NewClient from resolved credentials.
 	authMethod string
@@ -57,6 +58,19 @@ func (c *CLI) ParsedFields() []string {
 func (c *CLI) SetOutput(out, errW io.Writer) {
 	c.out = out
 	c.err = errW
+}
+
+// SetInput overrides stdin for testing.
+func (c *CLI) SetInput(in io.Reader) {
+	c.in = in
+}
+
+// Stdin returns the stdin reader, defaulting to os.Stdin.
+func (c *CLI) Stdin() io.Reader {
+	if c.in != nil {
+		return c.in
+	}
+	return os.Stdin
 }
 
 // SetAuthMethod overrides the auth method for testing ClassifyError hints.

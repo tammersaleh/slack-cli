@@ -1,9 +1,15 @@
 package cmd_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/alecthomas/kong"
+	"github.com/tammersaleh/slack-cli/cmd"
 )
 
 func TestMessagePost_Text(t *testing.T) {
@@ -111,9 +117,23 @@ func TestMessagePost_ChannelResolution(t *testing.T) {
 
 func TestMessagePost_MissingText(t *testing.T) {
 	mux := http.NewServeMux()
-	_, err := runWithMock(t, mux, "message", "post", "C01ABC")
-	if err == nil {
+	r := runWithMockFull(t, mux, "message", "post", "C01ABC")
+	if r.err == nil {
 		t.Fatal("expected error when no --text or --stdin")
+	}
+	if !strings.Contains(r.err.Error(), "missing_text") {
+		t.Errorf("expected missing_text error, got %v", r.err)
+	}
+}
+
+func TestMessagePost_TextAndStdinExclusive(t *testing.T) {
+	mux := http.NewServeMux()
+	r := runWithMockFull(t, mux, "message", "post", "C01ABC", "--text", "foo", "--stdin")
+	if r.err == nil {
+		t.Fatal("expected error for --text and --stdin together")
+	}
+	if !strings.Contains(r.err.Error(), "invalid_input") {
+		t.Errorf("expected invalid_input error, got %v", r.err)
 	}
 }
 
@@ -129,5 +149,87 @@ func TestMessagePost_APIError(t *testing.T) {
 	_, err := runWithMock(t, mux, "message", "post", "C01ABC", "--text", "hello")
 	if err == nil {
 		t.Fatal("expected error for not_authed")
+	}
+}
+
+func TestMessagePost_Stdin(t *testing.T) {
+	var gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotText = r.FormValue("text")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"channel": "C01ABC",
+			"ts":      "1709251200.000100",
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("SLACK_TOKEN", "xoxb-test")
+	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
+
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kctx, err := parser.Parse([]string{"message", "post", "C01ABC", "--stdin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cli.SetOutput(&outBuf, &errBuf)
+	cli.SetInput(strings.NewReader("Hello from stdin\n"))
+
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+
+	if gotText != "Hello from stdin" {
+		t.Errorf("expected text='Hello from stdin', got %q", gotText)
+	}
+}
+
+func TestMessagePost_StdinTrimsCarriageReturn(t *testing.T) {
+	var gotText string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotText = r.FormValue("text")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"channel": "C01ABC",
+			"ts":      "1709251200.000100",
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("SLACK_TOKEN", "xoxb-test")
+	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
+
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kctx, err := parser.Parse([]string{"message", "post", "C01ABC", "--stdin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cli.SetOutput(&outBuf, &errBuf)
+	cli.SetInput(strings.NewReader("Windows text\r\n"))
+
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+
+	if gotText != "Windows text" {
+		t.Errorf("expected text='Windows text', got %q", gotText)
 	}
 }

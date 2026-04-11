@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,13 +19,18 @@ type MessagePostCmd struct {
 }
 
 func (c *MessagePostCmd) Run(cli *CLI) error {
+	if c.Text != "" && c.Stdin {
+		return &output.Error{Err: "invalid_input", Detail: "--text and --stdin are mutually exclusive", Code: output.ExitGeneral}
+	}
+
 	text := c.Text
 	if c.Stdin {
-		data, err := io.ReadAll(os.Stdin)
+		in := cli.Stdin()
+		data, err := io.ReadAll(in)
 		if err != nil {
 			return &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
 		}
-		text = strings.TrimRight(string(data), "\n")
+		text = strings.TrimRight(string(data), "\r\n")
 	}
 
 	if text == "" {
