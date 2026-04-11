@@ -122,18 +122,36 @@ escalate when:
 
 ```
 cmd/
-  root.go        # CLI struct, global flags, NewPrinter/NewClient/NewResolver helpers
+  root.go        # CLI struct, global flags, NewPrinter/NewClient/NewResolver
   auth.go        # auth login/logout/status
+  bookmark.go    # bookmark list
+  cache.go       # cache info/clear
   channel.go     # channel list/info/members
+  dnd.go         # dnd info
+  emoji.go       # emoji list
+  file.go        # file list/info/download
   message.go     # message list (alias: read) / get
+  permalink.go   # message permalink
+  pin.go         # pin list
+  post.go        # message post
+  presence.go    # presence get
+  reaction.go    # reaction list
+  saved.go       # saved list/counts (internal API)
+  search.go      # search messages/files
+  section.go     # section list/channels/find/move/create (internal API)
+  skill.go       # generate Claude skill file
+  status.go      # status get
   thread.go      # thread list (alias: read)
   user.go        # user list/info
-  reaction.go    # reaction list
+  usergroup.go   # usergroup list/members
+  version.go     # version
+  workspace.go   # workspace info
 internal/
-  api/           # Slack API client wrapper (Client, Paginate[T], ClassifyError, WithCookie)
-  auth/          # credentials CRUD, OAuth flow, Desktop extraction, token resolution
-  output/        # Printer (JSONL), Meta, Error with exit codes
-  resolve/       # channel/user name-to-ID resolution with in-memory + file cache
+  api/           # Slack API client (Client, Paginate[T], ClassifyError,
+                 #   PostInternal, PostInternalForm, WithCookie)
+  auth/          # credentials CRUD, OAuth flow, Desktop extraction
+  output/        # Printer (JSONL + enrichment), Meta, Error with exit codes
+  resolve/       # channel/user resolution with 3-tier cache + enrichment
 ```
 
 ## Testing
@@ -152,12 +170,15 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 
 - No config file. All config via flags/env vars. Kong handles precedence.
 - Workspaces keyed by `TeamID` (stable) not `TeamName` (mutable) in credentials.json.
-- User resolution: ID + email only. Display name (`@name`) deferred to Phase 2 (expensive at scale). `users.lookupByEmail` fails with `xoxc-` tokens on Enterprise Grid (scope limitation).
+- User resolution: ID, email, or `@name` (display name / username / real name). Name lookups use the user cache index. `users.lookupByEmail` fails with `xoxc-` tokens on Enterprise Grid (scope limitation).
 - Channel resolution: first match wins on name collision. No ambiguity errors.
 - Channel list defaults to member-only. `--include-non-member` to expand.
 - Single-page pagination by default. `--cursor` to continue, `--all` to fetch everything.
 - `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). `api.PaginateEach[T]` adds per-page callback with early exit. Both accept an endpoint name for diagnostics.
-- Channel resolver uses `PaginateEach` for early exit (stops paginating once target is found). File cache at `~/.config/slack-cli/cache/channels-{teamID}.json` (1h TTL) persists across invocations. In-memory cache (5min TTL) for session reuse.
+- Channel resolver uses `PaginateEach` for early exit (stops paginating once target is found). File cache at `~/.config/slack-cli/cache/channels-{teamID}.json` (24h TTL, configurable via `SLACK_CACHE_TTL`). In-memory cache (5min TTL) for session reuse. Reverse index (ID->name) for output enrichment.
+- User cache: file at `~/.config/slack-cli/cache/users-{teamID}.json` (24h TTL). Bulk-loads all users on first miss. Indexes by ID, email, and display name.
+- Output enrichment: all output automatically resolves user/channel IDs to names from cache. Best-effort, adds `user_name`/`channel_name` fields.
+- Internal APIs: `PostInternal` (JSON body) and `PostInternalForm` (form-encoded) for undocumented Slack endpoints (`saved.list`, `users.channelSections.*`).
 - `api.Client` wraps `slack-go/slack` with separate bot/user token clients. `WithCookie` injects `d` cookie + Chrome user-agent via custom `http.RoundTripper` for `xoxc-` tokens.
 - Desktop auth (`--desktop`) reads `xoxc-` tokens from Slack Desktop's LevelDB and decrypts the `d` cookie from its SQLite cookies DB using the Slack Safe Storage password (`SLACK_SAFE_STORAGE_PASSWORD` env var). Works with Enterprise Grid.
 - `auth_method` field in credentials.json tracks how each workspace was authenticated (`"oauth"` or `"desktop"`). Used for context-specific error hints.
