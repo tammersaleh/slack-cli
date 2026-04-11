@@ -135,3 +135,4 @@ These are spec'd but lower priority for the MCP replacement goal:
 - [x] message post (#37)
 - [x] search files (#38)
 - [x] file list/info/download (#39)
+- [x] pin list + bookmark list (#40)
