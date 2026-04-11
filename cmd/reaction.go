@@ -44,8 +44,8 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 				errorCount++
 				if err := p.PrintItem(map[string]any{
 					"input":  ts,
-					"error":  "message_not_found",
-					"detail": "No message at timestamp " + ts + " in " + c.Channel,
+					"error":  oErr.Err,
+					"detail": oErr.Detail,
 				}); err != nil {
 					return err
 				}

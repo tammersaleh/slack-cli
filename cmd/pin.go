@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -45,9 +44,4 @@ func (c *PinListCmd) Run(cli *CLI) error {
 	return p.PrintMeta(output.Meta{})
 }
 
-func pinItemToMap(item slack.Item) map[string]any {
-	data, _ := json.Marshal(item)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
+func pinItemToMap(item slack.Item) map[string]any { return toMap(item) }

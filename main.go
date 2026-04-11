@@ -15,7 +15,7 @@ func main() {
 	var cli cmd.CLI
 	ctx := kong.Parse(&cli,
 		kong.Name("slack"),
-		kong.Description("Read-only CLI for Slack."),
+		kong.Description("CLI for Slack."),
 		kong.UsageOnError(),
 	)
 

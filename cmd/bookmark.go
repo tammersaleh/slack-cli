@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -45,9 +44,4 @@ func (c *BookmarkListCmd) Run(cli *CLI) error {
 	return p.PrintMeta(output.Meta{})
 }
 
-func bookmarkToMap(bm slack.Bookmark) map[string]any {
-	data, _ := json.Marshal(bm)
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
-}
+func bookmarkToMap(bm slack.Bookmark) map[string]any { return toMap(bm) }

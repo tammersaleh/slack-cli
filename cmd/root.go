@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -176,4 +177,25 @@ func (c *CLI) NewResolver(client *api.Client) *resolve.Resolver {
 	r := resolve.NewResolver(client, c.teamID, cacheDir)
 	c.resolver = r
 	return r
+}
+
+// toMap converts any struct to a map[string]any via JSON round-trip.
+func toMap(v any) map[string]any {
+	data, _ := json.Marshal(v)
+	var m map[string]any
+	_ = json.Unmarshal(data, &m)
+	return m
+}
+
+// requireSessionToken returns an error if the client's token is not an xoxc- session token.
+func requireSessionToken(client *api.Client) error {
+	if !strings.HasPrefix(client.Token(), "xoxc-") {
+		return &output.Error{
+			Err:    "session_token_required",
+			Detail: "This command requires a session token (xoxc-)",
+			Hint:   "Run 'slack auth login --desktop' to authenticate with a session token",
+			Code:   output.ExitAuth,
+		}
+	}
+	return nil
 }
