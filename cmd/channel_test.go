@@ -395,8 +395,8 @@ func TestChannelMembers_MockAPI(t *testing.T) {
 	}
 
 	member := parseJSON(t, lines[0])
-	if member["id"] != "U01" {
-		t.Errorf("expected first member 'U01', got %q", member["id"])
+	if member["user_id"] != "U01" {
+		t.Errorf("expected first member 'U01', got %q", member["user_id"])
 	}
 }
 
