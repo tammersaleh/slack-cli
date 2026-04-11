@@ -111,11 +111,15 @@ func (c *FileInfoCmd) Run(cli *CLI) error {
 	for _, id := range c.Files {
 		file, _, _, err := client.Bot().GetFileInfoContext(ctx, id, 0, 0)
 		if err != nil {
+			oErr := cli.ClassifyError(err)
+			if oErr.Code != output.ExitGeneral {
+				return oErr
+			}
 			errorCount++
 			if err := p.PrintItem(map[string]any{
 				"input":  id,
-				"error":  "file_not_found",
-				"detail": "No file matching '" + id + "'",
+				"error":  oErr.Err,
+				"detail": oErr.Detail,
 			}); err != nil {
 				return err
 			}
@@ -167,23 +171,31 @@ func (c *FileDownloadCmd) Run(cli *CLI) error {
 		if cli.out != nil {
 			out = cli.out
 		}
-		return client.Bot().GetFileContext(ctx, file.URLPrivateDownload, out)
+		if err := client.Bot().GetFileContext(ctx, file.URLPrivateDownload, out); err != nil {
+			return cli.ClassifyError(err)
+		}
+		return nil
 	}
 
 	outPath := c.Output
 	if outPath == "" {
 		outPath = filepath.Base(file.Name)
 	}
+	if outPath == "" || outPath == "." {
+		outPath = file.ID
+	}
 
 	f, err := os.Create(outPath)
 	if err != nil {
 		return &output.Error{Err: "file_error", Detail: err.Error(), Code: output.ExitGeneral}
 	}
-	defer f.Close()
 
 	if err := client.Bot().GetFileContext(ctx, file.URLPrivateDownload, f); err != nil {
+		f.Close()
+		_ = os.Remove(outPath)
 		return cli.ClassifyError(err)
 	}
+	f.Close()
 
 	if err := p.PrintItem(map[string]any{
 		"input": c.File,

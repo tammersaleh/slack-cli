@@ -1,9 +1,16 @@
 package cmd_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/alecthomas/kong"
+	"github.com/tammersaleh/slack-cli/cmd"
 )
 
 func TestFileList_Basic(t *testing.T) {
@@ -131,5 +138,128 @@ func TestFileInfo_NotFound(t *testing.T) {
 	}
 	if errItem["input"] != "F99MISSING" {
 		t.Errorf("expected input='F99MISSING', got %q", errItem["input"])
+	}
+}
+
+func fileDownloadMux(t *testing.T, fileContent string) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/files.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"file": map[string]any{
+				"id":                   "F01ABC",
+				"name":                 "report.pdf",
+				"size":                 len(fileContent),
+				"url_private_download": "http://" + r.Host + "/download/report.pdf",
+			},
+			"comments": []any{},
+			"paging":   map[string]any{"count": 0, "total": 0, "page": 1, "pages": 1},
+		})
+	})
+	mux.HandleFunc("/download/report.pdf", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte(fileContent))
+	})
+	return mux
+}
+
+func TestFileDownload_ToDisk(t *testing.T) {
+	content := "fake-pdf-content"
+	mux := fileDownloadMux(t, content)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	t.Setenv("SLACK_TOKEN", "xoxb-test")
+	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
+
+	outDir := t.TempDir()
+	outPath := filepath.Join(outDir, "downloaded.pdf")
+
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kctx, err := parser.Parse([]string{"file", "download", "F01ABC", "-o", outPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cli.SetOutput(&outBuf, &errBuf)
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("file not written: %v", err)
+	}
+	if string(data) != content {
+		t.Errorf("expected content %q, got %q", content, string(data))
+	}
+
+	lines := nonEmptyLines(outBuf.String())
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (result + meta), got %d:\n%s", len(lines), outBuf.String())
+	}
+	item := parseJSON(t, lines[0])
+	if item["path"] != outPath {
+		t.Errorf("expected path=%q, got %q", outPath, item["path"])
+	}
+}
+
+func TestFileDownload_ToStdout(t *testing.T) {
+	content := "stdout-content"
+	mux := fileDownloadMux(t, content)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	t.Setenv("SLACK_TOKEN", "xoxb-test")
+	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
+
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kctx, err := parser.Parse([]string{"file", "download", "F01ABC", "-o", "-"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cli.SetOutput(&outBuf, &errBuf)
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+
+	if outBuf.String() != content {
+		t.Errorf("expected stdout content %q, got %q", content, outBuf.String())
+	}
+}
+
+func TestFileDownload_NoDownloadURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/files.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"file": map[string]any{
+				"id":   "F01ABC",
+				"name": "snippet.txt",
+			},
+			"comments": []any{},
+			"paging":   map[string]any{"count": 0, "total": 0, "page": 1, "pages": 1},
+		})
+	})
+
+	_, err := runWithMock(t, mux, "file", "download", "F01ABC")
+	if err == nil {
+		t.Fatal("expected error for no download URL")
 	}
 }
