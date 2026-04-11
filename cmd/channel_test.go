@@ -62,6 +62,11 @@ func runWithMock(t *testing.T, handler http.Handler, args ...string) (string, er
 	return r.stdout, r.err
 }
 
+// emptyMux returns a ServeMux with no handlers for commands that don't call APIs.
+func emptyMux() *http.ServeMux {
+	return http.NewServeMux()
+}
+
 func nonEmptyLines(s string) []string {
 	var result []string
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
