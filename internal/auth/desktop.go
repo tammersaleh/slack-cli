@@ -221,6 +221,9 @@ func extractCookie(cookiesPath, password string) (string, error) {
 			}
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("reading cookies: %w", err)
+	}
 
 	return "", fmt.Errorf("d cookie not found in Slack cookies database")
 }

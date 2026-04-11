@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -59,7 +60,7 @@ func login(ctx context.Context, baseURL, clientID, clientSecret string) (*Worksp
 
 	authURL := buildAuthorizeURL(baseURL, clientID, redirectURI, state)
 	openBrowser(authURL)
-	fmt.Printf("Opening browser for authentication...\nIf it doesn't open, visit:\n%s\n", authURL)
+	fmt.Fprintf(os.Stderr, "Opening browser for authentication...\nIf it doesn't open, visit:\n%s\n", authURL)
 
 	// Wait for the callback or timeout.
 	var code string
