@@ -42,9 +42,16 @@ func TestPinList(t *testing.T) {
 	if item["channel"] != "C01ABC" {
 		t.Errorf("expected channel='C01ABC', got %q", item["channel"])
 	}
+
+	meta := parseJSON(t, lines[1])
+	m := meta["_meta"].(map[string]any)
+	if m["has_more"] != false {
+		t.Error("expected has_more=false")
+	}
 }
 
 func TestPinList_ChannelResolution(t *testing.T) {
+	pinsCalled := false
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -56,6 +63,7 @@ func TestPinList_ChannelResolution(t *testing.T) {
 		})
 	})
 	mux.HandleFunc("/api/pins.list", func(w http.ResponseWriter, r *http.Request) {
+		pinsCalled = true
 		_ = r.ParseForm()
 		if ch := r.FormValue("channel"); ch != "C01ABC" {
 			t.Errorf("expected resolved channel C01ABC, got %q", ch)
@@ -66,8 +74,16 @@ func TestPinList_ChannelResolution(t *testing.T) {
 		})
 	})
 
-	_, err := runWithMock(t, mux, "pin", "list", "#general")
+	out, err := runWithMock(t, mux, "pin", "list", "#general")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !pinsCalled {
+		t.Error("expected pins.list to be called")
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line (meta only), got %d:\n%s", len(lines), out)
 	}
 }

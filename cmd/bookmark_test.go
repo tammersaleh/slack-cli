@@ -47,4 +47,43 @@ func TestBookmarkList(t *testing.T) {
 	if bm["link"] != "https://wiki.example.com" {
 		t.Errorf("expected link, got %q", bm["link"])
 	}
+
+	meta := parseJSON(t, lines[1])
+	m := meta["_meta"].(map[string]any)
+	if m["has_more"] != false {
+		t.Error("expected has_more=false")
+	}
+}
+
+func TestBookmarkList_ChannelResolution(t *testing.T) {
+	bookmarksCalled := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"channels": []map[string]any{
+				{"id": "C01ABC", "name": "general", "is_member": true},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/bookmarks.list", func(w http.ResponseWriter, r *http.Request) {
+		bookmarksCalled = true
+		_ = r.ParseForm()
+		if ch := r.FormValue("channel_id"); ch != "C01ABC" {
+			t.Errorf("expected resolved channel_id C01ABC, got %q", ch)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":        true,
+			"bookmarks": []map[string]any{},
+		})
+	})
+
+	_, err := runWithMock(t, mux, "bookmark", "list", "#general")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bookmarksCalled {
+		t.Error("expected bookmarks.list to be called")
+	}
 }
