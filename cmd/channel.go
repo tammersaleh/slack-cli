@@ -115,11 +115,15 @@ func (c *ChannelInfoCmd) Run(cli *CLI) error {
 			IncludeNumMembers: true,
 		})
 		if err != nil {
+			oErr := cli.ClassifyError(err)
+			if oErr.Code != output.ExitGeneral {
+				return oErr
+			}
 			errorCount++
 			if err := p.PrintItem(map[string]any{
 				"input":  input,
-				"error":  "channel_not_found",
-				"detail": "No channel matching '" + input + "'",
+				"error":  oErr.Err,
+				"detail": oErr.Detail,
 			}); err != nil {
 				return err
 			}

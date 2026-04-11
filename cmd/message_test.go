@@ -184,3 +184,43 @@ func TestMessageList_Pagination(t *testing.T) {
 		t.Errorf("expected next_cursor='nextpage', got %q", m["next_cursor"])
 	}
 }
+
+func TestMessageList_EnrichesUserName(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"has_more": false,
+			"messages": []map[string]any{
+				{"type": "message", "user": "U01", "text": "hello", "ts": "1709251200.000100"},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		resp := struct {
+			OK      bool              `json:"ok"`
+			Members []map[string]any  `json:"members"`
+		}{
+			OK: true,
+			Members: []map[string]any{
+				{"id": "U01", "name": "tammer", "real_name": "Tammer Saleh", "profile": map[string]any{"email": "t@example.com"}},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	msg := parseJSON(t, lines[0])
+	if msg["user"] != "U01" {
+		t.Errorf("expected user='U01', got %q", msg["user"])
+	}
+	if msg["user_name"] == nil || msg["user_name"] == "" {
+		t.Error("expected user_name to be enriched from cache")
+	}
+}
