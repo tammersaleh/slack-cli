@@ -15,6 +15,7 @@ type MessageCmd struct {
 	List      MessageListCmd      `cmd:"" aliases:"read" help:"List messages in a channel."`
 	Get       MessageGetCmd       `cmd:"" help:"Get specific messages by timestamp."`
 	Permalink MessagePermalinkCmd `cmd:"" help:"Get permalinks for messages."`
+	Post      MessagePostCmd      `cmd:"" help:"Post a message to a channel."`
 }
 
 type MessageListCmd struct {
