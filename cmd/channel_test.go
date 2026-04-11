@@ -62,6 +62,11 @@ func runWithMock(t *testing.T, handler http.Handler, args ...string) (string, er
 	return r.stdout, r.err
 }
 
+// emptyMux returns a ServeMux with no handlers for commands that don't call APIs.
+func emptyMux() *http.ServeMux {
+	return http.NewServeMux()
+}
+
 func nonEmptyLines(s string) []string {
 	var result []string
 	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
@@ -395,8 +400,8 @@ func TestChannelMembers_MockAPI(t *testing.T) {
 	}
 
 	member := parseJSON(t, lines[0])
-	if member["id"] != "U01" {
-		t.Errorf("expected first member 'U01', got %q", member["id"])
+	if member["user_id"] != "U01" {
+		t.Errorf("expected first member 'U01', got %q", member["user_id"])
 	}
 }
 

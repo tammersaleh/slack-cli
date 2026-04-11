@@ -186,7 +186,7 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 		}
 
 		for _, uid := range members {
-			if err := p.PrintItem(map[string]string{"id": uid}); err != nil {
+			if err := p.PrintItem(map[string]any{"user_id": uid}); err != nil {
 				return err
 			}
 		}

@@ -13,6 +13,7 @@ var (
 // enrichUserFields are top-level map keys that contain user IDs.
 var enrichUserFields = map[string]string{
 	"user":       "user_name",
+	"user_id":    "user_name",
 	"from_user":  "from_user_name",
 	"created_by": "created_by_name",
 }
