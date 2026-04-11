@@ -215,6 +215,7 @@ func enrichItems(ctx context.Context, client *api.Client, items []savedItem) map
 			// Fetch message text.
 			resp, err := client.Bot().GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 				ChannelID: item.ItemID,
+				Oldest:    item.TS,
 				Latest:    item.TS,
 				Inclusive: true,
 				Limit:     1,

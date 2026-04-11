@@ -151,6 +151,17 @@ slack usergroup members <group-id>
 slack workspace-info info
 ` + "```" + `
 
+## Enrichment
+
+Output automatically includes resolved names alongside IDs:
+
+- ` + "`user`" + ` fields gain a ` + "`user_name`" + ` sibling
+- ` + "`channel`" + ` / ` + "`channel_id`" + ` fields gain a ` + "`channel_name`" + ` sibling
+- ` + "`ts`" + ` and ` + "`*_ts`" + ` fields gain a ` + "`*_iso`" + ` sibling (RFC3339)
+
+When using ` + "`--fields`" + `, include enriched field names explicitly
+(e.g. ` + "`--fields user,user_name`" + `).
+
 ## Pagination
 
 Most list commands return one page by default. Use ` + "`--all`" + ` to fetch

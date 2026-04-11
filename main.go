@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 
 	"github.com/alecthomas/kong"
@@ -40,6 +39,5 @@ func main() {
 		"error":  "general_error",
 		"detail": err.Error(),
 	})
-	fmt.Fprintln(os.Stderr)
 	os.Exit(output.ExitGeneral)
 }

@@ -149,6 +149,7 @@ func (t *chromeTLSTransport) RoundTrip(req *http.Request) (*http.Response, error
 // singleConnRoundTrip performs an HTTP/1.1 request over an existing TLS connection.
 func singleConnRoundTrip(conn net.Conn, req *http.Request) (*http.Response, error) {
 	t := &http.Transport{
+		DisableKeepAlives: true,
 		DialTLSContext: func(_ context.Context, _, _ string) (net.Conn, error) {
 			return conn, nil
 		},
