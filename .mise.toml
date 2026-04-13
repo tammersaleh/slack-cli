@@ -6,6 +6,10 @@ go = "1.25"
 description = "Build the slack binary"
 run = "go build -o slack ."
 
+[tasks.install]
+description = "Install the slack binary to GOBIN"
+run = "go build -o \"$(go env GOBIN)/slack\" ."
+
 [tasks.test]
 description = "Run all tests"
 run = "go test ./..."
