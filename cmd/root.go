@@ -15,7 +15,8 @@ import (
 )
 
 type CLI struct {
-	Workspace  string `short:"w" help:"Select workspace (name or ID)." env:"SLACK_WORKSPACE"`
+	Workspace    string `short:"w" help:"Select workspace (name or ID)." env:"SLACK_WORKSPACE"`
+	WorkspaceOrg string `hidden:"" env:"SLACK_WORKSPACE_ORG" help:"Enterprise Grid org workspace for internal APIs."`
 	Fields     string `help:"Comma-separated list of top-level fields to include." env:"SLACK_FIELDS"`
 	Quiet      bool   `short:"q" help:"Suppress stdout output (exit code and stderr only)."`
 	APIBaseURL string `hidden:"" env:"SLACK_API_URL" help:"Override Slack API base URL (for testing)."`
@@ -185,6 +186,51 @@ func toMap(v any) map[string]any {
 	var m map[string]any
 	_ = json.Unmarshal(data, &m)
 	return m
+}
+
+// NewSessionClient creates an API client for commands that use internal APIs.
+// Uses WorkspaceOrg if set (for Enterprise Grid), otherwise falls back to Workspace.
+func (c *CLI) NewSessionClient() (*api.Client, error) {
+	workspace := c.Workspace
+	if c.WorkspaceOrg != "" {
+		workspace = c.WorkspaceOrg
+	}
+
+	path, err := auth.DefaultCredentialsPath()
+	if err != nil {
+		return nil, err
+	}
+
+	rc, err := auth.ResolveCredentials(path, workspace)
+	if err != nil {
+		hint := "Run 'slack auth login --desktop' or set SLACK_WORKSPACE_ORG"
+		return nil, &output.Error{
+			Err:    "not_authed",
+			Detail: err.Error(),
+			Hint:   hint,
+			Code:   output.ExitAuth,
+		}
+	}
+
+	c.authMethod = rc.AuthMethod
+	c.teamID = rc.TeamID
+
+	var opts []api.Option
+	if rc.UserToken != "" {
+		opts = append(opts, api.WithUserToken(rc.UserToken))
+	}
+	if rc.Cookie != "" {
+		opts = append(opts, api.WithCookie(rc.Cookie))
+	}
+	if c.APIBaseURL != "" {
+		opts = append(opts, api.WithAPIURL(c.APIBaseURL))
+	}
+
+	client := api.New(rc.BotToken, opts...)
+	if err := requireSessionToken(client); err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 // requireSessionToken returns an error if the client's token is not an xoxc- session token.

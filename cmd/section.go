@@ -95,11 +95,8 @@ func resolveChannelNames(ctx context.Context, client *api.Client, ids []string) 
 type SectionListCmd struct{}
 
 func (c *SectionListCmd) Run(cli *CLI) error {
-	client, err := cli.NewClient()
+	client, err := cli.NewSessionClient()
 	if err != nil {
-		return err
-	}
-	if err := requireSessionToken(client); err != nil {
 		return err
 	}
 
@@ -132,11 +129,8 @@ type SectionChannelsCmd struct {
 }
 
 func (c *SectionChannelsCmd) Run(cli *CLI) error {
-	client, err := cli.NewClient()
+	client, err := cli.NewSessionClient()
 	if err != nil {
-		return err
-	}
-	if err := requireSessionToken(client); err != nil {
 		return err
 	}
 
@@ -186,11 +180,8 @@ type SectionFindCmd struct {
 }
 
 func (c *SectionFindCmd) Run(cli *CLI) error {
-	client, err := cli.NewClient()
+	client, err := cli.NewSessionClient()
 	if err != nil {
-		return err
-	}
-	if err := requireSessionToken(client); err != nil {
 		return err
 	}
 
@@ -249,11 +240,8 @@ type SectionCreateCmd struct {
 }
 
 func (c *SectionCreateCmd) Run(cli *CLI) error {
-	client, err := cli.NewClient()
+	client, err := cli.NewSessionClient()
 	if err != nil {
-		return err
-	}
-	if err := requireSessionToken(client); err != nil {
 		return err
 	}
 
@@ -306,11 +294,8 @@ func (c *SectionMoveCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--section and --new-section are mutually exclusive", Code: output.ExitGeneral}
 	}
 
-	client, err := cli.NewClient()
+	client, err := cli.NewSessionClient()
 	if err != nil {
-		return err
-	}
-	if err := requireSessionToken(client); err != nil {
 		return err
 	}
 

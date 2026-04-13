@@ -52,12 +52,8 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--all and --cursor are mutually exclusive", Code: output.ExitGeneral}
 	}
 
-	client, err := cli.NewClient()
+	client, err := cli.NewSessionClient()
 	if err != nil {
-		return err
-	}
-
-	if err := requireSessionToken(client); err != nil {
 		return err
 	}
 
@@ -131,12 +127,8 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 }
 
 func (c *SavedCountsCmd) Run(cli *CLI) error {
-	client, err := cli.NewClient()
+	client, err := cli.NewSessionClient()
 	if err != nil {
-		return err
-	}
-
-	if err := requireSessionToken(client); err != nil {
 		return err
 	}
 
