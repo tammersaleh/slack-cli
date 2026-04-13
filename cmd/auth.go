@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/auth"
@@ -99,7 +100,49 @@ func saveAndPrintWorkspaces(cli *CLI, workspaces []auth.WorkspaceCredentials) er
 		return err
 	}
 
-	return p.PrintMeta(output.Meta{})
+	if err := p.PrintMeta(output.Meta{}); err != nil {
+		return err
+	}
+
+	printWorkspaceHints(p, workspaces)
+	return nil
+}
+
+// printWorkspaceHints writes export instructions to stderr after login.
+func printWorkspaceHints(p *output.Printer, workspaces []auth.WorkspaceCredentials) {
+	if len(workspaces) == 0 {
+		return
+	}
+
+	var regular, enterprise *auth.WorkspaceCredentials
+	for i := range workspaces {
+		ws := &workspaces[i]
+		if strings.HasPrefix(ws.TeamID, "E") {
+			enterprise = ws
+		} else if regular == nil {
+			regular = ws
+		}
+	}
+
+	fmt.Fprintln(p.Err)
+	fmt.Fprintln(p.Err, "Set your default workspace:")
+	fmt.Fprintln(p.Err)
+
+	if regular != nil {
+		fmt.Fprintf(p.Err, "  export SLACK_WORKSPACE=%s  # %s\n", regular.TeamID, regular.TeamName)
+	} else if len(workspaces) > 0 {
+		ws := workspaces[0]
+		fmt.Fprintf(p.Err, "  export SLACK_WORKSPACE=%s  # %s\n", ws.TeamID, ws.TeamName)
+	}
+
+	if enterprise != nil {
+		fmt.Fprintln(p.Err)
+		fmt.Fprintln(p.Err, "Enterprise Grid detected. Internal APIs (saved items, sidebar")
+		fmt.Fprintln(p.Err, "sections) require the org-level token:")
+		fmt.Fprintln(p.Err)
+		fmt.Fprintf(p.Err, "  export SLACK_WORKSPACE_ORG=%s  # %s (org)\n", enterprise.TeamID, enterprise.TeamName)
+	}
+	fmt.Fprintln(p.Err)
 }
 
 type AuthLogoutCmd struct {
