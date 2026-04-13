@@ -31,25 +31,25 @@ type CLI struct {
 	resolver   *resolve.Resolver
 
 	Auth      AuthCmd      `cmd:"" help:"Manage authentication."`
-	Bookmark  BookmarkCmd  `cmd:"" help:"Channel bookmarks."`
+	Bookmark  BookmarkCmd  `cmd:"" aliases:"bookmarks" help:"Channel bookmarks."`
 	Cache     CacheCmd     `cmd:"" help:"Cache management."`
-	Channel   ChannelCmd   `cmd:"" help:"Read channel information."`
+	Channel   ChannelCmd   `cmd:"" aliases:"channels" help:"Read channel information."`
 	Dnd       DndCmd       `cmd:"" help:"Do Not Disturb info."`
-	Emoji     EmojiCmd     `cmd:"" help:"Custom emoji."`
-	File      FileCmd      `cmd:"" help:"File operations."`
-	Message   MessageCmd   `cmd:"" help:"Read messages."`
-	Pin       PinCmd       `cmd:"" help:"Pinned items."`
+	Emoji     EmojiCmd     `cmd:"" aliases:"emojis" help:"Custom emoji."`
+	File      FileCmd      `cmd:"" aliases:"files" help:"File operations."`
+	Message   MessageCmd   `cmd:"" aliases:"messages" help:"Read messages."`
+	Pin       PinCmd       `cmd:"" aliases:"pins" help:"Pinned items."`
 	Presence  PresenceCmd  `cmd:"" help:"User presence."`
-	Reaction  ReactionCmd  `cmd:"" help:"Read reactions."`
+	Reaction  ReactionCmd  `cmd:"" aliases:"reactions" help:"Read reactions."`
 	Saved     SavedCmd     `cmd:"" help:"Saved-for-later items (requires session token)."`
 	Search    SearchCmd    `cmd:"" help:"Search messages and files."`
 	Skill     SkillCmd     `cmd:"" help:"Print Claude skill file to stdout."`
-	Section   SectionCmd   `cmd:"" help:"Manage sidebar sections (requires session token)."`
+	Section   SectionCmd   `cmd:"" aliases:"sections" help:"Manage sidebar sections (requires session token)."`
 	Status    StatusCmd    `cmd:"" help:"User status."`
-	Thread    ThreadCmd    `cmd:"" help:"Read thread replies."`
-	User      UserCmd      `cmd:"" help:"Read user information."`
-	Usergroup UsergroupCmd `cmd:"" help:"User groups."`
-	Version       VersionCmd   `cmd:"" help:"Show version."`
+	Thread    ThreadCmd    `cmd:"" aliases:"threads" help:"Read thread replies."`
+	User      UserCmd      `cmd:"" aliases:"users" help:"Read user information."`
+	Usergroup UsergroupCmd `cmd:"" aliases:"usergroups" help:"User groups."`
+	Version   VersionCmd   `cmd:"" help:"Show version."`
 	WorkspaceInfo WorkspaceCmd `cmd:"" help:"Workspace info."`
 }
 
