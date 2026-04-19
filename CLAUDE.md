@@ -54,11 +54,51 @@ Work is driven by `SPEC.md`. Each feature gets its own branch. The workflow for 
 2. Create a feature branch off main.
 3. Red-green-refactor: write failing tests first, then implement, then clean up.
 4. Run both `mise run test` and `mise run lint` after every change. Both must pass before committing.
-5. Keep commits small and conventional (`feat:`, `fix:`, `chore:`, `test:`, `docs:`).
+5. Keep commits small and conventional. Commit types drive releases - see "Release versioning" below.
 6. Code review: spawn a `code-review:code-review` sub-agent to review the branch changes (`git diff main...HEAD`). Tell the reviewer to scrutinize tests: look for tests that don't actually test what they claim, useless tests, and missing test coverage. Address all findings before merging.
 7. Merge to main and push.
 8. Retrospective: review your approach and these instructions. Update CLAUDE.md with anything you learned that would help future sessions.
 9. Move on to the next feature.
+
+## Release versioning
+
+Releases are automated via release-please + GoReleaser. Release-please
+watches main, maintains an open release PR with an auto-generated
+`CHANGELOG.md` and version bump, and cuts the tag + GitHub Release when
+that PR is merged. GoReleaser then builds binaries and pushes the Homebrew
+Formula to `tammersaleh/homebrew-tap`. Nobody runs `git tag` by hand.
+
+This means commit type is not a style choice - it ships as a version
+number and changelog copy users read. Pick the type based on user-facing
+impact, not diff size:
+
+- `feat:` - minor bump, listed under "Features". New commands, flags,
+  outputs, or API surface.
+- `fix:` - patch bump, listed under "Bug Fixes". Behavior that was
+  already promised but broken.
+- `feat!:` (or `BREAKING CHANGE:` footer) - minor bump pre-1.0, major
+  post-1.0, listed under "BREAKING CHANGES". Anything that can break
+  an existing caller: removed/renamed flags, changed output shape,
+  changed exit codes, changed command behavior.
+- `chore:`, `docs:`, `test:`, `refactor:`, `perf:`, `style:` - no
+  release, not in changelog. Internal only.
+
+Rules:
+
+- If a commit contains both a feat and a fix, split it into two commits.
+  A single commit gets one type; mixed intent produces a misleading
+  changelog entry.
+- Dependency bumps: `fix:` if the bump reaches users (a fix in a
+  runtime dep), otherwise `chore:` (test deps, build tooling, etc.).
+- Don't downgrade a type to avoid a release. If it's user-facing, it's
+  `feat:` or `fix:`, and release-please should cut a version for it.
+- Don't upgrade a type to force a release. Internal refactors are
+  `refactor:` even if the PR is large.
+- Write the subject in imperative mood ("add channel mark", not "added
+  channel mark") and keep it under ~70 chars; release-please quotes it
+  verbatim into the changelog.
+- Body text on feat/fix commits shows up in the expanded release notes.
+  Worth keeping them tidy for the same reason.
 
 ## Autonomy
 
