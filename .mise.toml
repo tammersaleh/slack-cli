@@ -6,10 +6,9 @@ go = "1.25"
 description = "Build the slack binary"
 run = "go build -o slack ./cmd/slack"
 
-[tasks.install]
-description = "Install the slack binary to GOBIN and regenerate the Claude skill file"
+[tasks.skill]
+description = "Regenerate the Claude skill file from the installed binary"
 run = """
-go install ./cmd/slack
 mkdir -p ~/.claude/skills/slack-cli
 slack skill > ~/.claude/skills/slack-cli/SKILL.md
 """
