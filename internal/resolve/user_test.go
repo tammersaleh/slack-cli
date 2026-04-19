@@ -1,0 +1,99 @@
+package resolve
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"testing"
+
+	"github.com/tammersaleh/slack-cli/internal/api"
+)
+
+func TestResolveUser_IDPassthrough(t *testing.T) {
+	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"), "", "")
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"U prefix", "U01ABC123"},
+		{"W prefix", "W01ABC123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := r.ResolveUser(context.Background(), tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if id != tt.input {
+				t.Errorf("got %q, want %q", id, tt.input)
+			}
+		})
+	}
+}
+
+func TestResolveUser_EmailFallback(t *testing.T) {
+	// When the email is not in the bulk-loaded cache,
+	// resolution falls back to users.lookupByEmail.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"members": []map[string]any{},
+		})
+	})
+	mux.HandleFunc("/api/users.lookupByEmail", func(w http.ResponseWriter, r *http.Request) {
+		email := r.FormValue("email")
+		if email != "tammer@example.com" {
+			t.Errorf("got email=%q, want %q", email, "tammer@example.com")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"user": map[string]any{
+				"id":   "U789",
+				"name": "tammer",
+			},
+		})
+	})
+	client := newTestClient(t, mux)
+
+	r := NewResolver(client, "", "")
+	id, err := r.ResolveUser(context.Background(), "tammer@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "U789" {
+		t.Errorf("got %q, want %q", id, "U789")
+	}
+}
+
+func TestResolveUser_EmailNotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"members": []map[string]any{},
+		})
+	})
+	mux.HandleFunc("/api/users.lookupByEmail", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":    false,
+			"error": "users_not_found",
+		})
+	})
+	client := newTestClient(t, mux)
+
+	r := NewResolver(client, "", "")
+	_, err := r.ResolveUser(context.Background(), "nobody@example.com")
+	if err == nil {
+		t.Error("expected error for unknown email")
+	}
+}
+
+func TestResolveUser_InvalidFormat(t *testing.T) {
+	r := NewResolver(api.NewWithAPIURL("xoxb-unused", "http://unused/api/"), "", "")
+	_, err := r.ResolveUser(context.Background(), "tammer")
+	if err == nil {
+		t.Error("expected error for bare name")
+	}
+}
