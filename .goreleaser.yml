@@ -1,0 +1,42 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: slack
+    main: ./cmd/slack
+    binary: slack
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/tammersaleh/slack-cli/cmd.Version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  mode: append
+
+brews:
+  - name: slack-cli
+    repository:
+      owner: tammersaleh
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/tammersaleh/slack-cli
+    description: Read-only Slack CLI for agents and automation
+    license: MIT
+    install: |
+      bin.install "slack"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/slack version")
