@@ -16,7 +16,7 @@ builds:
       - -s -w -X github.com/tammersaleh/slack-cli/cmd.Version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
@@ -26,17 +26,20 @@ checksum:
 release:
   mode: append
 
-brews:
+homebrew_casks:
   - name: slack-cli
+    binaries:
+      - slack
     repository:
       owner: tammersaleh
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/tammersaleh/slack-cli
     description: Read-only Slack CLI for agents and automation
-    license: MIT
-    install: |
-      bin.install "slack"
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/slack version")
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/slack"]
+          end
