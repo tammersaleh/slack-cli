@@ -56,7 +56,7 @@ Work is driven by `SPEC.md`. Each feature gets its own branch. The workflow for 
 4. Run both `mise run test` and `mise run lint` after every change. Both must pass before committing.
 5. Keep commits small and conventional. Commit types drive releases - see "Release versioning" below.
 6. Code review: spawn a `code-review:code-review` sub-agent to review the branch changes (`git diff main...HEAD`). Tell the reviewer to scrutinize tests: look for tests that don't actually test what they claim, useless tests, and missing test coverage. Address all findings before merging.
-7. Merge to main and push. The pre-push hook runs `mise run check` (test + lint + goreleaser snapshot); never bypass with `--no-verify`.
+7. Merge to main and push. The pre-push hook runs `mise run check` (test + lint); never bypass with `--no-verify`.
 8. Retrospective: review your approach and these instructions. Update CLAUDE.md with anything you learned that would help future sessions.
 9. Move on to the next feature.
 
