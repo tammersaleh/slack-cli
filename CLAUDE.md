@@ -62,15 +62,18 @@ Work is driven by `SPEC.md`. Each feature gets its own branch. The workflow for 
 
 ## Release versioning
 
-Releases are automated via release-please + GoReleaser. Release-please
-watches main, maintains an open release PR with an auto-generated
-`CHANGELOG.md` and version bump, and cuts the tag + GitHub Release when
-that PR is merged. GoReleaser then builds binaries and pushes the Homebrew
-Formula to `tammersaleh/homebrew-tap`. Nobody runs `git tag` by hand.
+Releases are fully automated via release-please + GoReleaser.
+Release-please watches main; when a commit with a version-bumping type
+lands, it opens a release PR which auto-merges once CI passes. The
+merged PR cuts a tag + GitHub Release; GoReleaser builds binaries and
+pushes an updated Formula to `tammersaleh/homebrew-tap`. Nobody runs
+`git tag` by hand - and nobody clicks Merge on the release PR either.
 
-This means commit type is not a style choice - it ships as a version
-number and changelog copy users read. Pick the type based on user-facing
-impact, not diff size:
+This means commit type is not a style choice. It is the entire release
+trigger. A `feat:` or `fix:` commit pushed to main ships as a new
+Homebrew release within minutes. A `chore:` or `docs:` commit pushed to
+main ships nothing. Pick the type based on user-facing impact, not diff
+size:
 
 - `feat:` - minor bump, listed under "Features". New commands, flags,
   outputs, or API surface.
