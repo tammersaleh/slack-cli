@@ -25,3 +25,7 @@ run = "golangci-lint run ./..."
 [tasks.setup-hooks]
 description = "Configure git to use .githooks/"
 run = "git config core.hooksPath .githooks"
+
+[tasks.check]
+description = "Run test and lint (matches pre-push hook)"
+depends = ["test", "lint"]
