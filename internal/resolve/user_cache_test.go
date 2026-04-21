@@ -235,7 +235,10 @@ func TestLookupUser_FileCacheExpired(t *testing.T) {
 	cacheDir := t.TempDir()
 	teamID := "T123"
 
-	// Pre-populate expired file cache.
+	// Pre-populate expired file cache. Both UpdatedAt and mtime must be
+	// stale: loadUserFileCache fast-fails on mtime before even reading
+	// the bytes, so an os.WriteFile alone leaves mtime ~now and the stat
+	// check thinks the file is fresh.
 	cache := userFileCache{
 		UpdatedAt: time.Now().Add(-25 * time.Hour),
 		Users:     map[string]slack.User{"U001": {ID: "U001", Name: "stale"}},
@@ -243,6 +246,10 @@ func TestLookupUser_FileCacheExpired(t *testing.T) {
 	data, _ := json.Marshal(cache)
 	cacheFile := filepath.Join(cacheDir, "users-"+teamID+".json")
 	if err := os.WriteFile(cacheFile, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(cacheFile, stale, stale); err != nil {
 		t.Fatal(err)
 	}
 

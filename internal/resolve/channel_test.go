@@ -273,7 +273,9 @@ func TestResolveChannel_FileCacheExpired(t *testing.T) {
 	cacheDir := t.TempDir()
 	teamID := "T123"
 
-	// Pre-populate expired file cache (older than 24h default TTL).
+	// Pre-populate expired file cache (older than 24h default TTL). Mtime
+	// must also be stale - loadFileCache fast-fails on mtime before
+	// reading, so a fresh mtime would mask the expiry path.
 	cache := channelFileCache{
 		UpdatedAt: time.Now().Add(-25 * time.Hour),
 		Channels:  map[string]string{"stale-channel": "C888"},
@@ -281,6 +283,10 @@ func TestResolveChannel_FileCacheExpired(t *testing.T) {
 	data, _ := json.Marshal(cache)
 	cacheFile := filepath.Join(cacheDir, "channels-"+teamID+".json")
 	if err := os.WriteFile(cacheFile, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(cacheFile, stale, stale); err != nil {
 		t.Fatal(err)
 	}
 
@@ -377,6 +383,36 @@ func TestLookupChannelName(t *testing.T) {
 	_, ok = r.LookupChannelName("C999")
 	if ok {
 		t.Error("expected false for unknown channel")
+	}
+}
+
+// Mirrors TestLoadUserFileCache_FastFailsOnStaleMtime for the channel
+// file cache: stat-first must short-circuit before any ReadFile/Unmarshal.
+// Corrupt bytes with a stale mtime confirm we never touched them - a
+// read+parse would fail Unmarshal and trigger the cleanup os.Remove.
+func TestLoadFileCache_FastFailsOnStaleMtime(t *testing.T) {
+	cacheDir := t.TempDir()
+	teamID := "T123"
+	cacheFile := filepath.Join(cacheDir, "channels-"+teamID+".json")
+
+	if err := os.WriteFile(cacheFile, []byte("not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(cacheFile, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewResolver(nil, teamID, cacheDir)
+	fc, err := r.loadFileCache()
+	if err != nil {
+		t.Fatalf("stale cache should return nil error, got %v", err)
+	}
+	if fc != nil {
+		t.Error("stale cache should return nil *channelFileCache")
+	}
+	if _, err := os.Stat(cacheFile); err != nil {
+		t.Errorf("stale cache file should not have been read: %v", err)
 	}
 }
 
