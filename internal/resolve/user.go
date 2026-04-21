@@ -237,6 +237,18 @@ func (r *Resolver) loadUserFileCache() (*userFileCache, error) {
 		return nil, nil
 	}
 
+	// Stat-first: fast-fail on a stale cache before paying the 16MB+
+	// ReadFile + Unmarshal. Enrich calls this once per output row, so a
+	// stale file on a long thread list would re-parse the whole file
+	// dozens of times.
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if time.Since(info.ModTime()) > fileCacheTTL() {
+		return nil, nil
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

@@ -430,3 +430,36 @@ func TestResolveUser_DisplayNameNotFound(t *testing.T) {
 		t.Error("expected error for unknown display name")
 	}
 }
+
+// When the user file cache is stale, loadUserFileCache must stat the file
+// before reading it. A 16MB users-*.json parsed once costs ~80ms; parsed
+// on every enriched row in a long thread list compounds into seconds of
+// wasted CPU. The stat check short-circuits before paying the read+parse.
+func TestLoadUserFileCache_FastFailsOnStaleMtime(t *testing.T) {
+	cacheDir := t.TempDir()
+	teamID := "T123"
+	cacheFile := filepath.Join(cacheDir, "users-"+teamID+".json")
+
+	// Deliberately corrupt contents. If we read+parse, Unmarshal fails and
+	// loadUserFileCache removes the file. With a stat-first check we never
+	// touch the bytes and the file survives.
+	if err := os.WriteFile(cacheFile, []byte("not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(cacheFile, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	r := NewResolver(nil, teamID, cacheDir)
+	fc, err := r.loadUserFileCache()
+	if err != nil {
+		t.Fatalf("stale cache should return nil error, got %v", err)
+	}
+	if fc != nil {
+		t.Error("stale cache should return nil *userFileCache")
+	}
+	if _, err := os.Stat(cacheFile); err != nil {
+		t.Errorf("stale cache file should not have been read: %v", err)
+	}
+}

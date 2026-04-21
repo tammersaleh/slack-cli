@@ -186,6 +186,16 @@ func (r *Resolver) loadFileCache() (*channelFileCache, error) {
 		return nil, nil
 	}
 
+	// Stat-first: skip the ReadFile + Unmarshal when the file is already
+	// past the TTL. Matches loadUserFileCache for consistency.
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if time.Since(info.ModTime()) > fileCacheTTL() {
+		return nil, nil
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
