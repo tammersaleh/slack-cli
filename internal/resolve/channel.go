@@ -93,6 +93,17 @@ func (r *Resolver) ensureChannelCache(ctx context.Context) error {
 	// that won't match so every page is fetched and the cache is populated.
 	// We ignore the "channel not found" error this will return.
 	_, _ = r.resolveByPagination(ctx, "\x00__slack_cli_warm_cache__")
+
+	// Record the attempt even if pagination failed, so every enriched row
+	// with a channel_id doesn't re-trigger conversations.list. Without this,
+	// workspaces where conversations.list 403s (e.g. Enterprise Grid
+	// `enterprise_is_restricted`) turn long threads into per-item retry
+	// storms that compound into rate-limit sleeps.
+	r.mu.Lock()
+	if r.channels == nil {
+		r.setChannelMaps(map[string]string{})
+	}
+	r.mu.Unlock()
 	return nil
 }
 
