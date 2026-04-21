@@ -48,16 +48,33 @@ by workspace `TeamID`.
 
 ## Workflow
 
-Work is driven by `SPEC.md`. Each feature gets its own branch. The workflow for each feature:
+Work is driven by `SPEC.md`. Every change - feature, bug fix, perf fix,
+refactor - follows the same workflow. No shortcuts for "small" fixes:
 
 1. Read `SPEC.md` for the relevant command/feature.
-2. Create a feature branch off main.
-3. Red-green-refactor: write failing tests first, then implement, then clean up.
-4. Run both `mise run test` and `mise run lint` after every change. Both must pass before committing.
-5. Keep commits small and conventional. Commit types drive releases - see "Release versioning" below.
-6. Code review: spawn a `code-review:code-review` sub-agent to review the branch changes (`git diff main...HEAD`). Tell the reviewer to scrutinize tests: look for tests that don't actually test what they claim, useless tests, and missing test coverage. Address all findings before merging.
-7. Merge to main and push. The pre-push hook runs `mise run check` (test + lint); never bypass with `--no-verify`.
-8. Retrospective: review your approach and these instructions. Update CLAUDE.md with anything you learned that would help future sessions.
+2. Create a feature branch off main (or work directly on main for hot
+   fixes - still follow every other step).
+3. Red-green-refactor: write failing tests first, then implement, then
+   clean up.
+4. Run both `mise run test` and `mise run lint` after every change.
+   Both must pass before committing.
+5. Keep commits small and conventional. Commit types drive releases -
+   see "Release versioning" below.
+6. **MANDATORY code review before push**: spawn a
+   `feature-dev:code-reviewer` sub-agent on the pending changes
+   (`git diff main...HEAD` for a branch, or on the commits about to
+   push for direct-to-main work). Tell the reviewer to scrutinize
+   tests: look for tests that don't actually test what they claim,
+   useless tests, and missing test coverage. Address every important
+   or critical finding. **Re-run the reviewer after addressing
+   feedback** to confirm the fixes are clean - "before and after"
+   reviews are both required. Never push without a clean review pass.
+   Skipping this step is not acceptable regardless of how small the
+   change looks.
+7. Merge to main and push. The pre-push hook runs `mise run check`
+   (test + lint); never bypass with `--no-verify`.
+8. Retrospective: review your approach and these instructions. Update
+   CLAUDE.md with anything you learned that would help future sessions.
 9. Move on to the next feature.
 
 ## Release versioning
