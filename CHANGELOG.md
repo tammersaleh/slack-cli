@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/tammersaleh/slack-cli/compare/v1.0.1...v1.0.2) (2026-04-21)
+
+
+### Bug Fixes
+
+* skip read+parse of stale file caches ([e118830](https://github.com/tammersaleh/slack-cli/commit/e118830f2767fffd2e0d1db186d2a8f78cfc318f))
+
 ## [1.0.1](https://github.com/tammersaleh/slack-cli/compare/v1.0.0...v1.0.1) (2026-04-21)
 
 
