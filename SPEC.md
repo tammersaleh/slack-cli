@@ -1165,12 +1165,12 @@ Errors:
 
 - `channel_not_found` (exit 1): No channel matching the input.
 - `missing_blocks` (exit 1): No Block Kit JSON piped on stdin.
-- `invalid_blocks` (exit 1): stdin is not a non-empty JSON array of objects with `type` fields.
+- `invalid_blocks` (exit 1): stdin is not a non-empty JSON array of objects, a top-level block is not `rich_text`, or no `rich_text` block has non-empty `elements`.
 - `invalid_input` (exit 1): `--broadcast` without `--thread`, or conflicting schedule flags.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
 - `not_authed` (exit 2): No session token.
 
-Local validation is format-only (valid JSON, non-empty array, `type` on each block). Semantic validation (required fields inside each block type) defers to Slack's `invalid_blocks` response.
+Local validation enforces: valid JSON, non-empty array, every top-level block is `rich_text`, at least one with non-empty `elements`. Slack's API accepts non-`rich_text` top-level blocks, but Slack Desktop's Drafts compose editor silently strips them when rendering - same user-visible effect as a dropped payload, so the CLI rejects them locally. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's `invalid_blocks` response.
 
 Slack API: `drafts.create`
 

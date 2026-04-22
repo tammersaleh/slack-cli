@@ -11,18 +11,29 @@ below.
 
 ## TL;DR
 
-Use rich_text blocks. Everything else is a trap.
+Use rich_text blocks, only rich_text blocks, and for multi-paragraph
+prose with bullets use a single `rich_text_section`. Everything else is
+a trap.
 
 ```json
 [{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hello"}]}]}]
 ```
 
-Slack Desktop tombstones (`is_deleted=true`) any server-side draft
-whose `blocks` array doesn't contain at least one `rich_text` block
-with non-empty `elements`. The tombstone lands within seconds of the
-user next opening the Drafts panel. The block type is the only
-variable that matters. Host, user-agent, TLS fingerprint, and the
-`last_updated_client` stamp are all irrelevant.
+Two independent failure modes:
+
+1. **Tombstone.** Slack Desktop sets `is_deleted=true` on any
+   server-side draft whose `blocks` array doesn't contain at least one
+   `rich_text` block with non-empty `elements`. Lands within seconds
+   of the user opening the Drafts panel.
+2. **Strip.** Slack Desktop's Drafts compose editor (the panel the
+   user opens to review and send) silently discards every top-level
+   block that is not `rich_text` when it renders the draft. A
+   `[rich_text, section, divider]` array ships fine to the API but the
+   user only sees the rich_text content. Not reversible - once
+   rendered for edit, the stripped content never comes back.
+
+Block type is the only variable that matters. Host, user-agent, TLS
+fingerprint, and the `last_updated_client` stamp are all irrelevant.
 
 ## Endpoints
 
@@ -220,6 +231,48 @@ signature of Desktop writing to the server, not us.
 Swap the `section` block for a `rich_text` one and the draft survives
 the same navigation indefinitely.
 
+## The stripping bug
+
+Surviving reconciliation is necessary but not sufficient. The test
+matrix above has `[rich_text, section]` and `[section, rich_text]`
+marked "Survives nav?: yes" - they don't tombstone. But they don't
+render correctly either.
+
+When the user opens a draft in Slack Desktop's Drafts compose editor,
+Desktop reads the `blocks` array and rebuilds a local representation
+for editing. That rebuild path only understands `rich_text`. Every
+other top-level block type - `section`, `divider`, `header`, `context` -
+is dropped. The draft is still alive on the server, but the user only
+sees the rich_text content. Any `section` they'd hoped to surface
+(headings, mrkdwn prose) is gone. It doesn't come back when the draft
+is subsequently sent.
+
+Evidence: a draft posted to `#internal-caterpillar` as ~12 alternating
+top-level `rich_text(section)` and `rich_text(list)` blocks. In Slack
+Desktop's Drafts compose view, all the `rich_text(list)` content
+rendered correctly; if any of them had been `section` blocks instead,
+those would have been stripped. Mixed arrays with a single
+`rich_text` alongside `section` / `divider` round-trip as rich_text
+only.
+
+Same investigation surfaced a second quirk: multiple top-level
+`rich_text` blocks are **flattened** into one by Desktop's rebuild
+before the section-before-list absorption rule (see layout quirks in
+the skill doc) runs. So splitting an alternating
+heading-then-list into separate top-level rich_text blocks does not
+give you paragraph breaks - it gives you the same "GPUs:" glued onto
+the first bullet as a single mixed block. The fix is the
+single-`rich_text_section` pattern with inline `\n` and literal `•`,
+which sidesteps absorption entirely.
+
+Unlike ghosting, there's no server-side signal for stripping. The
+draft looks healthy in `drafts.list`. The only way to observe it is
+to open the compose editor in Desktop and see what's missing.
+
+The CLI's response: `validateBlocksShape` rejects any draft whose
+top-level `blocks` array contains anything other than `rich_text`.
+Slack's API would accept them but the user would see content loss.
+
 ## Red herrings
 
 The previous investigation (visible as commit 80ed7ab, then reverted)
@@ -300,16 +353,22 @@ same way - block content, nothing else.
 
 ### Validation at the CLI boundary
 
-`validateBlocksShape` in `cmd/draft.go` rejects any draft payload
-without a non-empty rich_text block, with a clear error pointing the
-caller at the skill docs. The CLI never ships a draft that would
-ghost.
+`validateBlocksShape` in `cmd/draft.go` rejects two shapes of draft
+payload:
+
+1. Arrays with no non-empty `rich_text` block (would ghost).
+2. Arrays containing any non-`rich_text` top-level block (would ship
+   fine but get stripped by Desktop's compose editor).
+
+Both errors return `invalid_blocks` with a message pointing the caller
+at the skill docs. The CLI never ships a draft that would ghost or
+silently lose content.
 
 `DraftUpdateCmd.buildIntent` runs the same check against the existing
 draft's blocks when the user does a schedule-only update (no new
 blocks piped in). A legacy draft whose blocks don't satisfy the
 requirement fails fast with `invalid_blocks`, rather than round-trip
-through `drafts.update` and ghost again.
+through `drafts.update` and ghost or strip again.
 
 ### Auto-replace
 
