@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/tammersaleh/slack-cli/compare/v1.0.2...v1.1.0) (2026-04-22)
+
+
+### Features
+
+* add recovery hints to common error paths ([7e675e7](https://github.com/tammersaleh/slack-cli/commit/7e675e7a0cd83b6dea3bc939f98017f3bbb5d31e))
+
+
+### Bug Fixes
+
+* reject non-rich_text draft blocks to prevent content stripping ([1dea852](https://github.com/tammersaleh/slack-cli/commit/1dea8526e7a8fb5c780b06cf07ccc88b3b0a7c42))
+
 ## [1.0.2](https://github.com/tammersaleh/slack-cli/compare/v1.0.1...v1.0.2) (2026-04-21)
 
 
