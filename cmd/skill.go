@@ -50,6 +50,42 @@ Auth is pre-configured. If you get ` + "`not_authed`" + `, tell the user to run
 Every command writes JSONL to stdout. Filter fields with ` + "`--fields id,name`" + `.
 Suppress stdout with ` + "`--quiet`" + `. Errors go to stderr as JSON.
 
+## Errors
+
+Every fatal error on stderr is one JSON object:
+
+- ` + "`error`" + ` - stable code (e.g. ` + "`channel_not_found`" + `)
+- ` + "`detail`" + ` - human-readable context
+- ` + "`hint`" + ` - runnable recovery command, when available. **Read this and do what it says.**
+- ` + "`input`" + ` - the specific input that failed (channel, user, ts, draft id, ...)
+- ` + "`endpoint`" + ` - Slack API endpoint, only on upstream API failures
+
+Common errors and their recovery:
+
+| ` + "`error`" + ` | What to run next |
+|---|---|
+| ` + "`not_authed`" + ` | ` + "`slack auth login --desktop`" + ` (or ` + "`slack auth login`" + ` for OAuth) |
+| ` + "`channel_not_found`" + ` | ` + "`slack channel list --query <partial>`" + `; add ` + "`--include-non-member`" + ` for channels you haven't joined |
+| ` + "`user_not_found`" + ` | ` + "`slack user list --query <partial>`" + ` or ` + "`slack user info <id-or-email>`" + ` |
+| ` + "`draft_not_found`" + ` | ` + "`slack draft list`" + ` (add ` + "`--include-sent`" + ` / ` + "`--include-deleted`" + ` for hidden ones) |
+| ` + "`section_not_found`" + ` | ` + "`slack section list`" + ` |
+| ` + "`thread_not_found`" + ` | ` + "`slack message list <channel> --has-replies`" + ` to find threads |
+| ` + "`invalid_timestamp`" + ` | RFC 3339, ` + "`YYYY-MM-DD`" + `, or raw Slack ts (` + "`1713300000.123456`" + `). Match the ` + "`hint`" + `. |
+| ` + "`invalid_blocks`" + ` / ` + "`missing_blocks`" + ` | Block Kit JSON on stdin; drafts require only ` + "`rich_text`" + ` top-level blocks. See draft docs below. |
+| ` + "`rate_limited`" + ` | Retry after the delay Slack provided |
+
+Per-item errors in bulk commands (e.g. ` + "`slack channel info X Y Z`" + `)
+go to stdout inline as ` + "`{\"input\":..., \"error\":..., \"detail\":..., \"hint\":...}`" + `
+rows and set ` + "`_meta.error_count`" + ` in the trailer. Exit code is 1.
+
+### Exit codes
+
+- 0 - success
+- 1 - general error (including partial failure in bulk commands)
+- 2 - authentication required / not authed
+- 3 - rate limited
+- 4 - network error
+
 ## Commands
 
 ### Messages
@@ -75,6 +111,21 @@ slack thread list <channel> <ts> [--limit N]
 slack search messages <query> [--limit N] [--sort timestamp|score] [--sort-dir asc|desc]
 slack search files <query> [--limit N]
 ` + "```" + `
+
+Query supports Slack's search modifiers. Combine freely:
+
+- ` + "`in:#channel`" + ` - only this channel (also works with names, ` + "`in:@user`" + ` for DMs)
+- ` + "`from:@user`" + ` - messages posted by this user
+- ` + "`to:@user`" + ` - DMs to this user
+- ` + "`after:YYYY-MM-DD`" + ` / ` + "`before:YYYY-MM-DD`" + ` / ` + "`on:YYYY-MM-DD`" + ` / ` + "`during:month`" + `
+- ` + "`has:link`" + ` / ` + "`has:pin`" + ` / ` + "`has:reaction`" + ` / ` + "`has:file`" + ` / ` + "`has:image`" + `
+- ` + "`is:thread`" + ` - messages in threads; ` + "`is:saved`" + ` / ` + "`is:dm`" + ` / ` + "`is:mpdm`" + `
+
+Example: ` + "`\"deploy blocker in:#general from:@alice after:2026-01-01\"`" + `
+
+Results are ranked by score unless ` + "`--sort timestamp`" + `. Each hit
+includes ` + "`channel`" + ` (object with ` + "`id`" + `/` + "`name`" + `), ` + "`user`" + `, ` + "`ts`" + `,
+` + "`text`" + `, and ` + "`permalink`" + `.
 
 ### Channels
 
@@ -446,6 +497,57 @@ slack usergroup members <group-id>
 slack workspace-info info
 ` + "```" + `
 
+## Workflows
+
+Compose commands to solve typical agent tasks. Use ` + "`jq`" + ` to thread IDs between steps.
+
+### Find a user, get their recent messages in a channel
+
+` + "```" + `
+UID=$(slack user info @alice | jq -r 'select(._meta == null) | .id')
+slack message list '#general' --limit 50 | jq -c "select(.user == \"$UID\")"
+` + "```" + `
+
+### Find a thread by content and read the whole thread
+
+` + "```" + `
+HIT=$(slack search messages "Q3 roadmap in:#general" --limit 1 | jq -c 'select(._meta == null)')
+CH=$(echo "$HIT" | jq -r '.channel.id')
+TS=$(echo "$HIT" | jq -r '.ts')
+slack thread list "$CH" "$TS"
+` + "```" + `
+
+### Stage a draft reply to a message you found
+
+` + "```" + `
+HIT=$(slack search messages "deploy blocker in:#ext-acme" --limit 1 | jq -c 'select(._meta == null)')
+CH=$(echo "$HIT" | jq -r '.channel.id')
+TS=$(echo "$HIT" | jq -r '.ts')
+cat <<JSON | slack draft create "$CH" --thread "$TS"
+[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
+  {"type":"text","text":"Noted - following up by Friday."}
+]}]}]
+JSON
+` + "```" + `
+
+### Find a 1:1 DM channel with a user
+
+` + "`slack channel list --type im`" + ` currently returns empty pages. Use search instead:
+
+` + "```" + `
+CH=$(slack search messages "from:@alice" --limit 1 | jq -r 'select(._meta == null) | .channel.id')
+` + "```" + `
+
+### Recover from a ` + "`channel_not_found`" + `
+
+When an error has a ` + "`hint`" + ` field, follow it. Example:
+
+` + "```" + `
+slack message list '#ext-acm' 2>&1 >/dev/null | jq -r '.hint'
+# → "Run 'slack channel list --query ext-acm' to find ... or '--include-non-member' ..."
+slack channel list --query ext-acm
+` + "```" + `
+
 ## Enrichment
 
 Output automatically includes resolved names alongside IDs:
@@ -464,6 +566,19 @@ everything, or use the ` + "`next_cursor`" + ` from ` + "`_meta`" + ` with ` + "
 
 ## Channel and User Resolution
 
-Channels accept IDs (C.../G.../D...) or #names. Users accept IDs (U...), emails,
-or @display-names.
+Channels accept IDs (C.../G.../D...) or #names. Users accept IDs (U...),
+emails, or @display-names.
+
+Channel types (` + "`--type`" + ` flag on ` + "`slack channel list`" + `):
+
+- ` + "`public`" + ` - regular #channels everyone in the workspace can see
+- ` + "`private`" + ` - invitation-only channels
+- ` + "`mpim`" + ` - multi-party DM (group DM with 3+ people)
+- ` + "`im`" + ` - 1:1 DM (` + "`D...`" + ` prefix)
+
+User resolution gotchas:
+
+- ` + "`@name`" + ` matches display name, username, or real name via the local user cache.
+- Email lookup (passing ` + "`alice@example.com`" + `) goes through Slack's ` + "`users.lookupByEmail`" + ` API, which fails with session tokens on Enterprise Grid. Prefer ` + "`@name`" + ` in that case.
+- On name collisions, first match wins silently. Inspect ` + "`slack user list --query <partial>`" + ` to see the candidates.
 `
