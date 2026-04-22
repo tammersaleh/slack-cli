@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return &output.Error{Err: "channel_not_found", Detail: "No channel matching '" + c.Channel + "'", Code: output.ExitGeneral}
+		return output.ChannelNotFound(c.Channel)
 	}
 
 	limit := c.Limit
@@ -66,7 +67,7 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 	} else if c.After != "" {
 		ts, err := parseTimestamp(c.After)
 		if err != nil {
-			return &output.Error{Err: "invalid_timestamp", Detail: "Cannot parse --after: " + c.After, Code: output.ExitGeneral}
+			return output.InvalidTimestamp("--after", c.After)
 		}
 		oldest = ts
 	}
@@ -75,7 +76,7 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 	if c.Before != "" {
 		ts, err := parseTimestamp(c.Before)
 		if err != nil {
-			return &output.Error{Err: "invalid_timestamp", Detail: "Cannot parse --before: " + c.Before, Code: output.ExitGeneral}
+			return output.InvalidTimestamp("--before", c.Before)
 		}
 		latest = ts
 	}
@@ -140,7 +141,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return &output.Error{Err: "channel_not_found", Detail: "No channel matching '" + c.Channel + "'", Code: output.ExitGeneral}
+		return output.ChannelNotFound(c.Channel)
 	}
 
 	errorCount := 0
@@ -225,5 +226,5 @@ func parseTimestamp(s string) (string, error) {
 		}
 	}
 
-	return "", &output.Error{Err: "invalid_timestamp", Detail: "Cannot parse timestamp: " + s, Code: output.ExitGeneral}
+	return "", fmt.Errorf("unparseable timestamp: %s", s)
 }

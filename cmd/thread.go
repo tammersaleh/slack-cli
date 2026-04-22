@@ -34,7 +34,7 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return &output.Error{Err: "channel_not_found", Detail: "No channel matching '" + c.Channel + "'", Code: output.ExitGeneral}
+		return output.ChannelNotFound(c.Channel)
 	}
 
 	limit := c.Limit
@@ -55,12 +55,12 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 		}
 
 		if len(msgs) == 0 {
-			return &output.Error{Err: "thread_not_found", Detail: "No message at timestamp " + c.Timestamp, Code: output.ExitGeneral}
+			return output.ThreadNotFoundNoMessage(c.Channel, c.Timestamp)
 		}
 
 		// Slack returns the parent as the sole message when there are no replies.
 		if len(msgs) == 1 && msgs[0].ReplyCount == 0 {
-			return &output.Error{Err: "thread_not_found", Detail: "Message has no replies", Code: output.ExitGeneral}
+			return output.ThreadNotFoundNoReplies(c.Timestamp)
 		}
 
 		for _, msg := range msgs {

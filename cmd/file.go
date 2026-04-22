@@ -57,11 +57,7 @@ func (c *FileListCmd) Run(cli *CLI) error {
 	if userID != "" {
 		resolved, err := r.ResolveUser(ctx, userID)
 		if err != nil {
-			return &output.Error{
-				Err:    "user_not_found",
-				Detail: "No user matching '" + userID + "'",
-				Code:   output.ExitGeneral,
-			}
+			return output.UserNotFound(userID)
 		}
 		userID = resolved
 	}

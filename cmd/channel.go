@@ -101,11 +101,7 @@ func (c *ChannelInfoCmd) Run(cli *CLI) error {
 		channelID, err := r.ResolveChannel(ctx, input)
 		if err != nil {
 			errorCount++
-			if err := p.PrintItem(map[string]any{
-				"input":  input,
-				"error":  "channel_not_found",
-				"detail": "No channel matching '" + input + "'",
-			}); err != nil {
+			if err := p.PrintItem(output.ChannelNotFound(input).AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -172,7 +168,7 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return &output.Error{Err: "channel_not_found", Detail: "No channel matching '" + c.Channel + "'", Code: output.ExitGeneral}
+		return output.ChannelNotFound(c.Channel)
 	}
 
 	limit := c.Limit

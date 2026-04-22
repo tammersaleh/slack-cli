@@ -153,7 +153,7 @@ func (c *SectionChannelsCmd) Run(cli *CLI) error {
 	}
 
 	if channelIDs == nil {
-		return &output.Error{Err: "section_not_found", Detail: "No section with ID '" + c.SectionID + "'", Code: output.ExitGeneral}
+		return output.SectionNotFound(c.SectionID)
 	}
 
 	names := resolveChannelNames(ctx, client, channelIDs)

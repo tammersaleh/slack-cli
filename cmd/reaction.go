@@ -28,7 +28,7 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return &output.Error{Err: "channel_not_found", Detail: "No channel matching '" + c.Channel + "'", Code: output.ExitGeneral}
+		return output.ChannelNotFound(c.Channel)
 	}
 
 	for _, ts := range c.Timestamps {
