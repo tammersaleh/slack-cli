@@ -38,11 +38,7 @@ func (c *StatusGetCmd) Run(cli *CLI) error {
 		userID, err := r.ResolveUser(ctx, input)
 		if err != nil {
 			errorCount++
-			if err := p.PrintItem(map[string]any{
-				"input":  input,
-				"error":  "user_not_found",
-				"detail": "No user matching '" + input + "'",
-			}); err != nil {
+			if err := p.PrintItem(output.UserNotFound(input).AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -53,11 +49,7 @@ func (c *StatusGetCmd) Run(cli *CLI) error {
 			apiUser, err := client.Bot().GetUserInfoContext(ctx, userID)
 			if err != nil {
 				errorCount++
-				if err := p.PrintItem(map[string]any{
-					"input":  input,
-					"error":  "user_not_found",
-					"detail": "No user matching '" + input + "'",
-				}); err != nil {
+				if err := p.PrintItem(output.UserNotFound(input).AsItem()); err != nil {
 					return err
 				}
 				continue

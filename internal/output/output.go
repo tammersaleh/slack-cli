@@ -15,10 +15,14 @@ const (
 )
 
 // Error represents a structured CLI error written to stderr as JSON.
+// Input records which of the caller's inputs triggered the error; it's
+// populated by the helpers in errors.go so per-item emission via AsItem
+// doesn't need to re-pass the same string.
 type Error struct {
 	Err      string `json:"error"`
 	Detail   string `json:"detail,omitempty"`
 	Hint     string `json:"hint,omitempty"`
+	Input    string `json:"input,omitempty"`
 	Endpoint string `json:"endpoint,omitempty"`
 	Code     int    `json:"-"`
 }

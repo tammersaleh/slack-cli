@@ -152,7 +152,7 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	if c.At != "" {
 		epoch, err := parseScheduledTime(c.At)
 		if err != nil {
-			return &output.Error{Err: "invalid_timestamp", Detail: "Cannot parse --at: " + c.At, Code: output.ExitGeneral}
+			return output.InvalidTimestamp("--at", c.At)
 		}
 		scheduled = epoch
 	}
@@ -168,7 +168,7 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return &output.Error{Err: "channel_not_found", Detail: "No channel matching '" + c.Channel + "'", Code: output.ExitGeneral}
+		return output.ChannelNotFound(c.Channel)
 	}
 
 	dest := destination{ChannelID: channelID}
@@ -339,7 +339,7 @@ func (c *DraftUpdateCmd) buildIntent(existing *draftData, newBlocks string) (*dr
 	case c.At != "":
 		epoch, err := parseScheduledTime(c.At)
 		if err != nil {
-			return nil, &output.Error{Err: "invalid_timestamp", Detail: "Cannot parse --at: " + c.At, Code: output.ExitGeneral}
+			return nil, output.InvalidTimestamp("--at", c.At)
 		}
 		scheduled = epoch
 	case c.DateScheduled > 0:
@@ -437,11 +437,7 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 		d, ok := byID[id]
 		if !ok {
 			errorCount++
-			if err := p.PrintItem(map[string]any{
-				"input":  id,
-				"error":  "draft_not_found",
-				"detail": "No draft with id " + id,
-			}); err != nil {
+			if err := p.PrintItem(output.DraftNotFound(id).AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -493,7 +489,7 @@ func findDraftByID(ctx context.Context, client *api.Client, id string) (*draftDa
 			return &drafts[i], nil
 		}
 	}
-	return nil, &output.Error{Err: "draft_not_found", Detail: "No draft with id " + id, Code: output.ExitGeneral}
+	return nil, output.DraftNotFound(id)
 }
 
 // padDraftTS normalises a Slack timestamp to exactly 7 decimal places.
@@ -524,11 +520,7 @@ func readBlocksRequired(cli *CLI) (string, error) {
 		return "", err
 	}
 	if s == "" {
-		return "", &output.Error{
-			Err:    "missing_blocks",
-			Detail: "pipe Block Kit JSON on stdin (this CLI requires structured input, no plain-text shortcut)",
-			Code:   output.ExitGeneral,
-		}
+		return "", output.MissingBlocks()
 	}
 	return s, nil
 }
