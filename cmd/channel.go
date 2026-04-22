@@ -24,6 +24,24 @@ type ChannelListCmd struct {
 	Query            string `help:"Filter by name substring (client-side)."`
 }
 
+func (ChannelListCmd) Help() string {
+	return `List channels you're a member of by default. Add --include-non-member
+to expand to all visible channels.
+
+Channel types:
+  public    regular #channels everyone can see
+  private   invitation-only channels
+  mpim      multi-party DM (group DM with 3+ people)
+  im        1:1 DM (note: currently returns empty pages - use
+            'slack search messages "from:@user"' to find DM channel IDs)
+
+Examples:
+
+  slack channel list --query ext-                  # filter by name substring
+  slack channel list --include-non-member --limit 200
+  slack channel list --type private --has-unread   # only unread private channels`
+}
+
 func (c *ChannelListCmd) Run(cli *CLI) error {
 	if c.All && c.Cursor != "" {
 		return &output.Error{Err: "invalid_input", Detail: "--all and --cursor are mutually exclusive", Code: output.ExitGeneral}

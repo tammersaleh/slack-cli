@@ -28,6 +28,22 @@ type MessageListCmd struct {
 	HasReactions bool   `help:"Only messages with reactions (client-side filter)."`
 }
 
+func (MessageListCmd) Help() string {
+	return `List messages from a channel, newest first. Channel accepts an ID
+(C.../G.../D...) or a #name resolved from the local cache.
+
+Time bounds accept RFC 3339 ('2026-04-20T09:00:00-07:00'), date-only
+(YYYY-MM-DD), or a raw Slack ts ('1713300000.123456'). --unread uses
+the channel's last_read marker (mutually exclusive with --after).
+
+Examples:
+
+  slack message list '#general' --limit 50
+  slack message list '#general' --after 2026-04-01 --before 2026-04-15
+  slack message list '#general' --unread
+  slack message list '#general' --has-replies   # find threads to explore`
+}
+
 func (c *MessageListCmd) Run(cli *CLI) error {
 	if c.All && c.Cursor != "" {
 		return &output.Error{Err: "invalid_input", Detail: "--all and --cursor are mutually exclusive", Code: output.ExitGeneral}

@@ -21,6 +21,26 @@ type SearchMessagesCmd struct {
 	SortDir string `help:"Sort direction: asc, desc." default:"desc" name:"sort-dir" enum:"asc,desc"`
 }
 
+func (SearchMessagesCmd) Help() string {
+	return `Search messages with Slack's query modifiers. Requires a user
+token (xoxp-) since bot tokens can't search. Combine modifiers freely:
+
+  in:#channel          only this channel (also 'in:@user' for DMs)
+  from:@user           posted by this user
+  to:@user             DMs to this user
+  after:YYYY-MM-DD     / before:YYYY-MM-DD / on:YYYY-MM-DD / during:month
+  has:link             / has:pin / has:reaction / has:file / has:image
+  is:thread            / is:saved / is:dm / is:mpdm
+
+Example:
+
+  slack search messages "deploy blocker in:#general from:@alice after:2026-01-01"
+
+Each hit includes channel{id,name}, user, ts, text, and permalink.
+Page with --cursor (a raw page number, pass-through from _meta.next_cursor)
+or use --all to fetch every page.`
+}
+
 func (c *SearchMessagesCmd) Run(cli *CLI) error {
 	if c.All && c.Cursor != "" {
 		return &output.Error{Err: "invalid_input", Detail: "--all and --cursor are mutually exclusive", Code: output.ExitGeneral}

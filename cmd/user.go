@@ -83,6 +83,25 @@ type UserInfoCmd struct {
 	Users []string `arg:"" required:"" help:"User ID or email."`
 }
 
+func (UserInfoCmd) Help() string {
+	return `Look up one or more users by ID, email, or @display-name.
+
+Accepted forms:
+  U01ABC123               Slack user ID
+  alice@example.com       email (uses users.lookupByEmail - fails with
+                          session tokens on Enterprise Grid; prefer @name there)
+  @alice                  display name, username, or real name via local cache
+
+Examples:
+
+  slack user info U01ABC123 U01DEF456
+  slack user info alice@example.com
+  slack user info @alice
+
+Per-user failures emit {input, error:"user_not_found", hint:...} rows
+on stdout and set _meta.error_count in the trailer.`
+}
+
 func (c *UserInfoCmd) Run(cli *CLI) error {
 	client, err := cli.NewClient()
 	if err != nil {

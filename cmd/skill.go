@@ -92,11 +92,21 @@ rows and set ` + "`_meta.error_count`" + ` in the trailer. Exit code is 1.
 
 ` + "```" + `
 slack message list <channel> [--limit N] [--after TS] [--before TS] [--has-replies] [--has-reactions]
-` + "```" + `
-
-` + "```" + `
 slack message get <channel> <ts>...
 slack message permalink <channel> <ts>...
+` + "```" + `
+
+Time bounds accept RFC 3339, ` + "`YYYY-MM-DD`" + `, or raw Slack ts.
+` + "`--unread`" + ` uses the channel's last_read marker (mutually exclusive
+with ` + "`--after`" + `). ` + "`--has-replies`" + ` is a client-side filter - use it
+to find threads worth exploring with ` + "`slack thread list`" + `.
+
+Examples:
+
+` + "```" + `
+slack message list '#general' --limit 50
+slack message list '#general' --after 2026-04-01 --before 2026-04-15
+slack message list '#general' --has-replies --fields ts,user,reply_count
 ` + "```" + `
 
 ### Threads
@@ -104,6 +114,9 @@ slack message permalink <channel> <ts>...
 ` + "```" + `
 slack thread list <channel> <ts> [--limit N]
 ` + "```" + `
+
+Pair with ` + "`slack message list --has-replies`" + ` to locate a thread root
+first. ` + "`ts`" + ` is the parent message's timestamp (not a reply's).
 
 ### Search (requires user token)
 
@@ -135,6 +148,18 @@ slack channel info <channel>...
 slack channel members <channel> [--limit N]
 ` + "```" + `
 
+Defaults to channels you're a member of. Add ` + "`--include-non-member`" + `
+to expand.
+
+Examples:
+
+` + "```" + `
+slack channel list --query ext-                        # find customer channels
+slack channel list --type private --has-unread         # private + unread
+slack channel list --include-non-member --all          # workspace-wide
+slack channel info '#general' --fields id,name,topic   # narrowed info
+` + "```" + `
+
 ### Users
 
 ` + "```" + `
@@ -142,7 +167,18 @@ slack user list [--limit N] [--query STR] [--presence]
 slack user info <user>...
 ` + "```" + `
 
-User arguments accept IDs (U...), emails, or @names.
+User arguments accept IDs (` + "`U...`" + `), emails, or ` + "`@name`" + ` (display
+name, username, or real name). On Enterprise Grid with a session
+token, email lookup may fail - prefer ` + "`@name`" + ` there.
+
+Examples:
+
+` + "```" + `
+slack user list --query tamm                      # find by partial name
+slack user info U09T3DUS6P9                       # by ID
+slack user info alice@example.com bob@example.com  # bulk by email
+slack user info @alice                            # by display name
+` + "```" + `
 
 ### Files
 
