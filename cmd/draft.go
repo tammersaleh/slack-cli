@@ -135,6 +135,26 @@ type DraftCreateCmd struct {
 	DateScheduled int64  `help:"Schedule send at Unix epoch (alternative to --at)."`
 }
 
+func (DraftCreateCmd) Help() string {
+	return `Block Kit JSON is piped on stdin (required). Only rich_text
+top-level blocks are allowed - Slack Desktop's Drafts compose editor
+silently strips section / divider / header / context blocks when the
+user opens the draft. Run 'slack skill' for the full Block Kit shape.
+
+Minimal invocation:
+
+  echo '[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hello"}]}]}]' \
+    | slack draft create '#general'
+
+Thread reply:
+
+  slack draft create '#general' --thread 1713299000.123456 < blocks.json
+
+Scheduled send:
+
+  slack draft create '#general' --at 2026-04-20T09:00:00-07:00 < blocks.json`
+}
+
 func (c *DraftCreateCmd) Run(cli *CLI) error {
 	if c.Broadcast && c.Thread == "" {
 		return &output.Error{Err: "invalid_input", Detail: "--broadcast requires --thread", Code: output.ExitGeneral}
@@ -214,6 +234,24 @@ type DraftUpdateCmd struct {
 	At            string `help:"Reschedule send at RFC 3339 timestamp or YYYY-MM-DD."`
 	DateScheduled int64  `help:"Reschedule send at Unix epoch (use --clear-schedule to remove)."`
 	ClearSchedule bool   `help:"Remove scheduled send."`
+}
+
+func (DraftUpdateCmd) Help() string {
+	return `Replace a draft's blocks and/or reschedule it. Block Kit JSON
+on stdin is optional: if piped, it replaces the draft's 'blocks';
+if omitted, existing blocks are preserved (useful for schedule-only
+updates). Same rich_text-only rule as draft create.
+
+If Slack Desktop has already tombstoned the draft (is_deleted=true),
+the CLI transparently creates a replacement at the same destination
+and emits the new draft ID to stdout, with a warning on stderr.
+
+Examples:
+
+  slack draft update Dr01234 < blocks.json           # replace content
+  slack draft update Dr01234 --at 2026-04-22         # reschedule only
+  slack draft update Dr01234 --clear-schedule        # drop scheduled send
+  slack draft update Dr01234 --clear-schedule < blocks.json  # both`
 }
 
 func (c *DraftUpdateCmd) Run(cli *CLI) error {
