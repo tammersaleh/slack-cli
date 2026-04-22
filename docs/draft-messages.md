@@ -238,36 +238,61 @@ matrix above has `[rich_text, section]` and `[section, rich_text]`
 marked "Survives nav?: yes" - they don't tombstone. But they don't
 render correctly either.
 
-When the user opens a draft in Slack Desktop's Drafts compose editor,
-Desktop reads the `blocks` array and rebuilds a local representation
-for editing. That rebuild path only understands `rich_text`. Every
-other top-level block type - `section`, `divider`, `header`, `context` -
-is dropped. The draft is still alive on the server, but the user only
-sees the rich_text content. Any `section` they'd hoped to surface
-(headings, mrkdwn prose) is gone. It doesn't come back when the draft
-is subsequently sent.
-
-Evidence: a draft posted to `#internal-caterpillar` as ~12 alternating
-top-level `rich_text(section)` and `rich_text(list)` blocks. In Slack
-Desktop's Drafts compose view, all the `rich_text(list)` content
-rendered correctly; if any of them had been `section` blocks instead,
-those would have been stripped. Mixed arrays with a single
-`rich_text` alongside `section` / `divider` round-trip as rich_text
-only.
+When the user opens a draft in Slack's Drafts compose editor (Desktop
+or `app.slack.com`), the client reads the `blocks` array and rebuilds
+a local representation for editing. That rebuild path only understands
+`rich_text`. Every other top-level block type - `section`, `divider`,
+`header`, `context` - is dropped. The draft is still alive on the
+server, but the user only sees the rich_text content. Any `section`
+they'd hoped to surface (headings, mrkdwn prose) is gone. It doesn't
+come back when the draft is subsequently sent.
 
 Same investigation surfaced a second quirk: multiple top-level
-`rich_text` blocks are **flattened** into one by Desktop's rebuild
-before the section-before-list absorption rule (see layout quirks in
-the skill doc) runs. So splitting an alternating
-heading-then-list into separate top-level rich_text blocks does not
-give you paragraph breaks - it gives you the same "GPUs:" glued onto
-the first bullet as a single mixed block. The fix is the
-single-`rich_text_section` pattern with inline `\n` and literal `•`,
-which sidesteps absorption entirely.
+`rich_text` blocks are **flattened** into one by the rebuild before
+the section-before-list absorption rule (see layout quirks in the
+skill doc) runs. So splitting an alternating heading-then-list into
+separate top-level rich_text blocks does not give you paragraph
+breaks - it gives you the same "GPUs:" glued onto the first bullet as
+a single mixed block. The fix is the single-`rich_text_section`
+pattern with inline `\n` and literal `•`, which sidesteps absorption
+entirely.
+
+### Reproduction
+
+Same rule reproduces in the web client, not just Desktop. Create a
+mixed draft via curl against `drafts.create`, open it in
+`app.slack.com`, and inspect the compose editor DOM. Payload:
+
+```json
+[
+  {"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"INTRO"}]}]},
+  {"type":"section","text":{"type":"mrkdwn","text":"SECTION"}},
+  {"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[
+    {"type":"rich_text_section","elements":[{"type":"text","text":"list-A"}]},
+    {"type":"rich_text_section","elements":[{"type":"text","text":"list-B"}]}
+  ]}]},
+  {"type":"divider"},
+  {"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"OUTRO"}]}]}
+]
+```
+
+Observed in the compose editor:
+
+- `SECTION` absent from both `innerText` and `innerHTML` of
+  `[data-qa="message_input_container"]` - not hidden, truly absent.
+- No `<hr>` in the DOM - divider also dropped.
+- One `<ul>` with two `<li>`s; the first reads
+  `"INTROlist-A"` (intro rich_text absorbed into the following list's
+  first item despite being a separate top-level block).
+- `OUTRO` renders as its own paragraph after the list.
+
+Swap the whole thing for a single top-level `rich_text` with one
+`rich_text_section` using inline `\n` and literal `•` characters, and
+every marker renders.
 
 Unlike ghosting, there's no server-side signal for stripping. The
 draft looks healthy in `drafts.list`. The only way to observe it is
-to open the compose editor in Desktop and see what's missing.
+to open the compose editor and read the DOM.
 
 The CLI's response: `validateBlocksShape` rejects any draft whose
 top-level `blocks` array contains anything other than `rich_text`.
@@ -391,6 +416,10 @@ Symptoms to watch for:
 
 - Drafts consistently ghost within seconds of Drafts-panel nav despite
   our rich_text validation passing. The reconciliation rule changed.
+
+- A mixed-block draft (staged via curl to bypass CLI validation)
+  suddenly renders `section` / `divider` content in the compose editor.
+  The strip rule relaxed; our validation is now unnecessarily strict.
 
 - `drafts.create` rejects previously-valid payloads
   (`invalid_arg_name`, new required fields, etc.). The wire format
