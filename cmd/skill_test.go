@@ -58,3 +58,40 @@ func TestSkill_Output(t *testing.T) {
 		}
 	}
 }
+
+// TestSkill_DraftGuidance covers the known Drafts-panel rendering quirks
+// that must be in the agent-facing skill. Missing any of these produces
+// drafts that look fine on the wire but render wrong in Slack Desktop's
+// Drafts compose editor.
+func TestSkill_DraftGuidance(t *testing.T) {
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kctx, err := parser.Parse([]string{"skill"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetOutput(&outBuf, &errBuf)
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+	out := outBuf.String()
+
+	for _, want := range []string{
+		// Non-rich_text blocks get stripped from the Drafts compose editor.
+		"Drafts compose editor",
+		// Cross-block absorption when multiple rich_text blocks are flattened.
+		"flattens",
+		// The working pattern for multi-paragraph prose with visual bullets.
+		"containing one `rich_text_section`",
+		// The literal bullet character so agents know what "visual bullets" means.
+		"•",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected skill output to mention %q for draft rendering guidance", want)
+		}
+	}
+}

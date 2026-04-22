@@ -433,23 +433,48 @@ func TestDraftCreate_InvalidBlocksEmptyRichText(t *testing.T) {
 	}
 }
 
-func TestDraftCreate_AllowsSectionAlongsideRichText(t *testing.T) {
-	// Mixed arrays with a non-empty rich_text block survive Desktop
-	// reconciliation, so the validator lets them through.
-	draft := map[string]any{
-		"id":              "Dr0ALLOW",
-		"client_msg_id":   "uuid-allow",
-		"date_created":    1709251200,
-		"last_updated_ts": "1709251200.1200000",
-		"blocks":          richTextBlocks("body"),
-		"destinations":    []map[string]any{{"channel_id": "C01ABC"}},
-	}
+func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
+	// Non-rich_text top-level blocks survive the wire but get silently
+	// stripped by Slack Desktop's Drafts compose editor when the user
+	// opens the draft. Rejecting them prevents silent content loss.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/drafts.create", draftCreateResponder(t, draft))
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
 
-	mixed := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"section","text":{"type":"mrkdwn","text":"extra"}}]`
-	if _, err := runWithMockSessionStdin(t, mixed, mux, "draft", "create", "C01ABC"); err != nil {
-		t.Fatalf("expected mixed blocks to pass validation, got %v", err)
+	for _, tc := range []struct {
+		name, blocks string
+	}{
+		{
+			name:   "section_alongside_rich_text",
+			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"section","text":{"type":"mrkdwn","text":"extra"}}]`,
+		},
+		{
+			name:   "divider_alongside_rich_text",
+			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"divider"}]`,
+		},
+		{
+			name:   "header_before_rich_text",
+			blocks: `[{"type":"header","text":{"type":"plain_text","text":"Hi"}},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]}]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runWithMockSessionStdin(t, tc.blocks, mux, "draft", "create", "C01ABC")
+			if err == nil {
+				t.Fatal("expected invalid_blocks error for non-rich_text top-level block")
+			}
+			var oe *output.Error
+			if !errors.As(err, &oe) {
+				t.Fatalf("expected *output.Error, got %T: %v", err, err)
+			}
+			if oe.Err != "invalid_blocks" {
+				t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
+			}
+			// Detail must steer the caller toward the correct fix.
+			if !strings.Contains(oe.Detail, "rich_text") || !strings.Contains(oe.Detail, "strip") {
+				t.Errorf("expected Detail mentioning rich_text and stripping, got %q", oe.Detail)
+			}
+		})
 	}
 }
 

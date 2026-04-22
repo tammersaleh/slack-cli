@@ -566,11 +566,12 @@ func readBlocksIfProvided(cli *CLI) (string, error) {
 }
 
 // validateBlocksShape is the local gate before shipping draft blocks to
-// Slack. Beyond basic JSON shape, it enforces that the array contains at
-// least one non-empty rich_text block: Slack Desktop's Drafts-panel
-// reconciliation tombstones (is_deleted=true) any server draft that lacks
-// one. Other block types (section, divider, header, context, ...) are
-// allowed alongside a rich_text block but can't stand alone.
+// Slack. Beyond basic JSON shape, it enforces that every top-level block
+// is a non-empty rich_text. Slack Desktop's Drafts-panel reconciliation
+// tombstones drafts without rich_text content, and its compose editor
+// silently strips any non-rich_text top-level block when the user opens
+// the draft to edit - so section/divider/header/context alongside
+// rich_text is still data loss.
 func validateBlocksShape(raw []byte) error {
 	var arr []map[string]any
 	if err := json.Unmarshal(raw, &arr); err != nil {
@@ -593,10 +594,15 @@ func validateBlocksShape(raw []byte) error {
 				Code:   output.ExitGeneral,
 			}
 		}
-		if t == "rich_text" {
-			if elems, ok := block["elements"].([]any); ok && len(elems) > 0 {
-				hasRichText = true
+		if t != "rich_text" {
+			return &output.Error{
+				Err:    "invalid_blocks",
+				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text top-level blocks. Slack Desktop's Drafts compose editor strips non-rich_text blocks when the user opens the draft. See the skill docs for the rich_text shape.", i, t),
+				Code:   output.ExitGeneral,
 			}
+		}
+		if elems, ok := block["elements"].([]any); ok && len(elems) > 0 {
+			hasRichText = true
 		}
 	}
 	if !hasRichText {
