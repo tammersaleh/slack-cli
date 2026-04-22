@@ -115,7 +115,7 @@ Rules:
 - Don't downgrade a type to avoid a release. If it's user-facing, it's
   `feat:` or `fix:`, and release-please should cut a version for it.
 - Don't upgrade a type to force a release. Internal refactors are
-  `refactor:` even if the PR is large.
+  `refactor:` even if the change is large.
 - Write the subject in imperative mood ("add channel mark", not "added
   channel mark") and keep it under ~70 chars; release-please quotes it
   verbatim into the changelog.
@@ -176,7 +176,11 @@ For functions only accessible within `package cmd` (like `padDraftTS`), put unit
 
 ## Git
 
-This is a personal project. You can push, create PRs, and merge.
+This is a personal project. The workflow is entirely local: commit
+on a branch (or directly on main for small fixes), merge to main,
+push. Don't open pull requests. `gh pr create` is not part of any
+flow here. The only PR that exists is the release-please automation
+PR, and that's created and merged without human involvement.
 
 ## Output
 
