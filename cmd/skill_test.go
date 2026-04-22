@@ -59,6 +59,56 @@ func TestSkill_Output(t *testing.T) {
 	}
 }
 
+// TestSkill_DiscoverabilityContent asserts the sections that exist to
+// let agents self-recover from errors, compose commands, and understand
+// the CLI's conventions without external help. If one of these goes
+// missing, an agent is more likely to dead-end.
+func TestSkill_DiscoverabilityContent(t *testing.T) {
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kctx, err := parser.Parse([]string{"skill"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetOutput(&outBuf, &errBuf)
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+	out := outBuf.String()
+
+	for _, want := range []string{
+		// Errors catalog with hint field explained.
+		"## Errors",
+		"`hint`",
+		"`channel_not_found`",
+		"`draft_not_found`",
+		"`invalid_timestamp`",
+		// Exit codes documented so agents know what each non-zero code means.
+		"### Exit codes",
+		"2 - authentication",
+		"3 - rate limited",
+		// Workflows give composition examples.
+		"## Workflows",
+		// Search modifiers listed so agents don't have to guess.
+		"`from:@user`",
+		"`after:YYYY-MM-DD`",
+		"`has:link`",
+		// Channel types explained (mpim/im are not self-documenting).
+		"`mpim`",
+		"`im`",
+		// User resolution gotcha - email + Grid + session token.
+		"Enterprise Grid",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected skill output to contain %q for discoverability", want)
+		}
+	}
+}
+
 // TestSkill_DraftGuidance covers the known Drafts-panel rendering quirks
 // that must be in the agent-facing skill. Missing any of these produces
 // drafts that look fine on the wire but render wrong in Slack Desktop's
