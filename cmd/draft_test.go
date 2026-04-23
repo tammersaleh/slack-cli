@@ -478,6 +478,149 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 	}
 }
 
+func TestDraftCreate_RejectsSectionBeforeList(t *testing.T) {
+	// A rich_text_list directly following a rich_text_section absorbs the
+	// section into the first bullet. Desktop flattens adjacent top-level
+	// rich_text blocks before rendering, so this fires both within a single
+	// rich_text block and across multiple top-level blocks.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
+
+	for _, tc := range []struct {
+		name, blocks string
+	}{
+		{
+			name: "intra_block",
+			blocks: `[{"type":"rich_text","elements":[` +
+				`{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]},` +
+				`{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}` +
+				`]}]`,
+		},
+		{
+			name: "cross_block",
+			blocks: `[` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
+				`]`,
+		},
+		{
+			name: "cross_block_trailing_section",
+			blocks: `[` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]},` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"tldr"}]}]}` +
+				`]`,
+		},
+		{
+			// Empty rich_text block between section and list still flattens
+			// on Desktop, so the rejection must still fire.
+			name: "cross_block_empty_separator",
+			blocks: `[` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
+				`{"type":"rich_text","elements":[]},` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
+				`]`,
+		},
+		{
+			// An untyped element in between must not silently reset the
+			// section->list accumulator. Defense against a malformed payload
+			// defeating the check.
+			name: "cross_block_untyped_element_between",
+			blocks: `[` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
+				`{"type":"rich_text","elements":[{"no_type_field":"x"}]},` +
+				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
+				`]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runWithMockSessionStdin(t, tc.blocks, mux, "draft", "create", "C01ABC")
+			if err == nil {
+				t.Fatal("expected invalid_blocks error for rich_text_list after rich_text_section")
+			}
+			var oe *output.Error
+			if !errors.As(err, &oe) {
+				t.Fatalf("expected *output.Error, got %T: %v", err, err)
+			}
+			if oe.Err != "invalid_blocks" {
+				t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
+			}
+			// Detail must steer the caller toward the workaround.
+			if !strings.Contains(oe.Detail, "rich_text_list") || !strings.Contains(oe.Detail, "rich_text_section") {
+				t.Errorf("expected Detail to name the offending element types, got %q", oe.Detail)
+			}
+			if !strings.Contains(oe.Detail, "rich_text_quote") && !strings.Contains(oe.Detail, "rich_text_preformatted") {
+				t.Errorf("expected Detail to point at quote/preformatted workaround, got %q", oe.Detail)
+			}
+		})
+	}
+}
+
+func TestDraftCreate_AcceptsSectionListWithBreak(t *testing.T) {
+	// Positive: quote between section and list forces a block break, so
+	// absorption doesn't apply. Must reach the API unmolested.
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotForm, _ = url.ParseQuery(string(body))
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr99999", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks": richTextBlocks("x"), "destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	blocks := `[` +
+		`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
+		`{"type":"rich_text","elements":[{"type":"rich_text_quote","elements":[{"type":"text","text":"break"}]}]},` +
+		`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
+		`]`
+
+	_, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC")
+	if err != nil {
+		t.Fatalf("expected section+quote+list to pass validation, got %v", err)
+	}
+	if gotForm.Get("blocks") != blocks {
+		t.Errorf("blocks should pass through verbatim")
+	}
+}
+
+func TestDraftCreate_AcceptsListWithoutLeadingSection(t *testing.T) {
+	// Positive: a bare list, and list-then-section, must not trip the
+	// new check.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr99999", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks": richTextBlocks("x"), "destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	for _, tc := range []struct {
+		name, blocks string
+	}{
+		{
+			name:   "list_only",
+			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}]`,
+		},
+		{
+			name: "list_then_section",
+			blocks: `[{"type":"rich_text","elements":[` +
+				`{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]},` +
+				`{"type":"rich_text_section","elements":[{"type":"text","text":"tldr"}]}` +
+				`]}]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := runWithMockSessionStdin(t, tc.blocks, mux, "draft", "create", "C01ABC"); err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+
 func TestDraftCreate_BroadcastWithoutThread(t *testing.T) {
 	mux := http.NewServeMux()
 	_, err := runWithMockSessionStdin(t, richTextBlocksJSON("x"), mux,
