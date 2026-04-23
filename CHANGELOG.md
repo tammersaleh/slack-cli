@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/tammersaleh/slack-cli/compare/v1.1.0...v1.2.0) (2026-04-23)
+
+
+### Features
+
+* reject rich_text_list directly after rich_text_section ([18d20fc](https://github.com/tammersaleh/slack-cli/commit/18d20fcc9b3c241a384a91f44b87403e6a0129a6))
+
 ## [1.1.0](https://github.com/tammersaleh/slack-cli/compare/v1.0.2...v1.1.0) (2026-04-22)
 
 
