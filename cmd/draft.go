@@ -615,6 +615,13 @@ func validateBlocksShape(raw []byte) error {
 		return &output.Error{Err: "invalid_blocks", Detail: "blocks array is empty", Code: output.ExitGeneral}
 	}
 	hasRichText := false
+	// Track the last recognized container type seen across the flattened
+	// element stream. Desktop merges adjacent top-level rich_text blocks
+	// before rendering, so absorption reaches across block boundaries.
+	// Unrecognized/untyped elements don't reset this - they'd be invisible
+	// to Desktop's flattener too.
+	var prevElem string
+	var prevBlock, prevIdx int
 	for i, block := range arr {
 		t, ok := block["type"].(string)
 		if !ok || t == "" {
@@ -631,8 +638,27 @@ func validateBlocksShape(raw []byte) error {
 				Code:   output.ExitGeneral,
 			}
 		}
-		if elems, ok := block["elements"].([]any); ok && len(elems) > 0 {
+		elems, _ := block["elements"].([]any)
+		if len(elems) > 0 {
 			hasRichText = true
+		}
+		for j, elem := range elems {
+			em, ok := elem.(map[string]any)
+			if !ok {
+				continue
+			}
+			et, _ := em["type"].(string)
+			if et == "" {
+				continue
+			}
+			if et == "rich_text_list" && prevElem == "rich_text_section" {
+				return &output.Error{
+					Err:    "invalid_blocks",
+					Detail: fmt.Sprintf("blocks[%d].elements[%d] is a rich_text_list directly after the rich_text_section at blocks[%d].elements[%d]; Slack flattens adjacent top-level rich_text blocks and absorbs the preceding section into the first bullet. Insert a rich_text_quote or rich_text_preformatted between them, or collapse into a single rich_text_section with inline \"\\n\" and literal \"•\" markers. See the skill docs' Layout quirks section.", i, j, prevBlock, prevIdx),
+					Code:   output.ExitGeneral,
+				}
+			}
+			prevElem, prevBlock, prevIdx = et, i, j
 		}
 	}
 	if !hasRichText {
