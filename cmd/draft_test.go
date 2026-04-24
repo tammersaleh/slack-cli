@@ -247,6 +247,12 @@ func TestDraftCreate_Basic(t *testing.T) {
 	if gotForm.Get("file_ids") != "[]" {
 		t.Errorf("expected file_ids='[]', got %q", gotForm.Get("file_ids"))
 	}
+	// Must be composer-originated so Slack's channel composer will load
+	// the draft from drafts.listActive; otherwise "Edit draft" opens an
+	// empty compose box.
+	if gotForm.Get("is_from_composer") != "true" {
+		t.Errorf("expected is_from_composer='true', got %q", gotForm.Get("is_from_composer"))
+	}
 
 	lines := nonEmptyLines(out)
 	item := parseJSON(t, lines[0])
@@ -691,6 +697,42 @@ func TestDraftUpdate_Blocks(t *testing.T) {
 	}
 }
 
+func TestDraftUpdate_HealsOldIsFromComposer(t *testing.T) {
+	// Drafts created by the CLI before the fix have is_from_composer=false
+	// stored server-side, which hides them from the Slack composer. Update
+	// must rewrite the flag to "true" rather than round-tripping the stale
+	// value.
+	existing := map[string]any{
+		"id":               "Dr01234",
+		"client_msg_id":    "uuid-existing",
+		"date_created":     1709251200,
+		"date_scheduled":   0,
+		"last_updated_ts":  "1709251200.12",
+		"blocks":           richTextBlocks("old text"),
+		"destinations":     []map[string]any{{"channel_id": "C01ABC"}},
+		"is_from_composer": false,
+	}
+
+	var gotUpdate url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotUpdate, _ = url.ParseQuery(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "draft": existing})
+	})
+
+	_, err := runWithMockSessionStdin(t, richTextBlocksJSON("new text"), mux,
+		"draft", "update", "Dr01234",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotUpdate.Get("is_from_composer") != "true" {
+		t.Errorf("update must heal is_from_composer to 'true', got %q", gotUpdate.Get("is_from_composer"))
+	}
+}
+
 func TestDraftUpdate_Reschedule(t *testing.T) {
 	existing := map[string]any{
 		"id": "Dr01234", "date_scheduled": 1700000000, "last_updated_ts": "1709251200.12",
@@ -867,6 +909,9 @@ func TestDraftUpdate_AutoReplaceOnTombstone(t *testing.T) {
 	}
 	if createForm.Get("client_msg_id") == "uuid-old" {
 		t.Error("replacement should have fresh client_msg_id")
+	}
+	if createForm.Get("is_from_composer") != "true" {
+		t.Errorf("replacement must be composer-originated to be visible to the Slack composer, got is_from_composer=%q", createForm.Get("is_from_composer"))
 	}
 
 	lines := nonEmptyLines(out)
