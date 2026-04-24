@@ -206,7 +206,7 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 		"destinations":     string(destsJSON),
 		"client_msg_id":    uuid.NewString(),
 		"file_ids":         "[]",
-		"is_from_composer": "false",
+		"is_from_composer": "true",
 	}
 	if scheduled > 0 {
 		params["date_scheduled"] = strconv.FormatInt(scheduled, 10)
@@ -318,7 +318,7 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 		"destinations":           intent.destinations,
 		"client_msg_id":          existing.ClientMsgID,
 		"file_ids":               intent.fileIDs,
-		"is_from_composer":       strconv.FormatBool(existing.IsFromComposer),
+		"is_from_composer":       "true", // match drafts.create; heal old drafts stuck at false
 		"date_scheduled":         strconv.FormatInt(intent.scheduled, 10),
 	}
 
@@ -407,7 +407,7 @@ func (c *DraftUpdateCmd) createReplacement(ctx context.Context, cli *CLI, client
 		"destinations":     intent.destinations,
 		"client_msg_id":    uuid.NewString(),
 		"file_ids":         "[]", // file attachments don't carry across to replacement
-		"is_from_composer": "false",
+		"is_from_composer": "true",
 	}
 	if intent.scheduled > 0 {
 		params["date_scheduled"] = strconv.FormatInt(intent.scheduled, 10)
