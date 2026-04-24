@@ -32,8 +32,8 @@ Channel types:
   public    regular #channels everyone can see
   private   invitation-only channels
   mpim      multi-party DM (group DM with 3+ people)
-  im        1:1 DM (note: currently returns empty pages - use
-            'slack search messages "from:@user"' to find DM channel IDs)
+  im        1:1 DM (always included regardless of --include-non-member;
+            IMs don't have a member concept on the Slack API)
 
 Examples:
 
@@ -75,7 +75,10 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 		}
 
 		for _, ch := range channels {
-			if !c.IncludeNonMember && !ch.IsMember {
+			// IMs don't have a "member" concept - is_member is always
+			// false, so the member-only default would hide every DM.
+			// Include them unconditionally.
+			if !ch.IsIM && !c.IncludeNonMember && !ch.IsMember {
 				continue
 			}
 			if c.HasUnread && ch.UnreadCount == 0 {

@@ -328,6 +328,66 @@ func TestChannelList_AllPages(t *testing.T) {
 	}
 }
 
+func TestChannelList_IMsIgnoreMemberFilter(t *testing.T) {
+	// Slack returns IMs with is_member=false - IMs don't have a "member"
+	// concept. The default member-only filter would hide every DM; we must
+	// include IMs unconditionally so `--type im` actually returns DMs.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"channels": []map[string]any{
+				{"id": "D01", "is_im": true, "is_member": false, "user": "U01"},
+				{"id": "D02", "is_im": true, "is_member": false, "user": "U02"},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+
+	out, err := runWithMock(t, mux, "channel", "list", "--type", "im")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 2 IM rows + meta, got %d lines:\n%s", len(lines), out)
+	}
+	first := parseJSON(t, lines[0])
+	if first["id"] != "D01" {
+		t.Errorf("expected first id=D01, got %q", first["id"])
+	}
+}
+
+func TestChannelList_NonIMChannelsStillFilteredByMember(t *testing.T) {
+	// The IM carve-out must not leak into regular channels. A
+	// public_channel with is_member=false should still be hidden by
+	// default.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"channels": []map[string]any{
+				{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
+				{"id": "C02", "name": "external", "is_channel": true, "is_member": false},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+
+	out, err := runWithMock(t, mux, "channel", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected 1 channel + meta, got %d lines:\n%s", len(lines), out)
+	}
+	first := parseJSON(t, lines[0])
+	if first["name"] != "general" {
+		t.Errorf("expected non-member channel filtered, got first=%q", first["name"])
+	}
+}
+
 func TestChannelInfo_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
