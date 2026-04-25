@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/tammersaleh/slack-cli/compare/v1.2.0...v1.2.1) (2026-04-25)
+
+
+### Bug Fixes
+
+* include IM channels in default list output ([3ad257b](https://github.com/tammersaleh/slack-cli/commit/3ad257bbd2ae19b0a1c6f74a94816d3099ec9253))
+* stage drafts as composer-originated ([aa648f6](https://github.com/tammersaleh/slack-cli/commit/aa648f6ba7c7b7bde19d448f7c6f7e495f4c99e3))
+
 ## [1.2.0](https://github.com/tammersaleh/slack-cli/compare/v1.1.0...v1.2.0) (2026-04-23)
 
 
