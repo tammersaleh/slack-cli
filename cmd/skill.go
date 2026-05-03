@@ -235,23 +235,38 @@ slack draft delete <draft-id>...
 #### Block Kit for drafts
 
 Drafts must contain only ` + "`rich_text`" + ` top-level blocks, and at
-least one must have non-empty ` + "`elements`" + `. Two Slack Desktop
-behaviors force this:
+least one must have non-empty ` + "`elements`" + `. The CLI rejects
+non-rich_text blocks up front with ` + "`invalid_blocks`" + `. Express
+anything that would normally be a ` + "`section`" + ` or ` + "`header`" + ` (bold
+headings, mrkdwn prose) inside a rich_text block instead.
 
-- **Tombstone**: the Drafts-panel reconciliation sets ` + "`is_deleted=true`" + `
-  on any server-side draft that lacks a non-empty rich_text, so
-  section-only or divider-only arrays round-trip as deleted within
-  seconds.
-- **Strip**: the Drafts compose editor (the panel the user opens to
-  review/send) silently discards any top-level block that is not
-  ` + "`rich_text`" + ` when it renders the draft for editing. A
-  ` + "`[rich_text, section, divider]`" + ` array ships fine to the API but
-  the user only sees the rich_text content - everything else is gone.
+##### Block types that look right but break
 
-The CLI rejects non-rich_text top-level blocks up front with
-` + "`invalid_blocks`" + `. If you want something that would normally be a
-` + "`section`" + ` or ` + "`header`" + ` (bold headings, mrkdwn prose), express it
-inside a rich_text block.
+Slack's public docs describe several block types you might reach for.
+For drafts specifically, only ` + "`rich_text`" + ` works. The CLI catches
+the cases below at validation - you'll see ` + "`invalid_blocks`" + ` locally,
+not the Slack-side failure - but knowing the underlying reason makes
+the rejection less surprising and discourages bypassing the CLI:
+
+- **` + "`markdown`" + ` block** (the new CommonMark block Slack
+  recommends for LLM output): ` + "`drafts.create`" + ` returns
+  ` + "`internal_error`" + ` - the drafts API doesn't support it,
+  regardless of content.
+- **` + "`section`" + ` + ` + "`mrkdwn`" + `**: ` + "`drafts.create`" + ` returns ok,
+  but Slack Desktop's Drafts-panel reconciliation tombstones the
+  draft (sets ` + "`is_deleted=true`" + ` on the server) within seconds.
+  ` + "`drafts.delete`" + ` then fails with ` + "`draft_delete_invalid`" + `
+  because the record is already marked deleted - a leaked draft
+  that the user can't see and you can't clean up.
+- **Mixed top-level blocks** (` + "`[rich_text, section, divider]`" + `):
+  the Drafts compose editor silently strips every non-rich_text
+  block when the user opens the draft, so the user sees only the
+  rich_text content. Section-only or divider-only arrays - i.e.
+  no rich_text body at all - get tombstoned by the reconciliation
+  pass within seconds, same mechanism as the previous bullet.
+- **Multiple top-level ` + "`rich_text`" + ` blocks expecting paragraph
+  breaks between them**: Desktop flattens adjacent rich_text blocks
+  into one before rendering. See "Default pattern" below.
 
 ##### rich_text (structured)
 
@@ -386,56 +401,69 @@ fallback that reads naturally.
 {"type":"broadcast","range":"here"}
 ` + "```" + `
 
-##### Complete example
+##### Default pattern: one rich_text, prose in one rich_text_section
 
-Thread reply with bold, a link, a bullet list with code, and a mention:
+Use this for almost every draft. **One top-level ` + "`rich_text`" + `
+block. Prose, mentions, links, and visual bullets all live inside
+one ` + "`rich_text_section`" + ` container**, with inline ` + "`text`" + `
+elements doing the structural work: ` + "`\\n`" + ` for line breaks,
+` + "`\\n\\n`" + ` for paragraph gaps, and a literal Unicode ` + "`•`" + ` for
+bullet markers.
 
 ` + "```json" + `
-[
-  {
-    "type": "rich_text",
-    "elements": [
-      {
-        "type": "rich_text_section",
-        "elements": [
-          {"type": "user", "user_id": "U01ABC123"},
-          {"type": "text", "text": " please review "},
-          {"type": "link", "url": "https://github.com/org/repo/pull/42", "text": "PR #42"},
-          {"type": "text", "text": " - changes:"}
-        ]
-      },
-      {
-        "type": "rich_text_list",
-        "style": "bullet",
-        "indent": 0,
-        "elements": [
-          {"type": "rich_text_section", "elements": [
-            {"type": "text", "text": "Added "},
-            {"type": "text", "text": "handleError()", "style": {"code": true}},
-            {"type": "text", "text": " helper"}
-          ]},
-          {"type": "rich_text_section", "elements": [
-            {"type": "text", "text": "Dropped legacy JSON path"}
-          ]}
-        ]
-      },
-      {
-        "type": "rich_text_preformatted",
-        "elements": [{"type": "text", "text": "git checkout feat/handler\nmise run test"}]
-      }
-    ]
-  }
-]
+[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
+  {"type":"user","user_id":"U01ABC123"},
+  {"type":"text","text":" please review "},
+  {"type":"link","url":"https://github.com/org/repo/pull/42","text":"PR #42"},
+  {"type":"text","text":" - changes:\n\n"},
+  {"type":"text","text":"• Added "},
+  {"type":"text","text":"handleError()","style":{"code":true}},
+  {"type":"text","text":" helper\n"},
+  {"type":"text","text":"• Dropped legacy JSON path"}
+]}]}]
 ` + "```" + `
 
-##### Layout quirks
+This sidesteps every Desktop reconciliation quirk - no
+section-before-list absorption, no top-level flattening, no
+strip/tombstone. Inline styling (` + "`bold`" + `, ` + "`italic`" + `, ` + "`link`" + `,
+` + "`user`" + `, ` + "`channel`" + `, ` + "`emoji`" + `, single-line ` + "`code`" + `) all
+work across the section.
 
-A ` + "`rich_text_list`" + ` that immediately follows one or more
-` + "`rich_text_section`" + ` elements **absorbs the last section as the first
-list item's content**, gluing the heading text onto the first bullet
-with no break.
+For a multi-line code block, add a ` + "`rich_text_preformatted`" + `
+container as a SIBLING of the section inside the same top-level
+` + "`rich_text`" + ` (not nested inside the section's ` + "`elements`" + ` -
+that's invalid). Multiple containers within the same top-level
+` + "`rich_text`" + ` are fine; the only combination that misbehaves is
+mixing in a ` + "`rich_text_list`" + ` (see "When to use rich_text_list"
+below).
 
-Bad (intro collapses into first bullet):
+` + "```json" + `
+[{"type":"rich_text","elements":[
+  {"type":"rich_text_section","elements":[
+    {"type":"text","text":"To run:","style":{"bold":true}}
+  ]},
+  {"type":"rich_text_preformatted","elements":[
+    {"type":"text","text":"git checkout feat/handler\nmise run test"}
+  ]}
+]}]
+` + "```" + `
+
+Tradeoff on bullets: the ` + "`•`" + ` characters are plain text, not
+real list markers, so indent/nesting won't match a native list if
+the recipient edits the draft.
+
+##### When to use rich_text_list
+
+` + "`rich_text_list`" + ` is safe **only when the same top-level
+` + "`rich_text`" + ` contains zero ` + "`rich_text_section`" + ` containers**.
+That means: every line is a bullet, no heading, no intro
+sentence, no "Yesterday:" / "Today:" labels, no paragraph between
+lists. The moment you mix in a ` + "`rich_text_section`" + `, you risk
+the absorption trap below; switch to the default pattern instead.
+
+**Section-before-list absorption.** A ` + "`rich_text_list`" + ` that
+immediately follows a ` + "`rich_text_section`" + ` absorbs the section
+as the first list item, gluing heading text onto the first bullet:
 
 ` + "```json" + `
 [{"type":"rich_text","elements":[
@@ -446,64 +474,34 @@ Bad (intro collapses into first bullet):
 ]}]
 ` + "```" + `
 
-Renders as a single bullet reading "Next steps:do X".
+Renders as a single bullet reading "Next steps:do X". Only
+section-BEFORE-list is affected; section-after-list renders normally.
 
-This only affects section-BEFORE-list. Section-after-list renders as
-its own paragraph. Also: consecutive sections with no list between
-them do flow inline with no paragraph break, so if you want separate
-paragraphs you need intervening structural elements (list, quote,
-preformatted).
+**Top-level flattening.** Slack Desktop's Drafts compose editor
+flattens every top-level rich_text block into one before rendering, then
+applies absorption across the merged stream. So splitting into
+multiple top-level ` + "`rich_text`" + ` blocks does not rescue you -
+` + "`[rich_text(section), rich_text(list)]`" + ` collapses to the same
+glued-together mess as a single mixed block.
 
-**Splitting into multiple top-level ` + "`rich_text`" + ` blocks does not help.**
-Slack Desktop's Drafts compose editor flattens every top-level
-rich_text block into one before rendering, then applies the
-section-before-list absorption across the merged stream. An array of
-alternating ` + "`rich_text(section)`" + ` / ` + "`rich_text(list)`" + ` blocks
-collapses into the same glued-together mess as a single mixed block.
+If you must keep a heading next to a list, options:
 
-Options to get a heading above a list:
+- Put the heading INSIDE the list as its own bulleted item.
+- Insert a ` + "`rich_text_quote`" + ` or ` + "`rich_text_preformatted`" + `
+  between the heading section and the list - either forces a block
+  break.
+- Drop the heading and use a bolded first bullet.
 
-- Put the heading INSIDE the list as its own rich_text_section item
-  (accept that it shows as a bullet).
-- Use a ` + "`rich_text_quote`" + ` or ` + "`rich_text_preformatted`" + ` between
-  heading and list; either forces a block break.
-- Drop the heading entirely and use a bolded first bullet.
-- Use the single-section pattern below - it sidesteps absorption
-  entirely.
-
-##### Multi-paragraph prose with visual bullets
-
-When a draft needs distinct paragraphs, bold headings, and bulleted
-lists mixed together, ` + "`rich_text_list`" + ` is a trap: every
-heading-then-list boundary risks absorption, and extra top-level
-rich_text blocks don't rescue it.
-
-The reliable pattern is **one top-level ` + "`rich_text`" + ` block
-containing one ` + "`rich_text_section`" + `**, with inline ` + "`text`" + `
-elements doing the structural work: ` + "`\\n`" + ` for line breaks,
-` + "`\\n\\n`" + ` for paragraph gaps, and a literal Unicode ` + "`•`" + ` for
-bullet markers.
+Pure-list example (safe):
 
 ` + "```json" + `
-[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
-  {"type":"user","user_id":"U01ABC123"},
-  {"type":"text","text":" Quick brief on X:\n\n"},
-  {"type":"text","text":"• First bullet\n"},
-  {"type":"text","text":"• Second bullet\n\n"},
-  {"type":"text","text":"GPUs:","style":{"bold":true}},
-  {"type":"text","text":"\n• Third bullet\n"}
-]}]}]
+[{"type":"rich_text","elements":[
+  {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+    {"type":"rich_text_section","elements":[{"type":"text","text":"item one"}]},
+    {"type":"rich_text_section","elements":[{"type":"text","text":"item two"}]}
+  ]}
+]}]
 ` + "```" + `
-
-Tradeoffs: the ` + "`•`" + ` characters are plain text, not real list
-markers, so indent/nesting won't match a native list if the recipient
-edits it. Inline styling (` + "`bold`" + `, ` + "`italic`" + `, ` + "`link`" + `, ` + "`user`" + `,
-` + "`channel`" + `, ` + "`emoji`" + `) works fine across the whole section.
-Paragraph spacing is controlled by ` + "`\\n\\n`" + ` rather than block
-breaks, so the result reads like a typed-in Slack message.
-
-Use ` + "`rich_text_list`" + ` only when the draft is a pure list with no
-preceding prose.
 
 ##### Validation
 

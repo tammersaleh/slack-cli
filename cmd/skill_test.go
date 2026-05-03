@@ -136,9 +136,13 @@ func TestSkill_DraftGuidance(t *testing.T) {
 		// Cross-block absorption when multiple rich_text blocks are flattened.
 		"flattens",
 		// The working pattern for multi-paragraph prose with visual bullets.
-		"containing one `rich_text_section`",
+		"one `rich_text_section`",
 		// The literal bullet character so agents know what "visual bullets" means.
 		"•",
+		// markdown block fails hard at drafts.create - the highest-value warning.
+		"internal_error",
+		// section+mrkdwn looks like it works but tombstones into a leaked draft.
+		"draft_delete_invalid",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected skill output to mention %q for draft rendering guidance", want)
