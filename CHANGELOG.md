@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/tammersaleh/slack-cli/compare/v1.2.1...v1.2.2) (2026-05-04)
+
+
+### Bug Fixes
+
+* tighten draft block-kit guidance in skill output ([c589242](https://github.com/tammersaleh/slack-cli/commit/c589242fe536b0624061a38a68ccc2903089daf2))
+
 ## [1.2.1](https://github.com/tammersaleh/slack-cli/compare/v1.2.0...v1.2.1) (2026-04-25)
 
 
