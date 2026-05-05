@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/tammersaleh/slack-cli/compare/v1.2.2...v2.0.0) (2026-05-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* agents that relied on the implicit public-only filter will now see private channels, MPIMs, and DMs in the output. Add `--type public` to restore the prior behavior.
+
+### Features
+
+* list all channel types by default ([72b157b](https://github.com/tammersaleh/slack-cli/commit/72b157b69372b7c126c766dca2bece01a86d355e))
+
 ## [1.2.2](https://github.com/tammersaleh/slack-cli/compare/v1.2.1...v1.2.2) (2026-05-04)
 
 
