@@ -143,13 +143,13 @@ includes ` + "`channel`" + ` (object with ` + "`id`" + `/` + "`name`" + `), ` + 
 ### Channels
 
 ` + "```" + `
-slack channel list [--limit N] [--type public|private|mpim|im] [--query STR] [--include-non-member]
+slack channel list [--limit N] [--type all|public|private|mpim|im] [--query STR] [--include-non-member]
 slack channel info <channel>...
 slack channel members <channel> [--limit N]
 ` + "```" + `
 
-Defaults to channels you're a member of. Add ` + "`--include-non-member`" + `
-to expand.
+Defaults to channels you're a member of, all types. Add ` + "`--include-non-member`" + `
+to expand to channels you haven't joined; narrow with ` + "`--type`" + `.
 
 Examples:
 
@@ -605,6 +605,7 @@ emails, or @display-names.
 
 Channel types (` + "`--type`" + ` flag on ` + "`slack channel list`" + `):
 
+- ` + "`all`" + ` - all of the below (default)
 - ` + "`public`" + ` - regular #channels everyone in the workspace can see
 - ` + "`private`" + ` - invitation-only channels
 - ` + "`mpim`" + ` - multi-party DM (group DM with 3+ people)

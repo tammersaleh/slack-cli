@@ -137,6 +137,30 @@ func TestChannelList_PaginationFlags(t *testing.T) {
 	}
 }
 
+func TestChannelList_DefaultTypeIsAll(t *testing.T) {
+	// Default --type should request all four channel kinds from
+	// conversations.list, not just public_channel.
+	var gotTypes string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		gotTypes = r.FormValue("types")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+
+	if _, err := runWithMock(t, mux, "channel", "list"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "public_channel,private_channel,mpim,im"
+	if gotTypes != want {
+		t.Errorf("default types = %q, want %q", gotTypes, want)
+	}
+}
+
 func TestChannelList_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {

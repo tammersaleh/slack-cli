@@ -188,8 +188,8 @@ func TestChannelList_Defaults(t *testing.T) {
 	if cli.Channel.List.Limit != 100 {
 		t.Errorf("expected default limit 100, got %d", cli.Channel.List.Limit)
 	}
-	if cli.Channel.List.Type != "public" {
-		t.Errorf("expected default type 'public', got %q", cli.Channel.List.Type)
+	if cli.Channel.List.Type != "all" {
+		t.Errorf("expected default type 'all', got %q", cli.Channel.List.Type)
 	}
 	if !cli.Channel.List.ExcludeArchived {
 		t.Error("expected exclude-archived to default to true")

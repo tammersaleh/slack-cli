@@ -17,7 +17,7 @@ type ChannelListCmd struct {
 	Limit            int    `help:"Page size." default:"100"`
 	Cursor           string `help:"Continue from previous page."`
 	All              bool   `help:"Fetch all pages."`
-	Type             string `help:"Channel type: public, private, mpim, im, all." default:"public" enum:"public,private,mpim,im,all"`
+	Type             string `help:"Channel type: public, private, mpim, im, all." default:"all" enum:"public,private,mpim,im,all"`
 	ExcludeArchived  bool   `help:"Exclude archived channels." default:"true" negatable:""`
 	IncludeNonMember bool   `help:"Include channels the user hasn't joined."`
 	HasUnread        bool   `help:"Only channels with unread messages."`
@@ -25,8 +25,9 @@ type ChannelListCmd struct {
 }
 
 func (ChannelListCmd) Help() string {
-	return `List channels you're a member of by default. Add --include-non-member
-to expand to all visible channels.
+	return `List channels you're a member of by default. Returns all channel types
+(public, private, mpim, im); narrow with --type. Add --include-non-member
+to expand to channels you haven't joined.
 
 Channel types:
   public    regular #channels everyone can see
@@ -34,10 +35,12 @@ Channel types:
   mpim      multi-party DM (group DM with 3+ people)
   im        1:1 DM (always included regardless of --include-non-member;
             IMs don't have a member concept on the Slack API)
+  all       all of the above (default)
 
 Examples:
 
   slack channel list --query ext-                  # filter by name substring
+  slack channel list --type public                 # only public channels
   slack channel list --include-non-member --limit 200
   slack channel list --type private --has-unread   # only unread private channels`
 }

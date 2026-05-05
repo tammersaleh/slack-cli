@@ -318,7 +318,7 @@ slack channel list [flags]
   --limit              Page size (default: 100, max: 200)
   --cursor             Continue from previous page
   --all                Fetch all pages
-  --type               public, private, mpim, im, all (default: public)
+  --type               public, private, mpim, im, all (default: all)
   --exclude-archived   Exclude archived channels (default: true)
   --include-non-member Include channels the user hasn't joined
   --has-unread         Only channels with unread messages
