@@ -566,10 +566,12 @@ JSON
 
 ### Find a 1:1 DM channel with a user
 
-` + "`slack channel list --type im`" + ` currently returns empty pages. Use search instead:
+DMs come back with ` + "`user`" + ` set to the other party's user ID and an
+empty ` + "`name`" + `. Resolve the user, then match:
 
 ` + "```" + `
-CH=$(slack search messages "from:@alice" --limit 1 | jq -r 'select(._meta == null) | .channel.id')
+UID=$(slack user info @alice --fields id | jq -r 'select(._meta == null) | .id')
+CH=$(slack channel list --type im --all | jq -r --arg u "$UID" 'select(.user == $u) | .id')
 ` + "```" + `
 
 ### Recover from a ` + "`channel_not_found`" + `
