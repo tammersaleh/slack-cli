@@ -266,7 +266,22 @@ the rejection less surprising and discourages bypassing the CLI:
   pass within seconds, same mechanism as the previous bullet.
 - **Multiple top-level ` + "`rich_text`" + ` blocks expecting paragraph
   breaks between them**: Desktop flattens adjacent rich_text blocks
-  into one before rendering. See "Default pattern" below.
+  into one before rendering. Always emit a single top-level
+  ` + "`rich_text`" + ` block; use multiple inner containers
+  (` + "`rich_text_section`" + `, ` + "`rich_text_list`" + `,
+  ` + "`rich_text_preformatted`" + `, ` + "`rich_text_quote`" + `) for
+  structure.
+- **` + "`rich_text_section`" + ` whose text doesn't end with ` + "`\\n`" + `
+  directly followed by ` + "`rich_text_list`" + `,
+  ` + "`rich_text_preformatted`" + `, or ` + "`rich_text_quote`" + `**:
+  the following container absorbs the section's content. Heading text
+  glues onto the first bullet, merges into the code block, or glues
+  into the quote. The CLI rejects this locally with
+  ` + "`invalid_blocks`" + `. Fix: terminate the section with a text
+  inline whose ` + "`text`" + ` ends with ` + "`\\n`" + ` (e.g. append
+  ` + "`{\"type\":\"text\",\"text\":\"\\n\"}`" + `, or grow the last
+  text element). The check spans top-level rich_text boundaries because
+  Desktop flattens them first.
 
 ##### rich_text (structured)
 
@@ -401,115 +416,74 @@ fallback that reads naturally.
 {"type":"broadcast","range":"here"}
 ` + "```" + `
 
-##### Default pattern: one rich_text, prose in one rich_text_section
+##### Default pattern: one rich_text with sibling containers
 
-Use this for almost every draft. **One top-level ` + "`rich_text`" + `
-block. Prose, mentions, links, and visual bullets all live inside
-one ` + "`rich_text_section`" + ` container**, with inline ` + "`text`" + `
-elements doing the structural work: ` + "`\\n`" + ` for line breaks,
-` + "`\\n\\n`" + ` for paragraph gaps, and a literal Unicode ` + "`•`" + ` for
-bullet markers.
+Use this for every draft. **One top-level ` + "`rich_text`" + ` block.**
+Inside it, use as many ` + "`rich_text_section`" + ` /
+` + "`rich_text_list`" + ` / ` + "`rich_text_preformatted`" + ` /
+` + "`rich_text_quote`" + ` containers as you need; they're siblings,
+not nested. This is the shape Slack's own compose editor produces.
 
-` + "```json" + `
-[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
-  {"type":"user","user_id":"U01ABC123"},
-  {"type":"text","text":" please review "},
-  {"type":"link","url":"https://github.com/org/repo/pull/42","text":"PR #42"},
-  {"type":"text","text":" - changes:\n\n"},
-  {"type":"text","text":"• Added "},
-  {"type":"text","text":"handleError()","style":{"code":true}},
-  {"type":"text","text":" helper\n"},
-  {"type":"text","text":"• Dropped legacy JSON path"}
-]}]}]
-` + "```" + `
-
-This sidesteps every Desktop reconciliation quirk - no
-section-before-list absorption, no top-level flattening, no
-strip/tombstone. Inline styling (` + "`bold`" + `, ` + "`italic`" + `, ` + "`link`" + `,
-` + "`user`" + `, ` + "`channel`" + `, ` + "`emoji`" + `, single-line ` + "`code`" + `) all
-work across the section.
-
-For a multi-line code block, add a ` + "`rich_text_preformatted`" + `
-container as a SIBLING of the section inside the same top-level
-` + "`rich_text`" + ` (not nested inside the section's ` + "`elements`" + ` -
-that's invalid). Multiple containers within the same top-level
-` + "`rich_text`" + ` are fine; the only combination that misbehaves is
-mixing in a ` + "`rich_text_list`" + ` (see "When to use rich_text_list"
-below).
+**The one rule that catches agents out: when a section is directly
+followed by a list, preformatted, or quote, the section's last text
+inline must end with ` + "`\\n`" + `** - otherwise the following
+container absorbs the heading.
 
 ` + "```json" + `
 [{"type":"rich_text","elements":[
   {"type":"rich_text_section","elements":[
-    {"type":"text","text":"To run:","style":{"bold":true}}
+    {"type":"user","user_id":"U01ABC123"},
+    {"type":"text","text":" please review "},
+    {"type":"link","url":"https://github.com/org/repo/pull/42","text":"PR #42"},
+    {"type":"text","text":". Highlights:\n"}
   ]},
+  {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+    {"type":"rich_text_section","elements":[
+      {"type":"text","text":"Added "},
+      {"type":"text","text":"handleError()","style":{"code":true}},
+      {"type":"text","text":" helper"}
+    ]},
+    {"type":"rich_text_section","elements":[{"type":"text","text":"Dropped legacy JSON path"}]}
+  ]},
+  {"type":"rich_text_section","elements":[{"type":"text","text":"To run locally:\n"}]},
   {"type":"rich_text_preformatted","elements":[
     {"type":"text","text":"git checkout feat/handler\nmise run test"}
   ]}
 ]}]
 ` + "```" + `
 
-Tradeoff on bullets: the ` + "`•`" + ` characters are plain text, not
-real list markers, so indent/nesting won't match a native list if
-the recipient edits the draft.
+The trailing ` + "`\\n`" + ` on ` + "`\"Highlights:\\n\"`" + ` and
+` + "`\"To run locally:\\n\"`" + ` is what prevents absorption. Inline
+styling (` + "`bold`" + `, ` + "`italic`" + `, ` + "`link`" + `,
+` + "`user`" + `, ` + "`channel`" + `, ` + "`emoji`" + `, inline
+` + "`code`" + `) all work inside sections. List items are themselves
+` + "`rich_text_section`" + `s and accept the same inline shapes.
 
-##### When to use rich_text_list
+If a heading section ends with a non-text inline (link, emoji, user
+mention, channel, broadcast), append a final
+` + "`{\"type\":\"text\",\"text\":\"\\n\"}`" + ` to satisfy the rule;
+non-text inlines don't carry the newline themselves.
 
-` + "`rich_text_list`" + ` is safe **only when the same top-level
-` + "`rich_text`" + ` contains zero ` + "`rich_text_section`" + ` containers**.
-That means: every line is a bullet, no heading, no intro
-sentence, no "Yesterday:" / "Today:" labels, no paragraph between
-lists. The moment you mix in a ` + "`rich_text_section`" + `, you risk
-the absorption trap below; switch to the default pattern instead.
+##### When NOT to use a list
 
-**Section-before-list absorption.** A ` + "`rich_text_list`" + ` that
-immediately follows a ` + "`rich_text_section`" + ` absorbs the section
-as the first list item, gluing heading text onto the first bullet:
+Skip ` + "`rich_text_list`" + ` if you're representing visual bullets
+inside a paragraph rather than real list items. Just write a single
+` + "`rich_text_section`" + ` with inline ` + "`\\n`" + ` separators and
+literal ` + "`•`" + ` characters. Tradeoff: the ` + "`•`" + ` markers
+are plain text, so the recipient can't indent or reorder them like a
+native list - but you avoid the section terminator rule entirely.
 
-` + "```json" + `
-[{"type":"rich_text","elements":[
-  {"type":"rich_text_section","elements":[{"type":"text","text":"Next steps:"}]},
-  {"type":"rich_text_list","style":"bullet","elements":[
-    {"type":"rich_text_section","elements":[{"type":"text","text":"do X"}]}
-  ]}
-]}]
-` + "```" + `
-
-Renders as a single bullet reading "Next steps:do X". Only
-section-BEFORE-list is affected; section-after-list renders normally.
-
-**Top-level flattening.** Slack Desktop's Drafts compose editor
-flattens every top-level rich_text block into one before rendering, then
-applies absorption across the merged stream. So splitting into
-multiple top-level ` + "`rich_text`" + ` blocks does not rescue you -
-` + "`[rich_text(section), rich_text(list)]`" + ` collapses to the same
-glued-together mess as a single mixed block.
-
-If you must keep a heading next to a list, options:
-
-- Put the heading INSIDE the list as its own bulleted item.
-- Insert a ` + "`rich_text_quote`" + ` or ` + "`rich_text_preformatted`" + `
-  between the heading section and the list - either forces a block
-  break.
-- Drop the heading and use a bolded first bullet.
-
-Pure-list example (safe):
-
-` + "```json" + `
-[{"type":"rich_text","elements":[
-  {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
-    {"type":"rich_text_section","elements":[{"type":"text","text":"item one"}]},
-    {"type":"rich_text_section","elements":[{"type":"text","text":"item two"}]}
-  ]}
-]}]
-` + "```" + `
 
 ##### Validation
 
-The CLI checks: non-empty JSON array, every top-level block is a
-` + "`rich_text`" + ` with a string ` + "`type`" + `, and at least one has a
-non-empty ` + "`elements`" + ` array. Non-rich_text blocks fail locally with
-` + "`invalid_blocks`" + ` - Slack's API would accept them but Desktop
-would strip (or tombstone) the draft. Semantic errors inside blocks
+The CLI checks: non-empty JSON array; every top-level block is a
+` + "`rich_text`" + ` with a string ` + "`type`" + `; at least one has a
+non-empty ` + "`elements`" + ` array; and a ` + "`rich_text_section`" + `
+directly preceding ` + "`rich_text_list`" + `, ` + "`rich_text_preformatted`" + `,
+or ` + "`rich_text_quote`" + ` must terminate with a text inline whose
+` + "`text`" + ` ends with ` + "`\\n`" + ` (trailing empty text inlines
+are ignored). All failures emit ` + "`invalid_blocks`" + ` locally so
+Slack never sees the bad shape. Semantic errors inside blocks
 (missing required subfields, unknown inline types, malformed style
 objects) surface as ` + "`invalid_blocks`" + ` from Slack's API, not
 locally.

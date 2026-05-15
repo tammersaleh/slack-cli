@@ -484,89 +484,103 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 	}
 }
 
-func TestDraftCreate_RejectsSectionBeforeList(t *testing.T) {
-	// A rich_text_list directly following a rich_text_section absorbs the
-	// section into the first bullet. Desktop flattens adjacent top-level
-	// rich_text blocks before rendering, so this fires both within a single
-	// rich_text block and across multiple top-level blocks.
+func TestDraftCreate_RejectsAbsorbingContainerAfterUnterminatedSection(t *testing.T) {
+	// A rich_text_list, rich_text_preformatted, or rich_text_quote that
+	// immediately follows a rich_text_section absorbs the section's text
+	// when the section's element stream does not terminate with a text
+	// inline whose `text` ends with "\n". Desktop flattens adjacent
+	// top-level rich_text blocks before rendering, so this fires both
+	// within a single rich_text block and across multiple top-level blocks.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("drafts.create should not be called when validation rejects")
 	})
 
-	for _, tc := range []struct {
-		name, blocks string
+	containers := []struct {
+		name, json string
 	}{
-		{
-			name: "intra_block",
-			blocks: `[{"type":"rich_text","elements":[` +
-				`{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]},` +
-				`{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}` +
-				`]}]`,
-		},
-		{
-			name: "cross_block",
-			blocks: `[` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
-				`]`,
-		},
-		{
-			name: "cross_block_trailing_section",
-			blocks: `[` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]},` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"tldr"}]}]}` +
-				`]`,
-		},
-		{
-			// Empty rich_text block between section and list still flattens
-			// on Desktop, so the rejection must still fire.
-			name: "cross_block_empty_separator",
-			blocks: `[` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
-				`{"type":"rich_text","elements":[]},` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
-				`]`,
-		},
-		{
-			// An untyped element in between must not silently reset the
-			// section->list accumulator. Defense against a malformed payload
-			// defeating the check.
-			name: "cross_block_untyped_element_between",
-			blocks: `[` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
-				`{"type":"rich_text","elements":[{"no_type_field":"x"}]},` +
-				`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
-				`]`,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := runWithMockSessionStdin(t, tc.blocks, mux, "draft", "create", "C01ABC")
-			if err == nil {
-				t.Fatal("expected invalid_blocks error for rich_text_list after rich_text_section")
-			}
-			var oe *output.Error
-			if !errors.As(err, &oe) {
-				t.Fatalf("expected *output.Error, got %T: %v", err, err)
-			}
-			if oe.Err != "invalid_blocks" {
-				t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
-			}
-			// Detail must steer the caller toward the workaround.
-			if !strings.Contains(oe.Detail, "rich_text_list") || !strings.Contains(oe.Detail, "rich_text_section") {
-				t.Errorf("expected Detail to name the offending element types, got %q", oe.Detail)
-			}
-			if !strings.Contains(oe.Detail, "rich_text_quote") && !strings.Contains(oe.Detail, "rich_text_preformatted") {
-				t.Errorf("expected Detail to point at quote/preformatted workaround, got %q", oe.Detail)
-			}
+		{"list", `{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}`},
+		{"preformatted", `{"type":"rich_text_preformatted","elements":[{"type":"text","text":"code body"}]}`},
+		{"quote", `{"type":"rich_text_quote","elements":[{"type":"text","text":"quoted body"}]}`},
+	}
+	unterminatedSection := `{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}`
+
+	for _, c := range containers {
+		t.Run("intra_block_"+c.name, func(t *testing.T) {
+			blocks := `[{"type":"rich_text","elements":[` + unterminatedSection + `,` + c.json + `]}]`
+			assertRejectsAbsorption(t, mux, blocks, c.name)
 		})
+		t.Run("cross_block_"+c.name, func(t *testing.T) {
+			blocks := `[` +
+				`{"type":"rich_text","elements":[` + unterminatedSection + `]},` +
+				`{"type":"rich_text","elements":[` + c.json + `]}` +
+				`]`
+			assertRejectsAbsorption(t, mux, blocks, c.name)
+		})
+	}
+
+	t.Run("cross_block_empty_separator", func(t *testing.T) {
+		// Empty rich_text block between section and list still flattens
+		// on Desktop, so the rejection must still fire.
+		blocks := `[` +
+			`{"type":"rich_text","elements":[` + unterminatedSection + `]},` +
+			`{"type":"rich_text","elements":[]},` +
+			`{"type":"rich_text","elements":[` + containers[0].json + `]}` +
+			`]`
+		assertRejectsAbsorption(t, mux, blocks, "list")
+	})
+
+	t.Run("cross_block_untyped_element_between", func(t *testing.T) {
+		// An untyped element in between must not silently reset the
+		// section accumulator. Defense against a malformed payload
+		// defeating the check.
+		blocks := `[` +
+			`{"type":"rich_text","elements":[` + unterminatedSection + `]},` +
+			`{"type":"rich_text","elements":[{"no_type_field":"x"}]},` +
+			`{"type":"rich_text","elements":[` + containers[0].json + `]}` +
+			`]`
+		assertRejectsAbsorption(t, mux, blocks, "list")
+	})
+
+	t.Run("non_text_trailing_inline", func(t *testing.T) {
+		// A section ending with a non-text inline (link, emoji, user,
+		// channel, broadcast) still triggers absorption because the
+		// rendered stream doesn't end with a newline. Caller must append
+		// a final {"type":"text","text":"\n"} inline.
+		blocks := `[{"type":"rich_text","elements":[` +
+			`{"type":"rich_text_section","elements":[{"type":"text","text":"see "},{"type":"link","url":"https://example.com"}]},` +
+			containers[0].json +
+			`]}]`
+		assertRejectsAbsorption(t, mux, blocks, "list")
+	})
+}
+
+func assertRejectsAbsorption(t *testing.T, mux *http.ServeMux, blocks, containerLabel string) {
+	t.Helper()
+	_, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC")
+	if err == nil {
+		t.Fatalf("expected invalid_blocks error for unterminated rich_text_section before %s", containerLabel)
+	}
+	var oe *output.Error
+	if !errors.As(err, &oe) {
+		t.Fatalf("expected *output.Error, got %T: %v", err, err)
+	}
+	if oe.Err != "invalid_blocks" {
+		t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
+	}
+	// Detail must name the offending shape and the trailing-\n fix.
+	if !strings.Contains(oe.Detail, "rich_text_section") {
+		t.Errorf("expected Detail to mention rich_text_section, got %q", oe.Detail)
+	}
+	if !strings.Contains(oe.Detail, `\n`) {
+		t.Errorf("expected Detail to mention the trailing newline rule, got %q", oe.Detail)
 	}
 }
 
-func TestDraftCreate_AcceptsSectionListWithBreak(t *testing.T) {
-	// Positive: quote between section and list forces a block break, so
-	// absorption doesn't apply. Must reach the API unmolested.
+func TestDraftCreate_AcceptsAbsorbingContainerAfterTerminatedSection(t *testing.T) {
+	// Positive: when the section's text terminates with "\n", absorption
+	// doesn't trigger. Slack's own editor produces this shape - see the
+	// reference draft captured by driving the web compose editor.
 	var gotForm url.Values
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
@@ -578,19 +592,77 @@ func TestDraftCreate_AcceptsSectionListWithBreak(t *testing.T) {
 		})(w, r)
 	})
 
-	blocks := `[` +
-		`{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"heading"}]}]},` +
-		`{"type":"rich_text","elements":[{"type":"rich_text_quote","elements":[{"type":"text","text":"break"}]}]},` +
-		`{"type":"rich_text","elements":[{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}` +
-		`]`
+	containers := []struct {
+		name, json string
+	}{
+		{"list", `{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}`},
+		{"preformatted", `{"type":"rich_text_preformatted","elements":[{"type":"text","text":"code body"}]}`},
+		{"quote", `{"type":"rich_text_quote","elements":[{"type":"text","text":"quoted body"}]}`},
+	}
 
-	_, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC")
-	if err != nil {
-		t.Fatalf("expected section+quote+list to pass validation, got %v", err)
+	terminated := `{"type":"rich_text_section","elements":[{"type":"text","text":"heading:\n"}]}`
+	for _, c := range containers {
+		t.Run("intra_block_"+c.name, func(t *testing.T) {
+			gotForm = nil
+			blocks := `[{"type":"rich_text","elements":[` + terminated + `,` + c.json + `]}]`
+			if _, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC"); err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+			if gotForm.Get("blocks") != blocks {
+				t.Errorf("blocks should pass through verbatim")
+			}
+		})
+		t.Run("cross_block_"+c.name, func(t *testing.T) {
+			gotForm = nil
+			blocks := `[` +
+				`{"type":"rich_text","elements":[` + terminated + `]},` +
+				`{"type":"rich_text","elements":[` + c.json + `]}` +
+				`]`
+			if _, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC"); err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+			if gotForm.Get("blocks") != blocks {
+				t.Errorf("blocks should pass through verbatim; got %q", gotForm.Get("blocks"))
+			}
+		})
 	}
-	if gotForm.Get("blocks") != blocks {
-		t.Errorf("blocks should pass through verbatim")
-	}
+
+	t.Run("trailing_empty_text_ignored", func(t *testing.T) {
+		// A trailing empty text inline shouldn't defeat the check - the
+		// effective terminator is the last non-empty text inline.
+		blocks := `[{"type":"rich_text","elements":[` +
+			`{"type":"rich_text_section","elements":[{"type":"text","text":"heading\n"},{"type":"text","text":""}]},` +
+			containers[0].json +
+			`]}]`
+		if _, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC"); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("separate_newline_text_inline", func(t *testing.T) {
+		// A common shape: styled heading text followed by a separate
+		// "\n" text inline. Codex flagged this; it must pass.
+		blocks := `[{"type":"rich_text","elements":[` +
+			`{"type":"rich_text_section","elements":[{"type":"text","text":"heading","style":{"bold":true}},{"type":"text","text":"\n"}]},` +
+			containers[0].json +
+			`]}]`
+		if _, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC"); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
+
+	t.Run("non_text_inline_with_trailing_newline_text", func(t *testing.T) {
+		// A section that contains a non-text inline (link, emoji, etc.)
+		// is still safe as long as a final text inline ending in "\n"
+		// follows it.
+		blocks := `[{"type":"rich_text","elements":[` +
+			`{"type":"rich_text_section","elements":[{"type":"text","text":"see "},{"type":"link","url":"https://example.com"},{"type":"text","text":"\n"}]},` +
+			containers[0].json +
+			`]}]`
+		if _, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC"); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+	})
 }
 
 func TestDraftCreate_AcceptsListWithoutLeadingSection(t *testing.T) {
@@ -771,6 +843,60 @@ func TestDraftUpdate_RejectsScheduleOnlyWhenExistingLacksRichText(t *testing.T) 
 		"id": "Dr01234", "date_scheduled": 0, "last_updated_ts": "1709251200.12",
 		"blocks": []map[string]any{
 			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "legacy"}},
+		},
+		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.update should not be called when existing blocks fail validation")
+	})
+
+	_, err := runWithMockSession(t, mux, "draft", "update", "Dr01234", "--at", "2025-04-20T09:00:00Z")
+	if err == nil {
+		t.Fatal("expected invalid_blocks error")
+	}
+	var oe *output.Error
+	if !errors.As(err, &oe) {
+		t.Fatalf("expected *output.Error, got %T: %v", err, err)
+	}
+	if oe.Err != "invalid_blocks" {
+		t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
+	}
+}
+
+func TestDraftUpdate_RejectsScheduleOnlyWhenExistingHasAbsorption(t *testing.T) {
+	// If the existing draft already contains a section + list/preformatted
+	// /quote without the trailing-newline terminator, a schedule-only
+	// update would round-trip the absorption-prone blocks and the user
+	// would see the bad rendering again. Reject up front so the caller
+	// pipes a corrected payload.
+	existing := map[string]any{
+		"id": "Dr01234", "date_scheduled": 0, "last_updated_ts": "1709251200.12",
+		"blocks": []map[string]any{
+			{
+				"type": "rich_text",
+				"elements": []map[string]any{
+					{
+						"type": "rich_text_section",
+						"elements": []map[string]any{
+							{"type": "text", "text": "Heading"},
+						},
+					},
+					{
+						"type":  "rich_text_list",
+						"style": "bullet",
+						"elements": []map[string]any{
+							{
+								"type": "rich_text_section",
+								"elements": []map[string]any{
+									{"type": "text", "text": "item"},
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
 	}
