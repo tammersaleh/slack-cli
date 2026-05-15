@@ -596,12 +596,22 @@ func readBlocksIfProvided(cli *CLI) (string, error) {
 }
 
 // validateBlocksShape is the local gate before shipping draft blocks to
-// Slack. Beyond basic JSON shape, it enforces that every top-level block
-// is a non-empty rich_text. Slack Desktop's Drafts-panel reconciliation
-// tombstones drafts without rich_text content, and its compose editor
-// silently strips any non-rich_text top-level block when the user opens
-// the draft to edit - so section/divider/header/context alongside
-// rich_text is still data loss.
+// Slack. Beyond basic JSON shape, it enforces:
+//
+//  1. Every top-level block is a non-empty rich_text. Slack Desktop's
+//     Drafts-panel reconciliation tombstones drafts without rich_text
+//     content, and its compose editor silently strips any non-rich_text
+//     top-level block when the user opens the draft to edit.
+//
+//  2. A rich_text_section directly before a rich_text_list,
+//     rich_text_preformatted, or rich_text_quote must terminate its
+//     element stream with a text inline whose `text` ends with "\n".
+//     Otherwise the following container absorbs the section's content
+//     (the heading glues onto the first bullet / merges into the code
+//     block / glues into the quote). Slack's own compose editor always
+//     emits the trailing newline; hand-built blocks must match.
+//     The check spans top-level rich_text boundaries because Desktop
+//     flattens adjacent rich_text blocks before rendering.
 func validateBlocksShape(raw []byte) error {
 	var arr []map[string]any
 	if err := json.Unmarshal(raw, &arr); err != nil {
@@ -622,6 +632,7 @@ func validateBlocksShape(raw []byte) error {
 	// to Desktop's flattener too.
 	var prevElem string
 	var prevBlock, prevIdx int
+	var prevSection map[string]any
 	for i, block := range arr {
 		t, ok := block["type"].(string)
 		if !ok || t == "" {
@@ -651,12 +662,17 @@ func validateBlocksShape(raw []byte) error {
 			if et == "" {
 				continue
 			}
-			if et == "rich_text_list" && prevElem == "rich_text_section" {
+			if absorbingContainerType(et) && prevElem == "rich_text_section" && !sectionEndsWithNewline(prevSection) {
 				return &output.Error{
 					Err:    "invalid_blocks",
-					Detail: fmt.Sprintf("blocks[%d].elements[%d] is a rich_text_list directly after the rich_text_section at blocks[%d].elements[%d]; Slack flattens adjacent top-level rich_text blocks and absorbs the preceding section into the first bullet. Insert a rich_text_quote or rich_text_preformatted between them, or collapse into a single rich_text_section with inline \"\\n\" and literal \"•\" markers. See the skill docs' Layout quirks section.", i, j, prevBlock, prevIdx),
+					Detail: fmt.Sprintf("blocks[%d].elements[%d] is a %s directly after the rich_text_section at blocks[%d].elements[%d]; Slack absorbs the section into the following container (heading glues onto the first bullet / merges into the code block / glues into the quote) unless the section's element stream ends with a text inline whose text ends with \"\\n\". Append {\"type\":\"text\",\"text\":\"\\n\"} (or extend the existing trailing text element with \"\\n\") to the section's elements. See the skill docs.", i, j, et, prevBlock, prevIdx),
 					Code:   output.ExitGeneral,
 				}
+			}
+			if et == "rich_text_section" {
+				prevSection = em
+			} else {
+				prevSection = nil
 			}
 			prevElem, prevBlock, prevIdx = et, i, j
 		}
@@ -669,6 +685,47 @@ func validateBlocksShape(raw []byte) error {
 		}
 	}
 	return nil
+}
+
+// absorbingContainerType reports whether a rich_text element type
+// absorbs a preceding rich_text_section's content when that section
+// does not terminate with a newline. Confirmed by reproduction against
+// Slack's drafts.create + compose editor: list, preformatted, and
+// quote all exhibit the behavior.
+func absorbingContainerType(t string) bool {
+	switch t {
+	case "rich_text_list", "rich_text_preformatted", "rich_text_quote":
+		return true
+	}
+	return false
+}
+
+// sectionEndsWithNewline reports whether the given rich_text_section's
+// element stream terminates with a text inline whose `text` ends with
+// "\n". Trailing empty text inlines are ignored. Non-text trailing
+// inlines (link, emoji, user, channel, broadcast) do not satisfy the
+// rule by themselves - callers must append a final text inline ending
+// in "\n".
+func sectionEndsWithNewline(section map[string]any) bool {
+	if section == nil {
+		return false
+	}
+	elems, _ := section["elements"].([]any)
+	for i := len(elems) - 1; i >= 0; i-- {
+		em, ok := elems[i].(map[string]any)
+		if !ok {
+			return false
+		}
+		if t, _ := em["type"].(string); t != "text" {
+			return false
+		}
+		text, _ := em["text"].(string)
+		if text == "" {
+			continue
+		}
+		return strings.HasSuffix(text, "\n")
+	}
+	return false
 }
 
 // parseScheduledTime parses a date string into Unix seconds.

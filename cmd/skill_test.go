@@ -135,9 +135,11 @@ func TestSkill_DraftGuidance(t *testing.T) {
 		"Drafts compose editor",
 		// Cross-block absorption when multiple rich_text blocks are flattened.
 		"flattens",
-		// The working pattern for multi-paragraph prose with visual bullets.
-		"one `rich_text_section`",
-		// The literal bullet character so agents know what "visual bullets" means.
+		// The canonical Slack-editor shape: one top-level rich_text.
+		"One top-level `rich_text`",
+		// The absorption rule's fix: trailing newline on the heading section.
+		"must end with `\\n`",
+		// The literal bullet fallback is still documented as an escape hatch.
 		"•",
 		// markdown block fails hard at drafts.create - the highest-value warning.
 		"internal_error",
