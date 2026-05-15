@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/tammersaleh/slack-cli/compare/v2.0.0...v2.0.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **draft:** allow section before list/code/quote with \n terminator ([5e189c1](https://github.com/tammersaleh/slack-cli/commit/5e189c187986fa2368e0776891b9b1671fd41d18))
+
 ## [2.0.0](https://github.com/tammersaleh/slack-cli/compare/v1.2.2...v2.0.0) (2026-05-05)
 
 
