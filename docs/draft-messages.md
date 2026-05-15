@@ -249,13 +249,48 @@ come back when the draft is subsequently sent.
 
 Same investigation surfaced a second quirk: multiple top-level
 `rich_text` blocks are **flattened** into one by the rebuild before
-the section-before-list absorption rule (see layout quirks in the
-skill doc) runs. So splitting an alternating heading-then-list into
-separate top-level rich_text blocks does not give you paragraph
-breaks - it gives you the same "GPUs:" glued onto the first bullet as
-a single mixed block. The fix is the single-`rich_text_section`
-pattern with inline `\n` and literal `•`, which sidesteps absorption
-entirely.
+absorption runs. So splitting structure across separate top-level
+rich_text blocks does not give you paragraph breaks - the flattened
+stream is what the absorption rule applies to.
+
+## The absorption rule
+
+A `rich_text_section` followed directly by a `rich_text_list`,
+`rich_text_preformatted`, or `rich_text_quote` gets its content
+absorbed into the following container - **unless** the section's last
+text inline ends with `\n`. Heading text glues onto the first bullet,
+merges into the code block, or glues into the quote. The rule applies
+across the flattened stream, so it spans top-level rich_text
+boundaries.
+
+Slack's own compose editor avoids the bug by emitting a trailing
+newline on every section preceding one of these containers - see the
+reference draft in `docs/draft-messages.md` history or capture a new
+one yourself with the Chrome / web compose editor.
+
+### Reproduction matrix
+
+Captured 2026-05-15 against `drafts.create` + Slack web compose
+editor. Each shape uses a single top-level `rich_text` unless noted.
+
+| Shape                                                   | Section text  | Editor renders                                                |
+|---------------------------------------------------------|---------------|---------------------------------------------------------------|
+| section + rich_text_list                                | `"INTRO"`     | `• INTROlist-A` (section absorbed into first bullet)          |
+| section + rich_text_list                                | `"INTRO\n"`   | `INTRO` paragraph, then `• list-A` `• list-B` (clean)         |
+| section + rich_text_preformatted                        | `"PREFIX"`    | One code block reading `PREFIX code body` (section absorbed)  |
+| section + rich_text_preformatted                        | `"PREFIX\n"`  | `PREFIX` paragraph, then code block (clean)                   |
+| section + rich_text_quote                               | `"PREFIX"`    | `PREFIXquoted body` glued in the quote                        |
+| section + rich_text_quote                               | `"PREFIX\n"`  | `PREFIX` paragraph, then quote (clean)                        |
+| [rich_text(section), rich_text(list)] (multi top-level) | `"INTRO"`     | Flattens then absorbs - same `INTROlist-A` glue               |
+
+The CLI's `validateBlocksShape` enforces the trailing-newline rule:
+when a section is directly followed by an absorbing container, the
+section's elements must terminate with a text inline whose `text` ends
+with `\n`. Trailing empty text inlines (zero-length `text`) are
+ignored so callers can append `{"type":"text","text":""}` without
+defeating the check. Non-text trailing inlines (link, emoji, user,
+channel, broadcast) don't carry the newline themselves; callers must
+append a final text inline ending in `\n`.
 
 ### Reproduction
 
@@ -286,17 +321,16 @@ Observed in the compose editor:
   first item despite being a separate top-level block).
 - `OUTRO` renders as its own paragraph after the list.
 
-Swap the whole thing for a single top-level `rich_text` with one
-`rich_text_section` using inline `\n` and literal `•` characters, and
-every marker renders.
-
 Unlike ghosting, there's no server-side signal for stripping. The
 draft looks healthy in `drafts.list`. The only way to observe it is
 to open the compose editor and read the DOM.
 
 The CLI's response: `validateBlocksShape` rejects any draft whose
-top-level `blocks` array contains anything other than `rich_text`.
-Slack's API would accept them but the user would see content loss.
+top-level `blocks` array contains anything other than `rich_text`,
+and rejects sections directly preceding list/preformatted/quote
+containers without a trailing `\n` (the absorption rule above).
+Slack's API would accept the bad shape but the user would see
+content loss.
 
 ## Red herrings
 
