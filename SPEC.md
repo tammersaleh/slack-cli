@@ -1,14 +1,15 @@
 # slack-cli Specification
 
-A read-only, non-interactive CLI for Slack, built in Go. Designed for agents and automation.
+A largely read-only, non-interactive CLI for Slack, built in Go. Designed for agents and automation. The few write commands (`channel mark`, draft staging, sidebar `section` management, and `channel create` behind a Touch ID gate) are deliberately narrow - see Design Principles.
 
 ## Design Principles
 
-- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only, no channel mutations).
+- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, `channel create` (gated by Touch ID, see below), draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only, no channel mutations).
 - **Agent-first**: JSONL output. No interactive prompts. Deterministic, scriptable.
 - **Thin wrapper**: One API page per call by default. No hidden pagination loops. The caller controls data volume.
 - **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, `aws`.
 - **Composable**: Pipes, `jq`, shell scripts. Stdout for data, stderr for diagnostics.
+- **Biometric gate on destructive writes**: Write commands that affect workspace state visible to others (currently just `channel create`) require macOS Touch ID confirmation. The intent is to prevent an agent running in YOLO mode from triggering them accidentally - not to defeat a determined attacker. The system dialog shows a reason string built from resolved data (workspace name, channel name, visibility), so the human knows exactly what they are approving. There is no environment-variable bypass and no `--no-confirm` flag. Builds without macOS Touch ID (non-darwin, or darwin without cgo) hard-fail on confirm-gated commands.
 
 ## Output
 
@@ -374,6 +375,49 @@ Errors:
 - `not_authed` (exit 2): No token.
 
 Slack API: `conversations.info`
+
+#### slack channel create
+
+Creates a public or private channel in the authenticated workspace.
+Gated by macOS Touch ID confirmation - see Design Principles above.
+
+```
+slack channel create <name> [flags]
+  --private    Create a private channel.
+```
+
+A leading `#` on the name is stripped automatically. Slack's naming
+rules (lowercase, no spaces, length limits) are enforced server-side
+and surface as `invalid_name_*` errors.
+
+```
+$ slack channel create ext-acme
+{"id":"C09NEW","name":"ext-acme","is_channel":true,"is_private":false,"created":1716700000,"creator":"U01XYZ"}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ slack channel create secret --private
+{"id":"C09SEC","name":"secret","is_channel":true,"is_private":true,"created":1716700000,"creator":"U01XYZ"}
+{"_meta":{"has_more":false}}
+```
+
+Before the API call, a system Touch ID prompt appears with text of the
+form `Create public channel #ext-acme in Acme Corp`. Approval proceeds
+to `conversations.create`; denial returns exit code 1 with
+`confirm_denied`. The workspace name comes from stored credentials
+(`team_name`), not the `T...` ID, so the prompt is readable.
+
+Errors:
+
+- `confirm_denied` (exit 1): User denied the Touch ID prompt or cancelled the dialog.
+- `confirm_unsupported` (exit 1): Biometric confirmation is unavailable. Causes include: running on a non-darwin build (or a darwin build without cgo), no Touch ID hardware, no enrolled biometry, or biometry locked out. There is no bypass.
+- `workspace_name_unresolved` (exit 1): No `team_name` available for the active workspace, so a recognizable prompt cannot be built. Common cause: auth via `SLACK_TOKEN` env var instead of `slack auth login` (env-var auth doesn't carry a workspace name).
+- `name_taken` (exit 1): A channel by that name already exists.
+- `invalid_name_*` (exit 1): Slack rejected the name. The detail field carries the specific Slack error.
+- `not_authed` (exit 2): No token.
+
+Slack API: `conversations.create`
 
 #### slack channel members
 
