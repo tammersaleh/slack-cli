@@ -293,8 +293,11 @@ func TestChannelCreate_StripsLeadingHash(t *testing.T) {
 		t.Errorf("expected leading '#' stripped, sent name=%q to API", gotName)
 	}
 	reasons := rec.Reasons()
+	// Reason string formats the channel name with `#` regardless of
+	// whether the user passed a leading `#`. This verifies the format
+	// path rebuilds the prefix, not that the input is preserved.
 	if len(reasons) != 1 || !strings.Contains(reasons[0], "#hashed") {
-		t.Errorf("reason should show normalized '#hashed' channel name; got %v", reasons)
+		t.Errorf("reason should format channel name as '#hashed'; got %v", reasons)
 	}
 }
 

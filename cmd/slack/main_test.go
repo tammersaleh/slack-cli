@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/auth"
@@ -83,10 +84,10 @@ func seedCredentials(t *testing.T, srvURL, teamName string) {
 }
 
 func TestRun_ConfirmDeniedEmitsStructuredJSON(t *testing.T) {
-	var apiHit int
+	var apiHit atomic.Int32
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		apiHit++
+		apiHit.Add(1)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	srv := httptest.NewServer(mux)
@@ -100,8 +101,8 @@ func TestRun_ConfirmDeniedEmitsStructuredJSON(t *testing.T) {
 	if code != output.ExitGeneral {
 		t.Errorf("exit code = %d, want %d", code, output.ExitGeneral)
 	}
-	if apiHit != 0 {
-		t.Errorf("denial should not hit Slack; got %d requests", apiHit)
+	if apiHit.Load() != 0 {
+		t.Errorf("denial should not hit Slack; got %d requests", apiHit.Load())
 	}
 
 	var env map[string]any
