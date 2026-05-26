@@ -202,6 +202,62 @@ func TestResolveCredentials_SingleWorkspace(t *testing.T) {
 	}
 }
 
+func TestResolveCredentials_PropagatesTeamName(t *testing.T) {
+	// TeamName is stored in WorkspaceCredentials but must also flow out
+	// through ResolvedCredentials so commands can build user-visible
+	// strings (e.g. biometric prompts) using the resolved workspace name
+	// instead of the opaque TeamID.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.json")
+
+	creds := &Credentials{
+		Workspaces: map[string]WorkspaceCredentials{
+			"T123": {
+				BotToken: "xoxb-1",
+				TeamID:   "T123",
+				TeamName: "Acme Corp",
+			},
+		},
+	}
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := ResolveCredentials(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.TeamName != "Acme Corp" {
+		t.Errorf("got team_name=%q, want %q", rc.TeamName, "Acme Corp")
+	}
+	if rc.TeamID != "T123" {
+		t.Errorf("got team_id=%q, want %q", rc.TeamID, "T123")
+	}
+}
+
+func TestResolveCredentials_PropagatesTeamName_NamedWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "credentials.json")
+
+	creds := &Credentials{
+		Workspaces: map[string]WorkspaceCredentials{
+			"T1": {BotToken: "xoxb-1", TeamID: "T1", TeamName: "First"},
+			"T2": {BotToken: "xoxb-2", TeamID: "T2", TeamName: "Second"},
+		},
+	}
+	if err := SaveCredentials(path, creds); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := ResolveCredentials(path, "T2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.TeamName != "Second" {
+		t.Errorf("got team_name=%q, want %q", rc.TeamName, "Second")
+	}
+}
+
 func TestResolveCredentials_ChromeWorkspaceWithCookie(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")

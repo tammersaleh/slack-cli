@@ -24,13 +24,16 @@ type WorkspaceCredentials struct {
 }
 
 // ResolvedCredentials holds the resolved token, cookie, and auth method
-// for a single workspace.
+// for a single workspace. TeamName is the human-readable workspace name
+// from the credentials store; commands building user-visible strings
+// (e.g. biometric confirmation prompts) should prefer it over TeamID.
 type ResolvedCredentials struct {
 	BotToken   string
 	UserToken  string
 	Cookie     string
 	AuthMethod string
 	TeamID     string
+	TeamName   string
 }
 
 // DefaultCredentialsPath returns ~/.config/slack-cli/credentials.json.
@@ -114,6 +117,7 @@ func ResolveCredentials(path string, workspace string) (*ResolvedCredentials, er
 					Cookie:     ws.Cookie,
 					AuthMethod: ws.AuthMethod,
 					TeamID:     key,
+					TeamName:   ws.TeamName,
 				}), nil
 			}
 		}
@@ -130,6 +134,7 @@ func ResolveCredentials(path string, workspace string) (*ResolvedCredentials, er
 		Cookie:     ws.Cookie,
 		AuthMethod: ws.AuthMethod,
 		TeamID:     workspace,
+		TeamName:   ws.TeamName,
 	}), nil
 }
 
