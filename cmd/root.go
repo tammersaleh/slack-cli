@@ -53,7 +53,6 @@ type CLI struct {
 	Reaction  ReactionCmd  `cmd:"" aliases:"reactions" help:"Read reactions."`
 	Saved     SavedCmd     `cmd:"" help:"Saved-for-later items (requires session token)."`
 	Search    SearchCmd    `cmd:"" help:"Search messages and files."`
-	Skill     SkillCmd     `cmd:"" help:"Print Claude skill file to stdout."`
 	Section   SectionCmd   `cmd:"" aliases:"sections" help:"Manage sidebar sections (requires session token)."`
 	Status    StatusCmd    `cmd:"" help:"User status."`
 	Thread    ThreadCmd    `cmd:"" aliases:"threads" help:"Read thread replies."`

@@ -139,7 +139,8 @@ func (DraftCreateCmd) Help() string {
 	return `Block Kit JSON is piped on stdin (required). Only rich_text
 top-level blocks are allowed - Slack Desktop's Drafts compose editor
 silently strips section / divider / header / context blocks when the
-user opens the draft. Run 'slack skill' for the full Block Kit shape.
+user opens the draft. For the full Block Kit shape, load the slack-cli
+skill (install: 'skills add tammersaleh/slack-cli -g -y').
 
 Minimal invocation:
 

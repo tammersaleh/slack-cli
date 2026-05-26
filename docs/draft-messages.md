@@ -494,8 +494,7 @@ Source:
 - `cmd/draft.go` - `DraftCreateCmd`, `DraftUpdateCmd`, `DraftDeleteCmd`,
   `validateBlocksShape`, `padDraftTS`, `normalizeDestinationsForWrite`,
   auto-replace path.
-- `cmd/skill.go` - rich_text schema docs shipped to agents via the
-  generated `SKILL.md`.
+- `skills/slack-cli/SKILL.md` - rich_text schema docs shipped to agents.
 - `internal/api/client.go` - `PostInternalForm`, the shared internal-API
   HTTP path.
 
