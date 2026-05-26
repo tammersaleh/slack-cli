@@ -36,10 +36,16 @@ jobs:
           pr_number=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.number')
           gh pr merge --auto --squash "$pr_number" --repo ${{ github.repository }}
 
+  # GoReleaser runs on macOS because the darwin build links against
+  # LocalAuthentication.framework via cgo. Cross-compiling cgo darwin
+  # binaries from Linux isn't viable without osxcross; using a hosted
+  # macos runner is simpler and keeps the build matrix native. The
+  # linux build inside this job still cross-compiles fine from darwin
+  # since it's CGO_ENABLED=0.
   goreleaser:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
