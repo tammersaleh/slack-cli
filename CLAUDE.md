@@ -1,8 +1,9 @@
 # slack-cli
 
-Read-only Slack CLI for agent/automation use. Go, kong, slack-go/slack.
-JSONL output, OAuth + Desktop auth, bot and session (`xoxc-`) tokens,
-public and undocumented internal APIs.
+Slack CLI for agent/automation use - mostly read-only, with a small
+set of narrow write commands. Go, kong, slack-go/slack. JSONL output,
+OAuth + Desktop auth, bot and session (`xoxc-`) tokens, public and
+undocumented internal APIs.
 
 ## Design constraint: no message sending
 
@@ -13,6 +14,39 @@ direct send is not. `message post` was removed for this reason.
 
 When manually testing draft creation, stage drafts in a self-DM. Never
 target other users or shared channels during verification.
+
+## Design constraint: biometric gate on destructive writes
+
+Write commands that produce side effects others can see (currently just
+`channel create`) MUST be gated behind `cli.Confirm(ctx, reason)` before
+the API call. This catches an agent in YOLO mode about to do something
+irreversible; the user taps Touch ID to confirm.
+
+Rules for new gated writes:
+
+- Call `cli.Confirm(ctx, reason)` BEFORE the destructive Slack call.
+  If `Confirm` returns an error, return it verbatim - main.go knows how
+  to surface `ErrConfirmDenied` and the platform-stub error.
+- Build the reason string from resolved data only: workspace name (via
+  `cli.WorkspaceName()`), channel name with `#`, "public"/"private"
+  qualifier, etc. Never put a `T01ABC` workspace ID or a `C01XYZ`
+  channel ID in the reason - the user needs to recognize what they're
+  approving in the system dialog.
+- The reason string IS the user's defense. Treat it like a security
+  control: keep it specific, verifiable, and resolved.
+- Do not add an env-var bypass or `--no-confirm` flag. The whole point
+  of the gate is that an agent setting an env var can't sidestep it.
+
+Drafts and sidebar sections deliberately do NOT call Confirm: drafts
+don't send and sections only touch the personal sidebar, so neither
+risks visible workspace state.
+
+The Confirmer is wired in `cmd/slack/main.go` via
+`cli.SetConfirmer(confirm.NewBiometric())`. Tests that exercise a
+gated command must call `cli.SetConfirmer(...)` with a fake from
+`internal/confirm` (`AlwaysApprove`, `AlwaysDeny`, or `Recorder`).
+Tests of other commands can leave the field nil - those code paths
+never call `cli.Confirm`.
 
 ## Internal Slack APIs
 
@@ -139,7 +173,7 @@ cmd/
   auth.go        # auth login/logout/status
   bookmark.go    # bookmark list
   cache.go       # cache info/clear
-  channel.go     # channel list/info/members
+  channel.go     # channel list/info/members/create (create is Touch-ID gated)
   dnd.go         # dnd info
   emoji.go       # emoji list
   file.go        # file list/info/download
@@ -161,6 +195,8 @@ internal/
   api/           # Slack API client (Client, Paginate[T], ClassifyError,
                  #   PostInternal, PostInternalForm, WithCookie)
   auth/          # credentials CRUD, OAuth flow, Desktop extraction
+  confirm/       # Confirmer interface + macOS Touch ID (cgo) +
+                 #   non-darwin stub + AlwaysApprove/AlwaysDeny/Recorder fakes
   output/        # Printer (JSONL + enrichment), Meta, Error with exit codes
   resolve/       # channel/user resolution with 3-tier cache + enrichment
 ```
