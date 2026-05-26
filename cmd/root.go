@@ -11,6 +11,7 @@ import (
 
 	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/auth"
+	"github.com/tammersaleh/slack-cli/internal/confirm"
 	"github.com/tammersaleh/slack-cli/internal/output"
 	"github.com/tammersaleh/slack-cli/internal/resolve"
 )
@@ -32,7 +33,14 @@ type CLI struct {
 	// Set by NewClient from resolved credentials.
 	authMethod string
 	teamID     string
+	teamName   string
 	resolver   *resolve.Resolver
+
+	// confirmer gates destructive write commands (e.g. channel create).
+	// Production main.go always wires this via SetConfirmer; tests for
+	// commands that call Confirm must do the same. Commands that don't
+	// call cli.Confirm() are unaffected.
+	confirmer confirm.Confirmer
 
 	// ctx is the current command context, captured by Context() so the
 	// printer's enrichment closure can honor --timeout / --trace on the
@@ -42,7 +50,7 @@ type CLI struct {
 	Auth      AuthCmd      `cmd:"" help:"Manage authentication."`
 	Bookmark  BookmarkCmd  `cmd:"" aliases:"bookmarks" help:"Channel bookmarks."`
 	Cache     CacheCmd     `cmd:"" help:"Cache management."`
-	Channel   ChannelCmd   `cmd:"" aliases:"channels" help:"Read channel information."`
+	Channel   ChannelCmd   `cmd:"" aliases:"channels" help:"Channel commands (list/info/members/create)."`
 	Dnd       DndCmd       `cmd:"" help:"Do Not Disturb info."`
 	Draft     DraftCmd     `cmd:"" aliases:"drafts" help:"Stage draft messages (requires session token)."`
 	Emoji     EmojiCmd     `cmd:"" aliases:"emojis" help:"Custom emoji."`
@@ -126,6 +134,34 @@ func (c *CLI) SetAuthMethod(method string) {
 	c.authMethod = method
 }
 
+// SetConfirmer installs the Confirmer used by destructive write commands.
+// Called by main.go with confirm.NewBiometric() and by tests with
+// fake implementations from internal/confirm.
+func (c *CLI) SetConfirmer(cf confirm.Confirmer) {
+	c.confirmer = cf
+}
+
+// Confirm asks the installed Confirmer to gate a destructive action.
+// reason MUST be built from resolved data (workspace name, channel
+// name) and is passed through to the platform prompt verbatim - it is
+// what the human reads when they decide whether to approve.
+//
+// Returns a structured *output.Error if no Confirmer was installed:
+// that's a programming error (main.go and tests must wire one in), not
+// something the user can fix, so the message says so. Returns the
+// raw Confirmer error otherwise; commands typically forward it.
+func (c *CLI) Confirm(ctx context.Context, reason string) error {
+	if c.confirmer == nil {
+		return &output.Error{
+			Err:    "confirm_misconfigured",
+			Detail: "No Confirmer installed; this is a programming error",
+			Hint:   "If you are seeing this, file a bug. main.go must call SetConfirmer before Run.",
+			Code:   output.ExitGeneral,
+		}
+	}
+	return c.confirmer.Confirm(ctx, reason)
+}
+
 // NewPrinter creates a Printer configured from global CLI flags.
 func (c *CLI) NewPrinter() *output.Printer {
 	out := io.Writer(os.Stdout)
@@ -178,6 +214,7 @@ func (c *CLI) NewClient() (*api.Client, error) {
 
 	c.authMethod = rc.AuthMethod
 	c.teamID = rc.TeamID
+	c.teamName = rc.TeamName
 
 	var opts []api.Option
 	if rc.UserToken != "" {
@@ -190,6 +227,19 @@ func (c *CLI) NewClient() (*api.Client, error) {
 		opts = append(opts, api.WithAPIURL(c.APIBaseURL))
 	}
 	return api.New(rc.BotToken, opts...), nil
+}
+
+// WorkspaceName returns the resolved human-readable workspace name from
+// credentials, or empty string if the name has not been resolved (e.g.
+// auth via SLACK_TOKEN env var, or NewClient has not been called).
+//
+// Deliberately does NOT fall back to TeamID. The biometric prompt is
+// the user's only defense against an unwanted destructive action; the
+// reason string MUST be recognizable, and an opaque "T01ABC" is not.
+// Callers that need a name and don't have one should refuse to build
+// the prompt rather than render an ID.
+func (c *CLI) WorkspaceName() string {
+	return c.teamName
 }
 
 // ClassifyError wraps api.ClassifyError and adds an auth hint based on
@@ -255,6 +305,7 @@ func (c *CLI) NewSessionClient() (*api.Client, error) {
 
 	c.authMethod = rc.AuthMethod
 	c.teamID = rc.TeamID
+	c.teamName = rc.TeamName
 
 	var opts []api.Option
 	if rc.UserToken != "" {
