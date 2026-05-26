@@ -24,6 +24,12 @@ type DraftCmd struct {
 	Delete DraftDeleteCmd `cmd:"" help:"Delete drafts."`
 }
 
+// skillHint is the recovery pointer for validateBlocksShape rejections.
+// Agents read it from the JSON error on stderr; humans see it via --help
+// text. Points at the install command rather than a doc URL because the
+// SKILL.md is meant to live on the agent host, not be fetched ad-hoc.
+const skillHint = "For the rich_text shape, load the slack-cli skill (install: 'skills add tammersaleh/slack-cli -g -y')."
+
 type DraftListCmd struct {
 	Active          bool `help:"Exclude scheduled drafts (active only)."`
 	Limit           int  `help:"Page size." default:"50"`
@@ -646,7 +652,8 @@ func validateBlocksShape(raw []byte) error {
 		if t != "rich_text" {
 			return &output.Error{
 				Err:    "invalid_blocks",
-				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text top-level blocks. Slack Desktop's Drafts compose editor strips non-rich_text blocks when the user opens the draft. See the skill docs for the rich_text shape.", i, t),
+				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text top-level blocks. Slack Desktop's Drafts compose editor strips non-rich_text blocks when the user opens the draft.", i, t),
+				Hint:   skillHint,
 				Code:   output.ExitGeneral,
 			}
 		}
@@ -666,7 +673,8 @@ func validateBlocksShape(raw []byte) error {
 			if absorbingContainerType(et) && prevElem == "rich_text_section" && !sectionEndsWithNewline(prevSection) {
 				return &output.Error{
 					Err:    "invalid_blocks",
-					Detail: fmt.Sprintf("blocks[%d].elements[%d] is a %s directly after the rich_text_section at blocks[%d].elements[%d]; Slack absorbs the section into the following container (heading glues onto the first bullet / merges into the code block / glues into the quote) unless the section's element stream ends with a text inline whose text ends with \"\\n\". Append {\"type\":\"text\",\"text\":\"\\n\"} (or extend the existing trailing text element with \"\\n\") to the section's elements. See the skill docs.", i, j, et, prevBlock, prevIdx),
+					Detail: fmt.Sprintf("blocks[%d].elements[%d] is a %s directly after the rich_text_section at blocks[%d].elements[%d]; Slack absorbs the section into the following container (heading glues onto the first bullet / merges into the code block / glues into the quote) unless the section's element stream ends with a text inline whose text ends with \"\\n\". Append {\"type\":\"text\",\"text\":\"\\n\"} (or extend the existing trailing text element with \"\\n\") to the section's elements.", i, j, et, prevBlock, prevIdx),
+					Hint:   skillHint,
 					Code:   output.ExitGeneral,
 				}
 			}
@@ -681,7 +689,8 @@ func validateBlocksShape(raw []byte) error {
 	if !hasRichText {
 		return &output.Error{
 			Err:    "invalid_blocks",
-			Detail: "drafts must include at least one rich_text block with non-empty elements. Slack Desktop tombstones drafts without rich_text content. See the skill docs for the rich_text shape.",
+			Detail: "drafts must include at least one rich_text block with non-empty elements. Slack Desktop tombstones drafts without rich_text content.",
+			Hint:   skillHint,
 			Code:   output.ExitGeneral,
 		}
 	}

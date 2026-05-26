@@ -11,6 +11,10 @@ allowed-tools:
 CLI for Slack. JSONL output (one JSON object per line). All commands end with
 a `_meta` trailer: `{"_meta":{"has_more":false}}`.
 
+Requires the `slack` binary on PATH. If `command not found`, install it:
+`brew install tammersaleh/tap/slack-cli` (macOS) or
+`go install github.com/tammersaleh/slack-cli/cmd/slack@latest`.
+
 Auth is pre-configured. If you get `not_authed`, tell the user to run
 `slack auth login`.
 
