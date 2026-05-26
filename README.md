@@ -16,6 +16,17 @@ Or from source (any platform):
 go install github.com/tammersaleh/slack-cli/cmd/slack@latest
 ```
 
+## Agent skill
+
+`skills/slack-cli/SKILL.md` documents every command, error code, and the Block
+Kit shapes required for draft messages. Install via the [skills](https://www.npmjs.com/package/skills) CLI:
+
+```bash
+skills add tammersaleh/slack-cli -g
+```
+
+`skills update` re-fetches from main. The skill assumes `slack` is on PATH.
+
 ## Authentication
 
 ### Create a Slack app
