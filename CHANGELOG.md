@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.0.0](https://github.com/tammersaleh/slack-cli/compare/v2.0.1...v3.0.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* the `slack skill` subcommand is gone.
+
+### Features
+
+* drop slack skill, ship skills/slack-cli/SKILL.md ([481462e](https://github.com/tammersaleh/slack-cli/commit/481462ec8770ef42c662f6009aed534a0ddddb76))
+
+
+### Bug Fixes
+
+* **draft:** point invalid_blocks rejections at the skill install ([310757f](https://github.com/tammersaleh/slack-cli/commit/310757f22b8bb460146c4fb162cc14d0df197814))
+
 ## [2.0.1](https://github.com/tammersaleh/slack-cli/compare/v2.0.0...v2.0.1) (2026-05-15)
 
 
