@@ -30,6 +30,10 @@ type mockResult struct {
 // SLACK_USER_TOKEN explicitly for the scenario under test.
 func isolateTestEnv(t *testing.T) {
 	t.Helper()
+	// Unset (not blank) because kong treats an empty SLACK_TIMEOUT as
+	// a parse error. t.Setenv first to register restoration; then
+	// Unsetenv to actually clear. Cleanup will still restore the
+	// original value at test end.
 	for _, v := range []string{
 		"SLACK_COOKIE",
 		"SLACK_WORKSPACE",
@@ -39,8 +43,10 @@ func isolateTestEnv(t *testing.T) {
 		"SLACK_CLIENT_ID",
 		"SLACK_CLIENT_SECRET",
 		"SLACK_SAFE_STORAGE_PASSWORD",
+		"SLACK_TIMEOUT",
 	} {
 		t.Setenv(v, "")
+		_ = os.Unsetenv(v)
 	}
 }
 

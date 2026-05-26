@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -11,6 +12,7 @@ type ChannelCmd struct {
 	List    ChannelListCmd    `cmd:"" help:"List channels."`
 	Info    ChannelInfoCmd    `cmd:"" help:"Show channel details."`
 	Members ChannelMembersCmd `cmd:"" help:"List channel members."`
+	Create  ChannelCreateCmd  `cmd:"" help:"Create a channel (gated by Touch ID)."`
 }
 
 type ChannelListCmd struct {
@@ -225,6 +227,88 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 		}
 		cursor = nextCursor
 	}
+}
+
+type ChannelCreateCmd struct {
+	Name    string `arg:"" required:"" help:"Channel name (without #)."`
+	Private bool   `help:"Create a private channel." default:"false"`
+}
+
+func (ChannelCreateCmd) Help() string {
+	return `Create a channel. Gated by macOS Touch ID confirmation.
+
+Slack's channel-naming rules apply: lowercase, no spaces, no '#' prefix
+(a leading '#' is stripped automatically). Length and special-character
+restrictions are enforced by Slack, not the CLI.
+
+The confirmation prompt shows the resolved workspace name, channel
+visibility, and channel name. There is no '--no-confirm' flag and no
+environment variable bypass: the gate exists to keep an agent from
+creating channels without an explicit human touch.
+
+Examples:
+
+  slack channel create newchan
+  slack channel create newchan --private`
+}
+
+func (c *ChannelCreateCmd) Run(cli *CLI) error {
+	name := strings.TrimPrefix(c.Name, "#")
+	if name == "" {
+		return &output.Error{
+			Err:    "invalid_name",
+			Detail: "Channel name is required",
+			Code:   output.ExitGeneral,
+		}
+	}
+
+	client, err := cli.NewClient()
+	if err != nil {
+		return err
+	}
+
+	visibility := "public"
+	if c.Private {
+		visibility = "private"
+	}
+	workspace := cli.WorkspaceName()
+	if workspace == "" {
+		// Refuse to build a prompt the user can't verify. The
+		// biometric prompt is the human's only defense against a
+		// rogue caller; an opaque "this workspace" or a TeamID
+		// defeats it. Concrete cause: stored credentials lack
+		// team_name, or auth came via SLACK_TOKEN env var which
+		// bypasses the credentials file. Re-run `slack auth login`
+		// (or login --desktop) to populate team_name.
+		return &output.Error{
+			Err:    "workspace_name_unresolved",
+			Detail: "Cannot build biometric prompt without a workspace name",
+			Hint:   "Re-run 'slack auth login' so the credentials file records team_name. SLACK_TOKEN env var auth does not carry a workspace name.",
+			Code:   output.ExitGeneral,
+		}
+	}
+	reason := fmt.Sprintf("Create %s channel #%s in %s", visibility, name, workspace)
+
+	ctx, cancel := cli.Context()
+	defer cancel()
+
+	if err := cli.Confirm(ctx, reason); err != nil {
+		return err
+	}
+
+	ch, err := client.Bot().CreateConversationContext(ctx, slack.CreateConversationParams{
+		ChannelName: name,
+		IsPrivate:   c.Private,
+	})
+	if err != nil {
+		return cli.ClassifyError(err)
+	}
+
+	p := cli.NewPrinter()
+	if err := p.PrintItem(channelToMap(*ch)); err != nil {
+		return err
+	}
+	return p.PrintMeta(output.Meta{})
 }
 
 func channelTypes(t string) []string {
