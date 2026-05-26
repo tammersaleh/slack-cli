@@ -421,6 +421,11 @@ func TestDraftCreate_InvalidBlocksNoRichText(t *testing.T) {
 	if !strings.Contains(oe.Detail, "rich_text") {
 		t.Errorf("expected Detail mentioning rich_text, got %q", oe.Detail)
 	}
+	// Hint must steer the agent to the skill install command - the
+	// recovery path for "I don't know the rich_text shape."
+	if !strings.Contains(oe.Hint, "skills add tammersaleh/slack-cli") {
+		t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
+	}
 }
 
 func TestDraftCreate_InvalidBlocksEmptyRichText(t *testing.T) {
@@ -479,6 +484,9 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 			// Detail must steer the caller toward the correct fix.
 			if !strings.Contains(oe.Detail, "rich_text") || !strings.Contains(oe.Detail, "strip") {
 				t.Errorf("expected Detail mentioning rich_text and stripping, got %q", oe.Detail)
+			}
+			if !strings.Contains(oe.Hint, "skills add tammersaleh/slack-cli") {
+				t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
 			}
 		})
 	}
@@ -571,6 +579,9 @@ func assertRejectsAbsorption(t *testing.T, mux *http.ServeMux, blocks, container
 	// Detail must name the offending shape and the trailing-\n fix.
 	if !strings.Contains(oe.Detail, "rich_text_section") {
 		t.Errorf("expected Detail to mention rich_text_section, got %q", oe.Detail)
+	}
+	if !strings.Contains(oe.Hint, "skills add tammersaleh/slack-cli") {
+		t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
 	}
 	if !strings.Contains(oe.Detail, `\n`) {
 		t.Errorf("expected Detail to mention the trailing newline rule, got %q", oe.Detail)
