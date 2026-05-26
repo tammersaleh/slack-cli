@@ -5,12 +5,29 @@ before:
     - go mod tidy
 
 builds:
-  - id: slack
+  # darwin builds use CGO so the Touch ID gate in internal/confirm can
+  # link against LocalAuthentication.framework. Building with CGO_ENABLED=0
+  # would silently fall back to the !cgo stub - the binary would still
+  # ship but `channel create` would refuse to run on macOS.
+  - id: slack-darwin
+    main: ./cmd/slack
+    binary: slack
+    env:
+      - CGO_ENABLED=1
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/tammersaleh/slack-cli/cmd.Version={{.Version}}
+
+  # linux builds stay CGO-disabled - there's no biometric implementation
+  # to link against, and the !darwin stub hard-fails any confirm-gated
+  # command at runtime. Static linking keeps releases dependency-free.
+  - id: slack-linux
     main: ./cmd/slack
     binary: slack
     env:
       - CGO_ENABLED=0
-    goos: [darwin, linux]
+    goos: [linux]
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X github.com/tammersaleh/slack-cli/cmd.Version={{.Version}}
@@ -19,6 +36,9 @@ archives:
   - formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    ids:
+      - slack-darwin
+      - slack-linux
 
 checksum:
   name_template: "checksums.txt"
@@ -36,7 +56,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
     homepage: https://github.com/tammersaleh/slack-cli
-    description: Read-only Slack CLI for agents and automation
+    description: Slack CLI for agents and automation (mostly read-only; writes gated by Touch ID)
     hooks:
       post:
         install: |

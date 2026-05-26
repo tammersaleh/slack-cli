@@ -7,13 +7,20 @@ on:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: jdx/mise-action@v2
 
+      # Only the linux job verifies go.mod tidiness; running this twice
+      # is wasteful and the result is identical between platforms.
       - name: Verify go.mod is tidy
+        if: matrix.os == 'ubuntu-latest'
         run: go mod tidy && git diff --exit-code go.mod go.sum
 
       - name: Build
@@ -25,13 +32,22 @@ jobs:
       - name: Lint
         run: mise run lint
 
+      # GoReleaser config check runs on linux only - it's a static YAML
+      # validation and the result doesn't depend on the host.
       - name: GoReleaser config check
+        if: matrix.os == 'ubuntu-latest'
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: check
 
+      # GoReleaser snapshot build runs on macOS only because the darwin
+      # build in .goreleaser.yml requires CGO_ENABLED=1 to link
+      # LocalAuthentication.framework. Linux runners cannot cross-build
+      # darwin+cgo without extra toolchain setup, and we don't ship the
+      # snapshot output so there's no value duplicating the build there.
       - name: GoReleaser snapshot build
+        if: matrix.os == 'macos-latest'
         uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
