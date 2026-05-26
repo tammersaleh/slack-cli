@@ -1,49 +1,37 @@
 package cmd_test
 
 import (
-	"bytes"
+	"os"
 	"strings"
 	"testing"
-
-	"github.com/alecthomas/kong"
-	"github.com/tammersaleh/slack-cli/cmd"
 )
 
-func TestSkill_Output(t *testing.T) {
-	var cli cmd.CLI
-	var outBuf, errBuf bytes.Buffer
+const skillPath = "../skills/slack-cli/SKILL.md"
 
-	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+func readSkill(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(skillPath)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read %s: %v", skillPath, err)
 	}
+	return string(data)
+}
 
-	kctx, err := parser.Parse([]string{"skill", "--binary", "/usr/local/bin/slack"})
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestSkill_Frontmatter(t *testing.T) {
+	out := readSkill(t)
 
-	cli.SetOutput(&outBuf, &errBuf)
-	if err := kctx.Run(&cli); err != nil {
-		t.Fatal(err)
-	}
-
-	out := outBuf.String()
-
-	// Frontmatter present.
 	if !strings.HasPrefix(out, "---\n") {
 		t.Error("expected YAML frontmatter")
 	}
 	if !strings.Contains(out, "name: slack-cli") {
 		t.Error("expected skill name in frontmatter")
 	}
-
-	// Binary path in allowed-tools.
-	if !strings.Contains(out, "Bash(/usr/local/bin/slack *)") {
-		t.Error("expected binary path in allowed-tools")
+	// PATH-relative binary so a single checked-in SKILL.md works on every
+	// agent host.
+	if !strings.Contains(out, "Bash(slack *)") {
+		t.Error("expected allowed-tools to invoke 'slack' via PATH")
 	}
 
-	// Key commands documented.
 	for _, cmd := range []string{
 		"slack message list",
 		"slack search messages",
@@ -64,21 +52,7 @@ func TestSkill_Output(t *testing.T) {
 // the CLI's conventions without external help. If one of these goes
 // missing, an agent is more likely to dead-end.
 func TestSkill_DiscoverabilityContent(t *testing.T) {
-	var cli cmd.CLI
-	var outBuf, errBuf bytes.Buffer
-	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	kctx, err := parser.Parse([]string{"skill"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cli.SetOutput(&outBuf, &errBuf)
-	if err := kctx.Run(&cli); err != nil {
-		t.Fatal(err)
-	}
-	out := outBuf.String()
+	out := readSkill(t)
 
 	for _, want := range []string{
 		// Errors catalog with hint field explained.
@@ -114,21 +88,7 @@ func TestSkill_DiscoverabilityContent(t *testing.T) {
 // drafts that look fine on the wire but render wrong in Slack Desktop's
 // Drafts compose editor.
 func TestSkill_DraftGuidance(t *testing.T) {
-	var cli cmd.CLI
-	var outBuf, errBuf bytes.Buffer
-	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	kctx, err := parser.Parse([]string{"skill"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cli.SetOutput(&outBuf, &errBuf)
-	if err := kctx.Run(&cli); err != nil {
-		t.Fatal(err)
-	}
-	out := outBuf.String()
+	out := readSkill(t)
 
 	for _, want := range []string{
 		// Non-rich_text blocks get stripped from the Drafts compose editor.

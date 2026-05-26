@@ -85,8 +85,8 @@ func TestMissingBlocks(t *testing.T) {
 	if e.Err != "missing_blocks" {
 		t.Errorf("Err=%q", e.Err)
 	}
-	if !strings.Contains(e.Hint, "slack skill") {
-		t.Errorf("Hint=%q should point agent at 'slack skill'", e.Hint)
+	if !strings.Contains(e.Hint, "skills add tammersaleh/slack-cli") {
+		t.Errorf("Hint=%q should point agent at the skill install command", e.Hint)
 	}
 	// Minimal runnable example so an agent can copy-paste the first time.
 	if !strings.Contains(e.Hint, "rich_text") {

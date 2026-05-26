@@ -170,7 +170,6 @@ func TestSubcommands_Exist(t *testing.T) {
 		{"cache info", []string{"cache", "info"}},
 		{"cache clear", []string{"cache", "clear"}},
 		{"version", []string{"version"}},
-		{"skill", []string{"skill"}},
 	}
 
 	for _, tt := range tests {
