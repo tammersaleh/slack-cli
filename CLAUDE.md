@@ -48,6 +48,13 @@ gated command must call `cli.SetConfirmer(...)` with a fake from
 Tests of other commands can leave the field nil - those code paths
 never call `cli.Confirm`.
 
+The Touch ID popup model has a known UX issue (focus-stealing system
+modal). `/dev/tty` and PAM Touch ID don't work inside Claude Code's
+Bash subprocess (no controlling terminal). The realistic next step if
+the popup wears out its welcome is a Slack-DM-reaction confirmer.
+Full status, ruled-out alternatives, and forward sketch in
+`docs/biometric-confirm.md`.
+
 ## Internal Slack APIs
 
 The saved items and sidebar sections features use undocumented Slack
