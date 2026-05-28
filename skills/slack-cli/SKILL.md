@@ -61,11 +61,20 @@ rows and set `_meta.error_count` in the trailer. Exit code is 1.
 
 ## Commands
 
+Channel and user arguments accept a name (`#general`, `@tammer`), an ID, or a
+Slack URL. A message permalink (Slack's "Copy link") works anywhere a channel +
+timestamp is taken: `message get`, `reaction list`, and `thread list` accept one
+or more permalinks in place of `<channel> <ts>`, and each permalink may target a
+different channel. A link to any reply resolves to its parent thread.
+`file info`/`download` take file URLs. A URL of the wrong kind is rejected as
+`invalid_input`.
+
 ### Messages
 
 ```
 slack message list <channel> [--limit N] [--after TS] [--before TS] [--has-replies] [--has-reactions]
 slack message get <channel> <ts>...
+slack message get <message-url>...
 slack message permalink <channel> <ts>...
 ```
 
@@ -86,10 +95,12 @@ slack message list '#general' --has-replies --fields ts,user,reply_count
 
 ```
 slack thread list <channel> <ts> [--limit N]
+slack thread list <message-url> [--limit N]
 ```
 
 Pair with `slack message list --has-replies` to locate a thread root
-first. `ts` is the parent message's timestamp (not a reply's).
+first. `ts` is the parent message's timestamp; a permalink to any reply
+also works - it resolves to the parent thread.
 
 ### Search (requires user token)
 
@@ -157,14 +168,15 @@ slack user info @alice                            # by display name
 
 ```
 slack file list [--limit N] [--channel CH] [--user UID] [--types images,pdfs]
-slack file info <file-id>...
-slack file download <file-id> [-o path]
+slack file info <file-id-or-url>...
+slack file download <file-id-or-url> [-o path]
 ```
 
 ### Reactions
 
 ```
 slack reaction list <channel> <ts>...
+slack reaction list <message-url>...
 ```
 
 ### Pins and Bookmarks
