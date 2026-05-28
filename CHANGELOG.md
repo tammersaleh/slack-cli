@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.1.0](https://github.com/tammersaleh/slack-cli/compare/v3.0.0...v3.1.0) (2026-05-28)
+
+
+### Features
+
+* accept file URLs in file info and download ([7c94c64](https://github.com/tammersaleh/slack-cli/commit/7c94c64fb92ccf8c9f4cd488bb8d7cbed087cace))
+* accept message URLs in message get ([385eafd](https://github.com/tammersaleh/slack-cli/commit/385eafd8173e79f832bc404cce4ca17711e2c157))
+* accept message URLs in reaction list ([4b508d6](https://github.com/tammersaleh/slack-cli/commit/4b508d61fff8c191b23c7ae774acdfacf126113b))
+* accept Slack URLs for channel and user args ([ddefdac](https://github.com/tammersaleh/slack-cli/commit/ddefdacb1aabdc9a54bafbd7128598f7ff634c3d))
+* accept thread URLs in thread list ([018aa59](https://github.com/tammersaleh/slack-cli/commit/018aa5921e619050290a1608ce6931a42d05b4ba))
+* parse Slack URLs into typed channel/user/file/message refs ([6bd1d5d](https://github.com/tammersaleh/slack-cli/commit/6bd1d5dcf2982f38025b063d8c3d552dc0dc862f))
+
 ## [3.0.0](https://github.com/tammersaleh/slack-cli/compare/v2.0.1...v3.0.0) (2026-05-26)
 
 
