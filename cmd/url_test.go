@@ -68,6 +68,114 @@ func TestChannelInfo_WrongKindURLPerItem(t *testing.T) {
 	}
 }
 
+// A single message permalink fills both the channel and ts slots.
+func TestMessageGet_AcceptsMessageURL(t *testing.T) {
+	var gotChannel, gotTS string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotChannel = r.FormValue("channel")
+		gotTS = r.FormValue("oldest")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"messages": []map[string]any{{"type": "message", "user": "U01", "text": "hi", "ts": gotTS}},
+		})
+	})
+
+	url := "https://acme.slack.com/archives/C01ABC/p1709251200000100"
+	out, err := runWithMock(t, mux, "message", "get", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotChannel != "C01ABC" {
+		t.Errorf("channel = %q, want C01ABC", gotChannel)
+	}
+	if gotTS != "1709251200.000100" {
+		t.Errorf("oldest = %q, want 1709251200.000100", gotTS)
+	}
+	msg := parseJSON(t, nonEmptyLines(out)[0])
+	if msg["input"] != url {
+		t.Errorf("input = %v, want %q", msg["input"], url)
+	}
+	if msg["channel_id"] != "C01ABC" {
+		t.Errorf("channel_id = %v, want C01ABC", msg["channel_id"])
+	}
+}
+
+// A list of message permalinks may span different channels in one call - a
+// form the channel + ts grammar can't express.
+func TestMessageGet_CrossChannelURLs(t *testing.T) {
+	seen := map[string]bool{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		ch := r.FormValue("channel")
+		seen[ch] = true
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"messages": []map[string]any{{"type": "message", "text": "in " + ch, "ts": r.FormValue("oldest")}},
+		})
+	})
+
+	out, err := runWithMock(t, mux, "message", "get",
+		"https://acme.slack.com/archives/C01ABC/p1709251200000100",
+		"https://acme.slack.com/archives/C02DEF/p1709251300000200")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seen["C01ABC"] || !seen["C02DEF"] {
+		t.Errorf("expected both channels queried, saw %v", seen)
+	}
+	if lines := nonEmptyLines(out); len(lines) != 3 {
+		t.Fatalf("expected 3 lines (2 messages + meta), got %d:\n%s", len(lines), out)
+	}
+}
+
+// A channel URL in the channel slot still pairs with bare timestamps.
+func TestMessageGet_ChannelURLWithTimestamp(t *testing.T) {
+	var gotChannel, gotTS string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotChannel = r.FormValue("channel")
+		gotTS = r.FormValue("oldest")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"messages": []map[string]any{{"type": "message", "text": "x", "ts": gotTS}},
+		})
+	})
+
+	if _, err := runWithMock(t, mux, "message", "get",
+		"https://acme.slack.com/archives/C01ABC", "1709251200.000100"); err != nil {
+		t.Fatal(err)
+	}
+	if gotChannel != "C01ABC" {
+		t.Errorf("channel = %q, want C01ABC", gotChannel)
+	}
+	if gotTS != "1709251200.000100" {
+		t.Errorf("oldest = %q, want 1709251200.000100", gotTS)
+	}
+}
+
+// Mixing a message URL with a bare timestamp is a fatal invalid_input before
+// any API call.
+func TestMessageGet_MixingIsInvalidInput(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected conversations.history call for mixed args")
+	})
+
+	r := runWithMockFull(t, mux, "message", "get",
+		"https://acme.slack.com/archives/C01ABC/p1709251200000100", "1709251300.000200")
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected *output.Error, got %T: %v", r.err, r.err)
+	}
+	if oErr.Err != "invalid_input" {
+		t.Errorf("error = %q, want invalid_input", oErr.Err)
+	}
+}
+
 // A user profile URL resolves to the embedded ID for user args.
 func TestUserArg_AcceptsURL(t *testing.T) {
 	var gotUser string
