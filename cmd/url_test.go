@@ -251,6 +251,26 @@ func TestThreadList_AcceptsReplyURL(t *testing.T) {
 	}
 }
 
+// A malformed message URL paired with a bare timestamp falls into channel
+// mode, where the URL fails channel resolution - so the whole command is a
+// fatal invalid_input with no API call.
+func TestMessageGet_MalformedURLThenTimestamp(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected conversations.history call for malformed URL")
+	})
+
+	r := runWithMockFull(t, mux, "message", "get",
+		"https://acme.slack.com/archives/C01ABC/pBAD", "1709251200.000100")
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected *output.Error, got %T: %v", r.err, r.err)
+	}
+	if oErr.Err != "invalid_input" {
+		t.Errorf("error = %q, want invalid_input", oErr.Err)
+	}
+}
+
 // A user profile URL resolves to the embedded ID for user args.
 func TestUserArg_AcceptsURL(t *testing.T) {
 	var gotUser string

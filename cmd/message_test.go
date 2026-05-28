@@ -131,6 +131,9 @@ func TestMessageGet_MockAPI(t *testing.T) {
 	if msg["input"] != "1709251200.000100" {
 		t.Errorf("expected input='1709251200.000100', got %q", msg["input"])
 	}
+	if msg["channel_id"] != "C01ABC" {
+		t.Errorf("expected channel_id='C01ABC', got %v", msg["channel_id"])
+	}
 }
 
 func TestMessageGet_NotFound(t *testing.T) {
@@ -155,6 +158,9 @@ func TestMessageGet_NotFound(t *testing.T) {
 	errLine := parseJSON(t, lines[0])
 	if errLine["error"] != "message_not_found" {
 		t.Errorf("expected error='message_not_found', got %q", errLine["error"])
+	}
+	if errLine["channel_id"] != "C01ABC" {
+		t.Errorf("expected channel_id='C01ABC' on error row, got %v", errLine["channel_id"])
 	}
 }
 
