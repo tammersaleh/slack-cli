@@ -118,6 +118,7 @@ func TestParse_BadURL(t *testing.T) {
 		{"client too few segments", "https://app.slack.com/client/T0123ABCD"},
 		{"client unsupported id", "https://app.slack.com/client/T0123ABCD/B0456WXYZ"},
 		{"files missing file id", "https://acme.slack.com/files/U0123ABCD"},
+		{"files bad file id prefix", "https://acme.slack.com/files/U0123ABCD/X0456WXYZ/report.pdf"},
 	}
 	for _, tt := range inputs {
 		t.Run(tt.name, func(t *testing.T) {

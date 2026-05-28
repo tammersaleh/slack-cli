@@ -42,6 +42,9 @@ func TestReactionList_MockAPI(t *testing.T) {
 	if r1["count"] != float64(3) {
 		t.Errorf("expected count=3, got %v", r1["count"])
 	}
+	if r1["channel_id"] != "C01ABC" {
+		t.Errorf("expected channel_id='C01ABC', got %v", r1["channel_id"])
+	}
 }
 
 func TestReactionList_NoReactions(t *testing.T) {
@@ -100,6 +103,14 @@ func TestReactionList_MultipleTimestamps(t *testing.T) {
 	// 1 reaction + 1 inline error + _meta = 3
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), out)
+	}
+
+	// Both the success row and the inline error row carry channel_id.
+	if row := parseJSON(t, lines[0]); row["channel_id"] != "C01ABC" {
+		t.Errorf("success row channel_id = %v, want C01ABC", row["channel_id"])
+	}
+	if row := parseJSON(t, lines[1]); row["channel_id"] != "C01ABC" {
+		t.Errorf("error row channel_id = %v, want C01ABC", row["channel_id"])
 	}
 
 	meta := parseJSON(t, lines[2])
