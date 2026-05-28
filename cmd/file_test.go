@@ -194,6 +194,88 @@ func TestFileInfo_NotFound(t *testing.T) {
 	}
 }
 
+func TestFileInfo_AcceptsURL(t *testing.T) {
+	var gotFile string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/files.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotFile = r.FormValue("file")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"file":     map[string]any{"id": gotFile, "name": "report.pdf", "filetype": "pdf", "size": 10},
+			"comments": []any{},
+			"paging":   map[string]any{"count": 0, "total": 0, "page": 1, "pages": 1},
+		})
+	})
+
+	url := "https://acme.slack.com/files/U01ABC/F01ABC/report.pdf"
+	out, err := runWithMock(t, mux, "file", "info", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotFile != "F01ABC" {
+		t.Errorf("files.info file = %q, want F01ABC", gotFile)
+	}
+	f := parseJSON(t, nonEmptyLines(out)[0])
+	if f["id"] != "F01ABC" {
+		t.Errorf("id = %v, want F01ABC", f["id"])
+	}
+	// input preserves the original arg, not the extracted id.
+	if f["input"] != url {
+		t.Errorf("input = %v, want %q", f["input"], url)
+	}
+}
+
+func TestFileInfo_WrongKindURLPerItem(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/files.info", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected files.info call for wrong-kind URL")
+	})
+
+	out, err := runWithMock(t, mux, "file", "info", "https://acme.slack.com/archives/C01ABC")
+	if err == nil {
+		t.Fatal("expected error for partial failure")
+	}
+	errLine := parseJSON(t, nonEmptyLines(out)[0])
+	if errLine["error"] != "invalid_input" {
+		t.Errorf("error = %v, want invalid_input", errLine["error"])
+	}
+}
+
+func TestFileDownload_AcceptsURL(t *testing.T) {
+	var gotFile string
+	content := "pdf-bytes"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/files.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotFile = r.FormValue("file")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"file": map[string]any{
+				"id": gotFile, "name": "report.pdf", "size": len(content),
+				"url_private_download": "http://" + r.Host + "/download/report.pdf",
+			},
+			"comments": []any{},
+			"paging":   map[string]any{"count": 0, "total": 0, "page": 1, "pages": 1},
+		})
+	})
+	mux.HandleFunc("/download/report.pdf", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(content))
+	})
+
+	out, err := runWithMock(t, mux, "file", "download",
+		"https://acme.slack.com/files/U01ABC/F01ABC/report.pdf", "-o", "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotFile != "F01ABC" {
+		t.Errorf("files.info file = %q, want F01ABC", gotFile)
+	}
+	if out != content {
+		t.Errorf("stdout = %q, want %q", out, content)
+	}
+}
+
 func fileDownloadMux(t *testing.T, fileContent string) *http.ServeMux {
 	t.Helper()
 	mux := http.NewServeMux()
