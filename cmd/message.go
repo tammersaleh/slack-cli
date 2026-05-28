@@ -64,7 +64,7 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return output.ChannelNotFound(c.Channel)
+		return channelResolveError(c.Channel, err)
 	}
 
 	limit := c.Limit

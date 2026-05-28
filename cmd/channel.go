@@ -125,7 +125,7 @@ func (c *ChannelInfoCmd) Run(cli *CLI) error {
 		channelID, err := r.ResolveChannel(ctx, input)
 		if err != nil {
 			errorCount++
-			if err := p.PrintItem(output.ChannelNotFound(input).AsItem()); err != nil {
+			if err := p.PrintItem(channelResolveError(input, err).AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -192,7 +192,7 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return output.ChannelNotFound(c.Channel)
+		return channelResolveError(c.Channel, err)
 	}
 
 	limit := c.Limit

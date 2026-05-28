@@ -28,7 +28,7 @@ func (c *PresenceGetCmd) Run(cli *CLI) error {
 		userID, err := r.ResolveUser(ctx, input)
 		if err != nil {
 			errorCount++
-			if err := p.PrintItem(output.UserNotFound(input).AsItem()); err != nil {
+			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
 				return err
 			}
 			continue

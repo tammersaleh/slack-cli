@@ -48,16 +48,21 @@ func (c *FileListCmd) Run(cli *CLI) error {
 	channelID := c.Channel
 	if channelID != "" {
 		resolved, err := r.ResolveChannel(ctx, channelID)
-		if err == nil {
+		switch {
+		case err == nil:
 			channelID = resolved
+		case isBadURLErr(err):
+			return channelResolveError(channelID, err)
 		}
+		// Otherwise keep the raw value: an unresolved name passes through to
+		// files.list, preserving the prior lenient filter behavior.
 	}
 
 	userID := c.User
 	if userID != "" {
 		resolved, err := r.ResolveUser(ctx, userID)
 		if err != nil {
-			return output.UserNotFound(userID)
+			return userResolveError(userID, err)
 		}
 		userID = resolved
 	}
