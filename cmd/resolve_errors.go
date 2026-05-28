@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -30,4 +31,23 @@ func userResolveError(input string, err error) *output.Error {
 // while still rejecting malformed/wrong-kind URLs.
 func isBadURLErr(err error) bool {
 	return errors.Is(err, resolve.ErrBadURL)
+}
+
+// resolveRefChannels resolves the distinct channels referenced by refs, once
+// each, returning a raw-channel -> ID map. A failure is fatal (a bad URL maps
+// to invalid_input, otherwise channel_not_found). URL-mode refs already hold a
+// channel ID, so ResolveChannel passes them through without an API call.
+func resolveRefChannels(ctx context.Context, r *resolve.Resolver, refs []msgRef) (map[string]string, *output.Error) {
+	ids := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		if _, ok := ids[ref.channel]; ok {
+			continue
+		}
+		id, err := r.ResolveChannel(ctx, ref.channel)
+		if err != nil {
+			return nil, channelResolveError(ref.channel, err)
+		}
+		ids[ref.channel] = id
+	}
+	return ids, nil
 }

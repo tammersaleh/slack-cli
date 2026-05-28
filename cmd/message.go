@@ -140,11 +140,31 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 }
 
 type MessageGetCmd struct {
-	Channel    string   `arg:"" required:"" help:"Channel ID or name."`
-	Timestamps []string `arg:"" required:"" help:"Message timestamps."`
+	Args []string `arg:"" optional:"" name:"args" help:"Channel + timestamps, or message URLs."`
+}
+
+func (MessageGetCmd) Help() string {
+	return `Get one or more messages. Two forms:
+
+  slack message get <channel> <ts>...      # channel + timestamps
+  slack message get <message-url>...        # Slack message permalinks
+
+Channel accepts an ID (C.../G.../D...) or a #name. A message permalink
+carries its own channel, so several URLs may target different channels in
+one call. The two forms can't be mixed.
+
+Examples:
+
+  slack message get '#general' 1709251200.000100
+  slack message get https://acme.slack.com/archives/C01ABC/p1709251200000100`
 }
 
 func (c *MessageGetCmd) Run(cli *CLI) error {
+	refs, err := parseMessageRefs(c.Args)
+	if err != nil {
+		return &output.Error{Err: "invalid_input", Detail: err.Error(), Code: output.ExitGeneral}
+	}
+
 	client, err := cli.NewClient()
 	if err != nil {
 		return err
@@ -155,17 +175,18 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	channelID, err := r.ResolveChannel(ctx, c.Channel)
-	if err != nil {
-		return output.ChannelNotFound(c.Channel)
+	channelIDs, cerr := resolveRefChannels(ctx, r, refs)
+	if cerr != nil {
+		return cerr
 	}
 
 	errorCount := 0
-	for _, ts := range c.Timestamps {
+	for _, ref := range refs {
+		channelID := channelIDs[ref.channel]
 		resp, err := client.Bot().GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 			ChannelID: channelID,
-			Oldest:    ts,
-			Latest:    ts,
+			Oldest:    ref.ts,
+			Latest:    ref.ts,
 			Inclusive: true,
 			Limit:     1,
 		})
@@ -176,9 +197,10 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 			}
 			errorCount++
 			if err := p.PrintItem(map[string]any{
-				"input":  ts,
-				"error":  oErr.Err,
-				"detail": oErr.Detail,
+				"input":      ref.input,
+				"channel_id": channelID,
+				"error":      oErr.Err,
+				"detail":     oErr.Detail,
 			}); err != nil {
 				return err
 			}
@@ -188,9 +210,10 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 		if len(resp.Messages) == 0 {
 			errorCount++
 			if err := p.PrintItem(map[string]any{
-				"input":  ts,
-				"error":  "message_not_found",
-				"detail": "No message at timestamp " + ts + " in " + c.Channel,
+				"input":      ref.input,
+				"channel_id": channelID,
+				"error":      "message_not_found",
+				"detail":     "No message at timestamp " + ref.ts + " in " + channelID,
 			}); err != nil {
 				return err
 			}
@@ -198,7 +221,8 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 		}
 
 		m := messageToMap(resp.Messages[0])
-		m["input"] = ts
+		m["input"] = ref.input
+		m["channel_id"] = channelID
 		if err := p.PrintItem(m); err != nil {
 			return err
 		}
