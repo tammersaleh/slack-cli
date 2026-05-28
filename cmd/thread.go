@@ -10,16 +10,30 @@ type ThreadCmd struct {
 }
 
 type ThreadListCmd struct {
-	Channel   string `arg:"" required:"" help:"Channel ID or name."`
-	Timestamp string `arg:"" required:"" help:"Parent message timestamp."`
-	Limit     int    `help:"Page size." default:"50"`
-	Cursor    string `help:"Continue from previous page."`
-	All       bool   `help:"Fetch all pages."`
+	Args   []string `arg:"" optional:"" name:"args" help:"Channel + parent timestamp, or a message URL."`
+	Limit  int      `help:"Page size." default:"50"`
+	Cursor string   `help:"Continue from previous page."`
+	All    bool     `help:"Fetch all pages."`
+}
+
+func (ThreadListCmd) Help() string {
+	return `List replies in a thread. Two forms:
+
+  slack thread list <channel> <parent-ts>   # channel + parent timestamp
+  slack thread list <message-url>             # a Slack message permalink
+
+A link to any reply works too: its thread_ts resolves to the parent, so
+you get the whole thread.`
 }
 
 func (c *ThreadListCmd) Run(cli *CLI) error {
 	if c.All && c.Cursor != "" {
 		return &output.Error{Err: "invalid_input", Detail: "--all and --cursor are mutually exclusive", Code: output.ExitGeneral}
+	}
+
+	ref, err := parseThreadRef(c.Args)
+	if err != nil {
+		return &output.Error{Err: "invalid_input", Detail: err.Error(), Code: output.ExitGeneral}
 	}
 
 	client, err := cli.NewClient()
@@ -32,9 +46,9 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	channelID, err := r.ResolveChannel(ctx, c.Channel)
+	channelID, err := r.ResolveChannel(ctx, ref.channel)
 	if err != nil {
-		return output.ChannelNotFound(c.Channel)
+		return channelResolveError(ref.channel, err)
 	}
 
 	limit := c.Limit
@@ -46,7 +60,7 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 	for {
 		msgs, hasMore, nextCursor, err := client.Bot().GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
 			ChannelID: channelID,
-			Timestamp: c.Timestamp,
+			Timestamp: ref.ts,
 			Limit:     limit,
 			Cursor:    cursor,
 		})
@@ -55,12 +69,12 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 		}
 
 		if len(msgs) == 0 {
-			return output.ThreadNotFoundNoMessage(c.Channel, c.Timestamp)
+			return output.ThreadNotFoundNoMessage(ref.channel, ref.ts)
 		}
 
 		// Slack returns the parent as the sole message when there are no replies.
 		if len(msgs) == 1 && msgs[0].ReplyCount == 0 {
-			return output.ThreadNotFoundNoReplies(c.Timestamp)
+			return output.ThreadNotFoundNoReplies(ref.ts)
 		}
 
 		for _, msg := range msgs {

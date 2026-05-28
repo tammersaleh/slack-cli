@@ -216,6 +216,41 @@ func TestReactionList_AcceptsMessageURL(t *testing.T) {
 	}
 }
 
+// thread list accepts a link to any reply: thread_ts resolves to the parent,
+// so the whole thread is returned.
+func TestThreadList_AcceptsReplyURL(t *testing.T) {
+	var gotChannel, gotTS string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotChannel = r.FormValue("channel")
+		gotTS = r.FormValue("ts")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"messages": []map[string]any{
+				{"type": "message", "text": "parent", "ts": "1709251200.000100", "thread_ts": "1709251200.000100", "reply_count": 1},
+				{"type": "message", "text": "reply", "ts": "1709251300.000200", "thread_ts": "1709251200.000100"},
+			},
+		})
+	})
+
+	// Link points at the reply (p...0200); thread_ts is the parent (...0100).
+	url := "https://acme.slack.com/archives/C01ABC/p1709251300000200?thread_ts=1709251200.000100&cid=C01ABC"
+	out, err := runWithMock(t, mux, "thread", "list", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotChannel != "C01ABC" {
+		t.Errorf("channel = %q, want C01ABC", gotChannel)
+	}
+	if gotTS != "1709251200.000100" {
+		t.Errorf("ts = %q, want parent 1709251200.000100", gotTS)
+	}
+	if lines := nonEmptyLines(out); len(lines) != 3 {
+		t.Fatalf("expected 3 lines (parent + reply + meta), got %d:\n%s", len(lines), out)
+	}
+}
+
 // A user profile URL resolves to the embedded ID for user args.
 func TestUserArg_AcceptsURL(t *testing.T) {
 	var gotUser string
