@@ -249,8 +249,10 @@ Anywhere a channel is required, the CLI accepts:
 - Channel ID: `C01234ABCDE`
 - Name with `#`: `#general`
 - Name without `#`: `general`
+- Channel URL: `https://acme.slack.com/archives/C01234ABCDE` or the `app.slack.com/client/<team>/C01234ABCDE` form
+- Message permalink: `https://acme.slack.com/archives/C01234ABCDE/p1709251200000100` - resolves to the channel; the timestamp is ignored
 
-Names are resolved via `conversations.list` with in-memory caching (5-minute TTL). On name collision, first match wins.
+Names are resolved via `conversations.list` with in-memory caching (5-minute TTL). On name collision, first match wins. A URL that isn't a usable channel reference (wrong kind or malformed) is rejected as `invalid_input` rather than treated as a name.
 
 ### Users
 
@@ -258,8 +260,10 @@ Anywhere a user is required, the CLI accepts:
 
 - User ID: `U01234ABCDE`
 - Email: `tammer@example.com`
+- Display name / username / real name: `@tammer` (resolved from the cached user list)
+- User URL: `https://acme.slack.com/team/U01234ABCDE`, the enterprise `/user/@W…` profile form, or `app.slack.com/client/<team>/U01234ABCDE`
 
-Display name resolution (`@tammer`) deferred to Phase 2 (#29) - requires fetching and caching all user profiles, which is expensive at scale.
+A file URL embeds the uploader's user ID but identifies a file, so it is not accepted as a user. Wrong-kind or malformed URLs are rejected as `invalid_input`.
 
 ## Pagination
 
@@ -449,10 +453,11 @@ Slack API: `conversations.history`
 
 #### slack message get
 
-Retrieves specific messages by timestamp. Uses `conversations.history` with `oldest=ts&latest=ts&inclusive=true&limit=1`.
+Retrieves specific messages by timestamp. Uses `conversations.history` with `oldest=ts&latest=ts&inclusive=true&limit=1`. Accepts either a channel plus timestamps, or one-or-more message permalinks (which may span channels in one call); the two forms can't be mixed. Output rows carry `channel_id`.
 
 ```
 slack message get <channel> <timestamp>...
+slack message get <message-url>...
 ```
 
 ```
@@ -482,6 +487,8 @@ Slack API: `conversations.history` (filtered)
 slack message permalink <channel> <timestamp>...
 ```
 
+This command produces a permalink, so it takes only a channel + timestamps - it does not accept a URL (feeding a permalink in to get one back is a no-op).
+
 ```
 $ slack message permalink #general 1709251200.000100
 {"input":"1709251200.000100","channel":"C01ABC","ts":"1709251200.000100","permalink":"https://acme.slack.com/archives/C01ABC/p1709251200000100"}
@@ -503,10 +510,13 @@ Aliased as `slack thread read`. Includes the parent message as the first result 
 
 ```
 slack thread list <channel> <timestamp> [flags]
+slack thread list <message-url> [flags]
   --limit    Page size (default: 50, max: 200)
   --cursor   Continue from previous page
   --all      Fetch all pages
 ```
+
+A message permalink replaces channel + timestamp. A link to any reply resolves to its parent thread (via `thread_ts`), so pasting any message in a thread returns the whole thread.
 
 ```
 $ slack thread list #general 1709251200.000100 --limit=3
@@ -593,7 +603,7 @@ Slack API: `users.lookupByEmail`
 slack reaction list <channel> <timestamp>...
 ```
 
-Returns individual reactions, not the full message. Each reaction is a separate JSONL line.
+Returns individual reactions, not the full message. Each reaction is a separate JSONL line. Like `message get`, it accepts a channel plus timestamps or one-or-more message permalinks (which may span channels); rows carry `channel_id`.
 
 ```
 $ slack reaction list #general 1709251200.000100
@@ -690,8 +700,10 @@ Slack API: `files.list`
 
 #### slack file info
 
+Accepts a bare file ID or a Slack file URL (`/files/<uploader>/<F-id>/…`).
+
 ```
-slack file info <file-id>...
+slack file info <file-id-or-url>...
 ```
 
 ```
@@ -709,10 +721,10 @@ Slack API: `files.info`
 
 #### slack file download
 
-File content is written to disk. JSONL metadata about the download goes to stdout.
+File content is written to disk. JSONL metadata about the download goes to stdout. The file argument may be a bare ID or a Slack file URL.
 
 ```
-slack file download <file-id> [flags]
+slack file download <file-id-or-url> [flags]
   --output     Output path (default: original filename in current directory, "-" for stdout)
 ```
 
