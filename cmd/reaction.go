@@ -10,11 +10,25 @@ type ReactionCmd struct {
 }
 
 type ReactionListCmd struct {
-	Channel    string   `arg:"" required:"" help:"Channel ID or name."`
-	Timestamps []string `arg:"" required:"" help:"Message timestamps."`
+	Args []string `arg:"" optional:"" name:"args" help:"Channel + timestamps, or message URLs."`
+}
+
+func (ReactionListCmd) Help() string {
+	return `List reactions on one or more messages. Two forms:
+
+  slack reaction list <channel> <ts>...     # channel + timestamps
+  slack reaction list <message-url>...        # Slack message permalinks
+
+A message permalink carries its own channel, so several URLs may target
+different channels. The two forms can't be mixed.`
 }
 
 func (c *ReactionListCmd) Run(cli *CLI) error {
+	refs, err := parseMessageRefs(c.Args)
+	if err != nil {
+		return &output.Error{Err: "invalid_input", Detail: err.Error(), Code: output.ExitGeneral}
+	}
+
 	client, err := cli.NewClient()
 	if err != nil {
 		return err
@@ -26,15 +40,16 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 	defer cancel()
 	errorCount := 0
 
-	channelID, err := r.ResolveChannel(ctx, c.Channel)
-	if err != nil {
-		return output.ChannelNotFound(c.Channel)
+	channelIDs, cerr := resolveRefChannels(ctx, r, refs)
+	if cerr != nil {
+		return cerr
 	}
 
-	for _, ts := range c.Timestamps {
+	for _, ref := range refs {
+		channelID := channelIDs[ref.channel]
 		item, err := client.Bot().GetReactionsContext(ctx, slack.ItemRef{
 			Channel:   channelID,
-			Timestamp: ts,
+			Timestamp: ref.ts,
 		}, slack.GetReactionsParameters{Full: true})
 		if err != nil {
 			oErr := cli.ClassifyError(err)
@@ -42,9 +57,10 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 			if oErr.Code == output.ExitGeneral {
 				errorCount++
 				if err := p.PrintItem(map[string]any{
-					"input":  ts,
-					"error":  oErr.Err,
-					"detail": oErr.Detail,
+					"input":      ref.input,
+					"channel_id": channelID,
+					"error":      oErr.Err,
+					"detail":     oErr.Detail,
 				}); err != nil {
 					return err
 				}
@@ -55,10 +71,11 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 
 		for _, reaction := range item.Reactions {
 			if err := p.PrintItem(map[string]any{
-				"input": ts,
-				"name":  reaction.Name,
-				"count": reaction.Count,
-				"users": reaction.Users,
+				"input":      ref.input,
+				"channel_id": channelID,
+				"name":       reaction.Name,
+				"count":      reaction.Count,
+				"users":      reaction.Users,
 			}); err != nil {
 				return err
 			}

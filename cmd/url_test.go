@@ -176,6 +176,46 @@ func TestMessageGet_MixingIsInvalidInput(t *testing.T) {
 	}
 }
 
+// reaction list accepts a message permalink and tags rows with channel_id.
+func TestReactionList_AcceptsMessageURL(t *testing.T) {
+	var gotChannel, gotTS string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/reactions.get", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotChannel = r.FormValue("channel")
+		gotTS = r.FormValue("timestamp")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"type": "message",
+			"message": map[string]any{
+				"reactions": []map[string]any{{"name": "thumbsup", "count": 2, "users": []string{"U01", "U02"}}},
+			},
+		})
+	})
+
+	url := "https://acme.slack.com/archives/C01ABC/p1709251200000100"
+	out, err := runWithMock(t, mux, "reaction", "list", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotChannel != "C01ABC" {
+		t.Errorf("channel = %q, want C01ABC", gotChannel)
+	}
+	if gotTS != "1709251200.000100" {
+		t.Errorf("timestamp = %q, want 1709251200.000100", gotTS)
+	}
+	row := parseJSON(t, nonEmptyLines(out)[0])
+	if row["input"] != url {
+		t.Errorf("input = %v, want %q", row["input"], url)
+	}
+	if row["channel_id"] != "C01ABC" {
+		t.Errorf("channel_id = %v, want C01ABC", row["channel_id"])
+	}
+	if row["name"] != "thumbsup" {
+		t.Errorf("name = %v, want thumbsup", row["name"])
+	}
+}
+
 // A user profile URL resolves to the embedded ID for user args.
 func TestUserArg_AcceptsURL(t *testing.T) {
 	var gotUser string
