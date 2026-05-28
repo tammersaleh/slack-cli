@@ -61,13 +61,22 @@ rows and set `_meta.error_count` in the trailer. Exit code is 1.
 
 ## Commands
 
-Channel and user arguments accept a name (`#general`, `@tammer`), an ID, or a
-Slack URL. A message permalink (Slack's "Copy link") works anywhere a channel +
-timestamp is taken: `message get`, `reaction list`, and `thread list` accept one
-or more permalinks in place of `<channel> <ts>`, and each permalink may target a
-different channel. A link to any reply resolves to its parent thread.
-`file info`/`download` take file URLs. A URL of the wrong kind is rejected as
-`invalid_input`.
+**Prefer URLs.** Default to passing a Slack URL whenever you have one - a
+message permalink, channel link, user profile link, or file link. It's the most
+reliable input and it's what the examples below use. `search` and `saved list`
+rows carry a `permalink`, the human often pastes a link, and `slack message
+permalink` mints one on demand, so the usual loop is *discover → take the
+`permalink` → act on it*.
+
+A message permalink fills both the channel and the timestamp at once for
+`message get`, `reaction list`, and `thread list`, and several may target
+different channels in a single call; a link to any reply resolves to its parent
+thread. `file info`/`download` take file links.
+
+IDs (`C…`/`U…`/`F…`), `#channel`/`@user` names, and emails work anywhere a URL
+does - reach for them when you don't have a link (see Channel and User
+Resolution). A URL of the wrong kind (a user link where a channel is expected)
+is rejected as `invalid_input`.
 
 ### Messages
 
@@ -86,9 +95,10 @@ to find threads worth exploring with `slack thread list`.
 Examples:
 
 ```
-slack message list '#general' --limit 50
-slack message list '#general' --after 2026-04-01 --before 2026-04-15
-slack message list '#general' --has-replies --fields ts,user,reply_count
+slack message get https://acme.slack.com/archives/C01ABC/p1709251200000100
+slack message get <perma-a> <perma-b>                      # several at once, may span channels
+slack message list https://acme.slack.com/archives/C01ABC --limit 50
+slack message list https://acme.slack.com/archives/C01ABC --after 2026-04-01 --has-replies
 ```
 
 ### Threads
@@ -101,6 +111,10 @@ slack thread list <message-url> [--limit N]
 Pair with `slack message list --has-replies` to locate a thread root
 first. `ts` is the parent message's timestamp; a permalink to any reply
 also works - it resolves to the parent thread.
+
+```
+slack thread list https://acme.slack.com/archives/C01ABC/p1709251200000100
+```
 
 ### Search (requires user token)
 
@@ -141,7 +155,7 @@ Examples:
 slack channel list --query ext-                        # find customer channels
 slack channel list --type private --has-unread         # private + unread
 slack channel list --include-non-member --all          # workspace-wide
-slack channel info '#general' --fields id,name,topic   # narrowed info
+slack channel info https://acme.slack.com/archives/C01ABC --fields id,name,topic
 ```
 
 ### Users
@@ -158,10 +172,9 @@ token, email lookup may fail - prefer `@name` there.
 Examples:
 
 ```
-slack user list --query tamm                      # find by partial name
-slack user info U09T3DUS6P9                       # by ID
-slack user info alice@example.com bob@example.com  # bulk by email
-slack user info @alice                            # by display name
+slack user info https://acme.slack.com/team/U01ABC    # by profile link
+slack user list --query tamm                          # find by partial name
+slack user info @alice U09T3DUS6P9 alice@example.com   # or name / ID / email (incl. bulk)
 ```
 
 ### Files
@@ -503,11 +516,12 @@ slack message list '#general' --limit 50 | jq -c "select(.user == \"$UID\")"
 
 ### Find a thread by content and read the whole thread
 
+`search` rows carry a `permalink` - feed it straight to `thread list`, which
+resolves it to the parent thread (no channel/ts juggling).
+
 ```
-HIT=$(slack search messages "Q3 roadmap in:#general" --limit 1 | jq -c 'select(._meta == null)')
-CH=$(echo "$HIT" | jq -r '.channel.id')
-TS=$(echo "$HIT" | jq -r '.ts')
-slack thread list "$CH" "$TS"
+PERMA=$(slack search messages "Q3 roadmap in:#general" --limit 1 | jq -r 'select(._meta == null) | .permalink')
+slack thread list "$PERMA"
 ```
 
 ### Stage a draft reply to a message you found
@@ -561,8 +575,12 @@ everything, or use the `next_cursor` from `_meta` with `--cursor`.
 
 ## Channel and User Resolution
 
-Channels accept IDs (C.../G.../D...) or #names. Users accept IDs (U...),
-emails, or @display-names.
+Prefer URLs (see Inputs at the top of Commands). When you don't have a link,
+every channel/user argument also accepts:
+
+- Channels: `C…`/`G…`/`D…` IDs, `#name` or bare `name`, a channel link, or a
+  message permalink (resolves to its channel).
+- Users: `U…` IDs, emails, `@display-name`, or a profile link.
 
 Channel types (`--type` flag on `slack channel list`):
 
