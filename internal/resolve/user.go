@@ -25,6 +25,10 @@ type userFileCache struct {
 // Accepts user IDs (passthrough) and email addresses. Email lookups
 // check the user cache first, falling back to the API.
 func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error) {
+	if id, handled, err := userIDFromURL(input); handled {
+		return id, err
+	}
+
 	if userIDPattern.MatchString(input) {
 		return input, nil
 	}

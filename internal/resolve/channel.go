@@ -29,6 +29,10 @@ type channelFileCache struct {
 // ResolveChannel resolves a channel name or ID to a Slack channel ID.
 // Accepts channel IDs (passthrough), names with or without `#` prefix.
 func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, error) {
+	if id, handled, err := channelIDFromURL(input); handled {
+		return id, err
+	}
+
 	if channelIDPattern.MatchString(input) {
 		return input, nil
 	}

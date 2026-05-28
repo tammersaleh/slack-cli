@@ -53,6 +53,20 @@ func UserNotFound(input string) *Error {
 	}
 }
 
+// InvalidURL is returned when input was an http(s) URL but not a usable Slack
+// reference of the kind the command needs (malformed, wrong host, or a URL of
+// the wrong kind - e.g. a file link where a user is expected). detail comes
+// from the parser/resolver and names the specific problem.
+func InvalidURL(input, detail string) *Error {
+	return &Error{
+		Err:    "invalid_input",
+		Detail: detail,
+		Hint:   "Accepted forms: a Slack ID/name, or a Slack URL of the right kind (channel/message link for channels, profile link for users, file link for files).",
+		Input:  input,
+		Code:   ExitGeneral,
+	}
+}
+
 // DraftNotFound is returned when a draft ID is unknown.
 func DraftNotFound(id string) *Error {
 	return &Error{

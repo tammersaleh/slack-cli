@@ -195,7 +195,7 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return output.ChannelNotFound(c.Channel)
+		return channelResolveError(c.Channel, err)
 	}
 
 	dest := destination{ChannelID: channelID}
