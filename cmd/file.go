@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,7 +9,25 @@ import (
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
+	"github.com/tammersaleh/slack-cli/internal/slackurl"
 )
+
+// fileIDFromArg returns the file ID for a file command argument. A bare file
+// id passes through unchanged; a Slack file URL yields its F-id. Any other URL
+// (wrong kind or malformed) is an invalid_input error.
+func fileIDFromArg(input string) (string, *output.Error) {
+	ref, matched, err := slackurl.Parse(input)
+	if !matched {
+		return input, nil
+	}
+	if err != nil {
+		return "", output.InvalidURL(input, err.Error())
+	}
+	if ref.Kind != slackurl.KindFile {
+		return "", output.InvalidURL(input, fmt.Sprintf("%s URL does not identify a file", ref.Kind))
+	}
+	return ref.FileID, nil
+}
 
 type FileCmd struct {
 	List     FileListCmd     `cmd:"" help:"List files."`
@@ -124,8 +143,17 @@ func (c *FileInfoCmd) Run(cli *CLI) error {
 	defer cancel()
 	errorCount := 0
 
-	for _, id := range c.Files {
-		file, _, _, err := client.Bot().GetFileInfoContext(ctx, id, 0, 0)
+	for _, input := range c.Files {
+		fileID, idErr := fileIDFromArg(input)
+		if idErr != nil {
+			errorCount++
+			if err := p.PrintItem(idErr.AsItem()); err != nil {
+				return err
+			}
+			continue
+		}
+
+		file, _, _, err := client.Bot().GetFileInfoContext(ctx, fileID, 0, 0)
 		if err != nil {
 			oErr := cli.ClassifyError(err)
 			if oErr.Code != output.ExitGeneral {
@@ -133,7 +161,7 @@ func (c *FileInfoCmd) Run(cli *CLI) error {
 			}
 			errorCount++
 			if err := p.PrintItem(map[string]any{
-				"input":  id,
+				"input":  input,
 				"error":  oErr.Err,
 				"detail": oErr.Detail,
 			}); err != nil {
@@ -143,7 +171,7 @@ func (c *FileInfoCmd) Run(cli *CLI) error {
 		}
 
 		m := fileToMap(*file)
-		m["input"] = id
+		m["input"] = input
 		if err := p.PrintItem(m); err != nil {
 			return err
 		}
@@ -174,7 +202,12 @@ func (c *FileDownloadCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	file, _, _, err := client.Bot().GetFileInfoContext(ctx, c.File, 0, 0)
+	fileID, idErr := fileIDFromArg(c.File)
+	if idErr != nil {
+		return idErr
+	}
+
+	file, _, _, err := client.Bot().GetFileInfoContext(ctx, fileID, 0, 0)
 	if err != nil {
 		return cli.ClassifyError(err)
 	}
