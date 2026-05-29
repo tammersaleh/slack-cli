@@ -332,6 +332,63 @@ containers without a trailing `\n` (the absorption rule above).
 Slack's API would accept the bad shape but the user would see
 content loss.
 
+## Tables
+
+Slack shipped `table` and `data_table` blocks, but they are app-only -
+posted via `chat.postMessage`. They are not part of the human
+compose/edit surface, and drafts go through that surface. So they don't
+work in drafts, for the same reason `section` doesn't.
+
+Verified 2026-05-29 against the live `drafts.*` API plus the
+`app.slack.com` compose editor (DOM inspection), self-DM only. `table`
+was tested end-to-end (create, reconciliation, compose-editor DOM).
+`data_table` was only confirmed at the API (`drafts.create` returns ok);
+its editor behavior is inferred from being the same block class - it
+shares the rich_text-only compose surface, so it strips the same way.
+
+What makes tables worth a dedicated note is that the drafts API
+*accepts* them. `drafts.create` returns ok and stores the block
+verbatim (it only stamps a `block_id`). That makes them feel supported
+in a way `section` (tombstones) and `markdown` (`internal_error`) do
+not. They are not.
+
+| Blocks                              | create | Survives reconciliation | Renders in compose editor |
+|-------------------------------------|--------|-------------------------|---------------------------|
+| `[table]`                           | ok     | no (tombstoned)         | n/a - gone                |
+| `[rich_text, table]`                | ok     | yes                     | no - table stripped       |
+| `[rich_text, data_table]`           | ok     | yes                     | same class as table       |
+| `[rich_text, rich_text_preformatted]` | ok   | yes                     | yes - columns aligned     |
+
+Two failure modes, both already covered by the general rules:
+
+- A table-only draft has no `rich_text` body, so the Drafts-panel
+  reconciliation tombstones it within seconds (`is_deleted=true`,
+  `last_updated_ts` advances). Same as section-only / divider-only.
+- A `[rich_text, table]` draft survives reconciliation but the compose
+  editor strips the `table` block on open. Inspecting the composer DOM
+  (`.p-composer_page__footer`) after opening such a draft shows only the
+  rich_text paragraph - no `<table>`, no table widget
+  (`tableLikeCount: 0`). Same as any non-rich_text top-level block.
+
+Root cause: the compose editor's formatting toolbar has no table
+control - only bold, italic, underline, strike, link, ordered list,
+bulleted list, blockquote, code, and code block. The editor can't
+represent a table, so its rebuild path drops it. Slack *renders* `table`
+blocks in messages apps post; it just can't *edit* them. Opening a draft
+doesn't persist the strip server-side - the stored blocks keep the table
+until an edit - but the stripped working copy is what gets sent, so the
+table is lost end to end the moment a human touches it.
+
+`validateBlocksShape` already rejects `table`/`data_table` as
+non-rich_text top-level blocks. The message is special-cased to name the
+block and point at the fallback, because the API accepting them makes a
+generic "only rich_text" message confusing.
+
+The fallback: a monospace ASCII table in a `rich_text_preformatted`
+element inside a top-level `rich_text` block. It survives both failure
+modes (it is rich_text) and renders with aligned columns. See
+`skills/slack-cli/SKILL.md` "Tabular data".
+
 ## Red herrings
 
 The previous investigation (visible as commit 80ed7ab, then reverted)
