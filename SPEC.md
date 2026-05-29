@@ -1187,12 +1187,12 @@ Errors:
 
 - `channel_not_found` (exit 1): No channel matching the input.
 - `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
-- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, a caller-supplied attachment block isn't `table`/`data_table`, or the draft has no renderable content (no non-empty `rich_text` body and no table attachment).
+- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body and no table attachment).
 - `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, or `--table` together with stdin attachments.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
 - `not_authed` (exit 2): No session token.
 
-Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`; caller-supplied attachment blocks are `table`/`data_table`; and the draft has renderable content (a non-empty `rich_text` block or a table attachment). Slack's API accepts non-`rich_text` top-level blocks, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
+Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`; caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block or a table attachment). Slack's API accepts non-`rich_text` top-level blocks, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
 
 Slack API: `drafts.create`
 

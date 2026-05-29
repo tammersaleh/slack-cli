@@ -512,20 +512,31 @@ func TestDraftCreate_RejectsTableBlocks(t *testing.T) {
 		t.Fatalf("drafts.create should not be called when validation rejects")
 	})
 
+	// pin is a substring unique to the expected branch's message, so a case
+	// can't pass against the wrong branch (e.g. "table" alone would match the
+	// data_table message too).
 	for _, tc := range []struct {
-		name, blocks string
+		name, blocks, pin string
 	}{
 		{
 			name:   "table_only",
 			blocks: `[{"type":"table","rows":[[{"type":"raw_text","text":"A"},{"type":"raw_text","text":"B"}]]}]`,
+			pin:    "Put the table in an attachment",
 		},
 		{
 			name:   "table_alongside_rich_text",
 			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"table","rows":[[{"type":"raw_text","text":"A"}]]}]`,
+			pin:    "Put the table in an attachment",
+		},
+		{
+			name:   "data_table_only",
+			blocks: `[{"type":"data_table","caption":"c","rows":[[{"type":"raw_text","text":"A"}]]}]`,
+			pin:    "data_table is stripped from drafts",
 		},
 		{
 			name:   "data_table_alongside_rich_text",
 			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"data_table","caption":"c","rows":[[{"type":"raw_text","text":"A"}]]}]`,
+			pin:    "data_table is stripped from drafts",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -540,12 +551,9 @@ func TestDraftCreate_RejectsTableBlocks(t *testing.T) {
 			if oe.Err != "invalid_blocks" {
 				t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
 			}
-			// The message must name the offending block, explain the strip,
-			// and steer the caller to attachments (the working location).
-			for _, want := range []string{"table", "stripped", "attachment"} {
-				if !strings.Contains(oe.Detail, want) {
-					t.Errorf("expected Detail to contain %q, got %q", want, oe.Detail)
-				}
+			// Pin to the correct branch's message.
+			if !strings.Contains(oe.Detail, tc.pin) {
+				t.Errorf("expected Detail to contain %q (wrong branch fired?), got %q", tc.pin, oe.Detail)
 			}
 			if !strings.Contains(oe.Hint, "skills add tammersaleh/slack-cli") {
 				t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
@@ -916,6 +924,52 @@ func TestDraftCreate_RejectsAttachmentWithoutTable(t *testing.T) {
 	var oe *output.Error
 	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
 		t.Fatalf("expected invalid_blocks for an attachment with no table block, got %v", err)
+	}
+}
+
+func TestDraftUpdate_RejectsScheduleOnlyDataTableOnlyDraft(t *testing.T) {
+	// A draft created under v3.2.0 with only a data_table attachment (no
+	// rich_text body) has no renderable content under the corrected rule
+	// (data_table doesn't count - it's stripped/tombstoned). A schedule-only
+	// update must fail rather than round-trip a dead draft.
+	existing := map[string]any{
+		"id": "Dr01234", "client_msg_id": "uuid-existing", "date_created": 1709251200,
+		"last_updated_ts": "1709251200.12",
+		"blocks":          []map[string]any{},
+		"attachments":     json.RawMessage(`[{"blocks":[{"type":"data_table","caption":"c","rows":[[{"type":"raw_text","text":"a"}]]}]}]`),
+		"destinations":    []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("drafts.update must not be called when the draft has no renderable content")
+	})
+	_, err := runWithMockSession(t, mux, "draft", "update", "Dr01234", "--at", "2026-06-01")
+	var oe *output.Error
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("expected invalid_blocks (no renderable content), got %v", err)
+	}
+	if !strings.Contains(oe.Detail, "renderable content") {
+		t.Errorf("expected renderable-content message, got %q", oe.Detail)
+	}
+}
+
+func TestDraftCreate_RejectsDataTableAttachment(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
+	// data_table (the interactive variant) is stripped from drafts and a
+	// data_table-only draft is tombstoned (verified 2026-05-29), so it is
+	// rejected even inside an attachment - unlike a plain table.
+	body := `{"blocks":` + richTextBlocksJSON("x") + `,"attachments":[{"blocks":[{"type":"data_table","caption":"c","rows":[[{"type":"raw_text","text":"a"}]]}]}]}`
+	_, err := runWithMockSessionStdin(t, body, mux, "draft", "create", "C01ABC")
+	var oe *output.Error
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("expected invalid_blocks for a data_table attachment, got %v", err)
+	}
+	if !strings.Contains(oe.Detail, "data_table") || !strings.Contains(oe.Detail, "table block") {
+		t.Errorf("expected Detail to reject data_table and point at a table block, got %q", oe.Detail)
 	}
 }
 

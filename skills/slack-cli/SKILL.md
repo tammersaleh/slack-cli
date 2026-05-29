@@ -254,14 +254,18 @@ the rejection less surprising and discourages bypassing the CLI:
   recommends for LLM output): `drafts.create` returns
   `internal_error` - the drafts API doesn't support it,
   regardless of content.
-- **`table` / `data_table` as a *top-level* block**:
-  `drafts.create` returns ok and stores it, so it looks supported -
-  but Slack's compose editor strips the table when the user opens the
-  draft (and a table-only top-level draft, having no `rich_text` body,
-  is tombstoned within seconds). Tables are not broken in drafts -
-  they just belong in an **attachment**: put the `table` block in
-  `attachments[].blocks[]`, where it survives and renders as a Table
-  card. See Tabular data below.
+- **`table` as a *top-level* block**: `drafts.create` returns ok and
+  stores it, so it looks supported - but Slack's compose editor strips
+  the table when the user opens the draft (and a table-only top-level
+  draft, having no `rich_text` body, is tombstoned within seconds).
+  Tables are not broken in drafts - they just belong in an
+  **attachment**: put the `table` block in `attachments[].blocks[]`,
+  where it survives and renders as a Table card. See Tabular data below.
+- **`data_table` block** (the interactive variant - pagination,
+  sorting, Work Object flexpanes): not draftable anywhere. It is
+  stripped from the compose editor and a data_table-only draft is
+  tombstoned, even inside an attachment (verified). It is an app-only
+  block for posted messages; use a plain `table` for drafts.
 - **`section` + `mrkdwn`**: `drafts.create` returns ok,
   but Slack Desktop's Drafts-panel reconciliation tombstones the
   draft (sets `is_deleted=true` on the server) within seconds.
@@ -485,10 +489,10 @@ native list - but you avoid the section terminator rule entirely.
 
 ##### Tabular data
 
-Tables ARE draftable - the `table` block (or `data_table` for the
-interactive variant) goes in an **attachment**, not in top-level
-`blocks` (where the compose editor strips it). Three ways, easiest
-first:
+Tables ARE draftable - the `table` block goes in an **attachment**, not
+in top-level `blocks` (where the compose editor strips it). Use a plain
+`table`, not `data_table` (the interactive variant is app-only and not
+draftable - stripped and tombstoned). Three ways, easiest first:
 
 **1. `--table FILE`** - build a table from a CSV/TSV file. The first
 row becomes a bold header (`--no-header` to disable); the delimiter is
