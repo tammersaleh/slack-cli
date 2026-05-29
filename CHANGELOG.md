@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.1](https://github.com/tammersaleh/slack-cli/compare/v3.1.0...v3.1.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* guide table-block drafts to the preformatted fallback ([bc1a8b2](https://github.com/tammersaleh/slack-cli/commit/bc1a8b21f9a285ff0c63ec590e326e3045842232))
+
 ## [3.1.0](https://github.com/tammersaleh/slack-cli/compare/v3.0.0...v3.1.0) (2026-05-28)
 
 
