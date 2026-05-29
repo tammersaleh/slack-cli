@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -353,8 +355,8 @@ func TestDraftCreate_ChannelResolution(t *testing.T) {
 }
 
 func TestDraftCreate_MissingBlocks(t *testing.T) {
-	// Empty stdin: readBlocksIfProvided trims and returns "", then
-	// readBlocksRequired maps that to missing_blocks. We pass "  "
+	// Empty stdin: readDraftPayload trims and returns an empty payload, and
+	// create (no --table) maps that to missing_blocks. We pass "  "
 	// (whitespace) so cli.in is non-nil and the TTY-check branch is
 	// skipped, exercising the explicit empty-input path.
 	mux := http.NewServeMux()
@@ -500,14 +502,11 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 }
 
 func TestDraftCreate_RejectsTableBlocks(t *testing.T) {
-	// Slack's drafts API accepts table / data_table blocks and stores them
-	// verbatim, but the compose editor has no table control and strips them
-	// when the user opens the draft (a table-only draft is additionally
-	// tombstoned by the Drafts-panel reconciliation). `table` was verified
-	// end-to-end 2026-05-29 (see docs/draft-messages.md); `data_table` is the
-	// same block class and is rejected by the same code path. The CLI rejects
-	// both up front with a message that names the block and points at the
-	// rich_text_preformatted fallback.
+	// A table/data_table block in TOP-LEVEL blocks is stripped by Slack's
+	// draft compose editor (verified 2026-05-29, see docs/draft-messages.md).
+	// Tables belong in attachments[].blocks[], where they survive. The CLI
+	// rejects a top-level table up front with a message that names the block
+	// and steers the caller to attachments / --table.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("drafts.create should not be called when validation rejects")
@@ -542,8 +541,8 @@ func TestDraftCreate_RejectsTableBlocks(t *testing.T) {
 				t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
 			}
 			// The message must name the offending block, explain the strip,
-			// and steer the caller to the working fallback.
-			for _, want := range []string{"table", "strip", "rich_text_preformatted"} {
+			// and steer the caller to attachments (the working location).
+			for _, want := range []string{"table", "stripped", "attachment"} {
 				if !strings.Contains(oe.Detail, want) {
 					t.Errorf("expected Detail to contain %q, got %q", want, oe.Detail)
 				}
@@ -552,6 +551,371 @@ func TestDraftCreate_RejectsTableBlocks(t *testing.T) {
 				t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
 			}
 		})
+	}
+}
+
+// tableAttachmentJSON is a minimal valid table-in-attachment payload: one
+// attachment whose blocks hold a single table block. Tables ride in
+// attachments[].blocks[], never top-level blocks.
+func tableAttachmentJSON() string {
+	return `[{"blocks":[{"type":"table","rows":[[{"type":"raw_text","text":"A"},{"type":"raw_text","text":"B"}]]}]}]`
+}
+
+func TestDraftCreate_AttachmentsPassthrough(t *testing.T) {
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotForm, _ = url.ParseQuery(string(body))
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr3", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks":       richTextBlocks("intro"),
+			"attachments":  json.RawMessage(tableAttachmentJSON()),
+			"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	body := `{"blocks":` + richTextBlocksJSON("intro") + `,"attachments":` + tableAttachmentJSON() + `}`
+	out, err := runWithMockSessionStdin(t, body, mux, "draft", "create", "C01ABC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotForm.Get("blocks") != richTextBlocksJSON("intro") {
+		t.Errorf("blocks should pass through verbatim, got %q", gotForm.Get("blocks"))
+	}
+	if gotForm.Get("attachments") != tableAttachmentJSON() {
+		t.Errorf("attachments should pass through verbatim, got %q", gotForm.Get("attachments"))
+	}
+	// Output surfaces attachments so the caller can inspect what was staged.
+	item := parseJSON(t, nonEmptyLines(out)[0])
+	if _, ok := item["attachments"]; !ok {
+		t.Errorf("expected attachments in create output, got %v", item)
+	}
+}
+
+func TestDraftCreate_AttachmentsOnly(t *testing.T) {
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotForm, _ = url.ParseQuery(string(body))
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr4", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks":       []map[string]any{},
+			"attachments":  json.RawMessage(tableAttachmentJSON()),
+			"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	body := `{"attachments":` + tableAttachmentJSON() + `}`
+	if _, err := runWithMockSessionStdin(t, body, mux, "draft", "create", "C01ABC"); err != nil {
+		t.Fatal(err)
+	}
+	// A table-only draft sends an empty blocks array; it survives reconciliation
+	// on the strength of the table attachment alone (verified 2026-05-29).
+	if gotForm.Get("blocks") != "[]" {
+		t.Errorf("expected blocks='[]' for attachments-only draft, got %q", gotForm.Get("blocks"))
+	}
+	if gotForm.Get("attachments") != tableAttachmentJSON() {
+		t.Errorf("attachments should pass through verbatim, got %q", gotForm.Get("attachments"))
+	}
+}
+
+func TestDraftCreate_RejectsNonTableAttachment(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
+	body := `{"blocks":` + richTextBlocksJSON("x") + `,"attachments":[{"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"hi"}}]}]}`
+	_, err := runWithMockSessionStdin(t, body, mux, "draft", "create", "C01ABC")
+	var oe *output.Error
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("expected invalid_blocks, got %v", err)
+	}
+	if !strings.Contains(oe.Detail, "table") {
+		t.Errorf("expected Detail to explain only table/data_table allowed in attachments, got %q", oe.Detail)
+	}
+}
+
+func TestDraftCreate_RejectsNoRenderableContent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
+	// Empty attachments array, no blocks: nothing renderable, so Slack would
+	// tombstone it. Reject up front.
+	_, err := runWithMockSessionStdin(t, `{"attachments":[]}`, mux, "draft", "create", "C01ABC")
+	var oe *output.Error
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("expected invalid_blocks, got %v", err)
+	}
+	if !strings.Contains(oe.Detail, "renderable content") {
+		t.Errorf("expected renderable-content message, got %q", oe.Detail)
+	}
+}
+
+func TestDraftUpdate_AddAttachmentPreservesBlocks(t *testing.T) {
+	existing := map[string]any{
+		"id": "Dr01234", "client_msg_id": "uuid-existing", "date_created": 1709251200,
+		"last_updated_ts": "1709251200.12",
+		"blocks":          richTextBlocks("body"),
+		"destinations":    []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	var gotUpdate url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotUpdate, _ = url.ParseQuery(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "draft": existing})
+	})
+
+	body := `{"attachments":` + tableAttachmentJSON() + `}`
+	if _, err := runWithMockSessionStdin(t, body, mux, "draft", "update", "Dr01234"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotUpdate.Get("blocks"), "body") {
+		t.Errorf("existing blocks should be preserved, got %q", gotUpdate.Get("blocks"))
+	}
+	if gotUpdate.Get("attachments") != tableAttachmentJSON() {
+		t.Errorf("attachments should be the provided table, got %q", gotUpdate.Get("attachments"))
+	}
+}
+
+func TestDraftUpdate_ReplaceBlocksPreservesAttachments(t *testing.T) {
+	existing := map[string]any{
+		"id": "Dr01234", "client_msg_id": "uuid-existing", "date_created": 1709251200,
+		"last_updated_ts": "1709251200.12",
+		"blocks":          richTextBlocks("old"),
+		"attachments":     json.RawMessage(tableAttachmentJSON()),
+		"destinations":    []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	var gotUpdate url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotUpdate, _ = url.ParseQuery(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "draft": existing})
+	})
+
+	// Bare array = replace blocks only; existing attachments must be preserved.
+	if _, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234"); err != nil {
+		t.Fatal(err)
+	}
+	if gotUpdate.Get("blocks") != richTextBlocksJSON("new") {
+		t.Errorf("blocks should be replaced, got %q", gotUpdate.Get("blocks"))
+	}
+	if !strings.Contains(gotUpdate.Get("attachments"), `"table"`) {
+		t.Errorf("existing table attachment should be preserved, got %q", gotUpdate.Get("attachments"))
+	}
+}
+
+func TestDraftUpdate_ClearAttachments(t *testing.T) {
+	existing := map[string]any{
+		"id": "Dr01234", "client_msg_id": "uuid-existing", "date_created": 1709251200,
+		"last_updated_ts": "1709251200.12",
+		"blocks":          richTextBlocks("body"),
+		"attachments":     json.RawMessage(tableAttachmentJSON()),
+		"destinations":    []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	var gotUpdate url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotUpdate, _ = url.ParseQuery(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "draft": existing})
+	})
+
+	if _, err := runWithMockSessionStdin(t, `{"attachments":[]}`, mux, "draft", "update", "Dr01234"); err != nil {
+		t.Fatal(err)
+	}
+	if gotUpdate.Get("attachments") != "[]" {
+		t.Errorf("attachments should be cleared to '[]', got %q", gotUpdate.Get("attachments"))
+	}
+	if !strings.Contains(gotUpdate.Get("blocks"), "body") {
+		t.Errorf("blocks should be preserved, got %q", gotUpdate.Get("blocks"))
+	}
+}
+
+func TestDraftUpdate_TombstoneReplacementCarriesAttachments(t *testing.T) {
+	// Table-only draft (empty blocks): the only renderable content is the
+	// table attachment, so this exercises the attachment content path AND the
+	// replacement carrying attachments across the tombstone.
+	existing := map[string]any{
+		"id": "Dr01234", "is_deleted": true, "client_msg_id": "uuid-old",
+		"last_updated_ts": "1709251200.12",
+		"blocks":          []map[string]any{},
+		"attachments":     json.RawMessage(tableAttachmentJSON()),
+		"destinations":    []map[string]any{{"channel_id": "D01"}},
+	}
+	var createForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("drafts.update must not be called for a tombstoned draft")
+	})
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		createForm, _ = url.ParseQuery(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "draft": map[string]any{
+			"id": "DrNEW", "date_created": 1709260000, "last_updated_ts": "1709260000.1234567",
+			"blocks": richTextBlocks("old"), "destinations": []map[string]any{{"channel_id": "D01"}},
+		}})
+	})
+
+	// Schedule-only update of a tombstoned draft -> the replacement create must
+	// carry the existing table attachment, or the table is silently lost on the
+	// very path meant to preserve the draft.
+	if _, err := runWithMockSessionStdin(t, "", mux, "draft", "update", "Dr01234", "--at", "2026-04-20"); err != nil {
+		t.Fatalf("expected auto-replace success, got %v", err)
+	}
+	if !strings.Contains(createForm.Get("attachments"), `"table"`) {
+		t.Errorf("replacement create must carry the table attachment, got %q", createForm.Get("attachments"))
+	}
+}
+
+func TestDraftCreate_TableFlagTSV(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.tsv")
+	if err := os.WriteFile(path, []byte("Region\tStatus\nus-east\tgreen\nus-west\tdegraded\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotForm, _ = url.ParseQuery(string(body))
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr9", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks": []map[string]any{}, "attachments": json.RawMessage(gotForm.Get("attachments")),
+			"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	if _, err := runWithMockSession(t, mux, "draft", "create", "C01ABC", "--table", path); err != nil {
+		t.Fatal(err)
+	}
+	// --table alone makes an attachments-only draft: empty blocks, table attached.
+	if gotForm.Get("blocks") != "[]" {
+		t.Errorf("table-only draft should send blocks='[]', got %q", gotForm.Get("blocks"))
+	}
+	var atts []struct {
+		Blocks []struct {
+			Type string             `json:"type"`
+			Rows [][]map[string]any `json:"rows"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(gotForm.Get("attachments")), &atts); err != nil {
+		t.Fatalf("attachments JSON: %v", err)
+	}
+	if len(atts) != 1 || len(atts[0].Blocks) != 1 || atts[0].Blocks[0].Type != "table" {
+		t.Fatalf("expected one table block, got %+v", atts)
+	}
+	rows := atts[0].Blocks[0].Rows
+	if len(rows) != 3 || len(rows[0]) != 2 {
+		t.Fatalf("expected a 3x2 table (tab-delimited), got %d rows", len(rows))
+	}
+	// Header row bold (rich_text); body raw_text.
+	if rows[0][0]["type"] != "rich_text" {
+		t.Errorf("header cell should be bold rich_text, got %v", rows[0][0]["type"])
+	}
+	if rows[1][0]["type"] != "raw_text" || rows[1][0]["text"] != "us-east" {
+		t.Errorf("body cell should be raw_text 'us-east', got %v", rows[1][0])
+	}
+}
+
+func TestDraftCreate_TableFlagNoHeaderCSV(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.csv")
+	if err := os.WriteFile(path, []byte("a,b\nc,d\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotForm, _ = url.ParseQuery(string(body))
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr10", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks": []map[string]any{}, "attachments": json.RawMessage(gotForm.Get("attachments")),
+			"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	if _, err := runWithMockSession(t, mux, "draft", "create", "C01ABC", "--table", path, "--no-header"); err != nil {
+		t.Fatal(err)
+	}
+	var atts []struct {
+		Blocks []struct {
+			Rows [][]map[string]any `json:"rows"`
+		} `json:"blocks"`
+	}
+	if err := json.Unmarshal([]byte(gotForm.Get("attachments")), &atts); err != nil {
+		t.Fatalf("attachments JSON: %v", err)
+	}
+	// --no-header: the first row is data, so every cell is plain raw_text.
+	if atts[0].Blocks[0].Rows[0][0]["type"] != "raw_text" {
+		t.Errorf("with --no-header the first row should be raw_text, got %v", atts[0].Blocks[0].Rows[0][0]["type"])
+	}
+}
+
+func TestDraftCreate_TableFlagConflictsWithStdinAttachments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.csv")
+	if err := os.WriteFile(path, []byte("a,b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
+	body := `{"blocks":` + richTextBlocksJSON("x") + `,"attachments":` + tableAttachmentJSON() + `}`
+	_, err := runWithMockSessionStdin(t, body, mux, "draft", "create", "C01ABC", "--table", path)
+	var oe *output.Error
+	if !errors.As(err, &oe) || oe.Err != "invalid_input" {
+		t.Fatalf("expected invalid_input for --table + stdin attachments, got %v", err)
+	}
+}
+
+func TestDraftUpdate_ScheduleOnlyPreservesTableOnlyDraft(t *testing.T) {
+	// A schedule-only update round-trips the existing draft. For a table-only
+	// draft (empty blocks), the table attachment alone must satisfy the
+	// renderable-content rule - otherwise the doomed-content guard would
+	// wrongly reject it.
+	existing := map[string]any{
+		"id": "Dr01234", "client_msg_id": "uuid-existing", "date_created": 1709251200,
+		"last_updated_ts": "1709251200.12",
+		"blocks":          []map[string]any{},
+		"attachments":     json.RawMessage(tableAttachmentJSON()),
+		"destinations":    []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	var gotUpdate url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotUpdate, _ = url.ParseQuery(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "draft": existing})
+	})
+
+	if _, err := runWithMockSession(t, mux, "draft", "update", "Dr01234", "--at", "2026-06-01"); err != nil {
+		t.Fatalf("schedule-only update of a table-only draft should succeed, got %v", err)
+	}
+	if !strings.Contains(gotUpdate.Get("attachments"), `"table"`) {
+		t.Errorf("the table attachment should be preserved, got %q", gotUpdate.Get("attachments"))
+	}
+}
+
+func TestDraftCreate_RejectsAttachmentWithoutTable(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
+	// An attachment that carries no table block is unsupported content.
+	body := `{"blocks":` + richTextBlocksJSON("x") + `,"attachments":[{"fallback":"x"}]}`
+	_, err := runWithMockSessionStdin(t, body, mux, "draft", "create", "C01ABC")
+	var oe *output.Error
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("expected invalid_blocks for an attachment with no table block, got %v", err)
 	}
 }
 

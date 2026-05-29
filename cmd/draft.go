@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,17 +26,18 @@ type DraftCmd struct {
 	Delete DraftDeleteCmd `cmd:"" help:"Delete drafts."`
 }
 
-// skillHint is the recovery pointer for validateBlocksShape rejections.
+// skillHint is the recovery pointer for draft block/attachment validation
+// rejections.
 // Agents read it from the JSON error on stderr; humans see it via --help
 // text. Points at the install command rather than a doc URL because the
 // SKILL.md is meant to live on the agent host, not be fetched ad-hoc.
 const skillHint = "For the rich_text shape, load the slack-cli skill (install: 'skills add tammersaleh/slack-cli -g -y')."
 
 type DraftListCmd struct {
-	Active          bool `help:"Exclude scheduled drafts (active only)."`
-	Limit           int  `help:"Page size." default:"50"`
-	IncludeSent     bool `help:"Include drafts already sent (suppressed by default)."`
-	IncludeDeleted  bool `help:"Include drafts marked deleted server-side (suppressed by default)."`
+	Active         bool `help:"Exclude scheduled drafts (active only)."`
+	Limit          int  `help:"Page size." default:"50"`
+	IncludeSent    bool `help:"Include drafts already sent (suppressed by default)."`
+	IncludeDeleted bool `help:"Include drafts marked deleted server-side (suppressed by default)."`
 }
 
 // draftData is the parsed draft object from Slack responses.
@@ -48,6 +51,7 @@ type draftData struct {
 	LastUpdatedTS       string          `json:"last_updated_ts"`
 	ClientLastUpdatedTS string          `json:"client_last_updated_ts"`
 	Blocks              json.RawMessage `json:"blocks"`
+	Attachments         json.RawMessage `json:"attachments,omitempty"`
 	FileIDs             []string        `json:"file_ids"`
 	IsFromComposer      bool            `json:"is_from_composer"`
 	IsDeleted           bool            `json:"is_deleted"`
@@ -139,29 +143,36 @@ type DraftCreateCmd struct {
 	Broadcast     bool   `help:"With --thread, also post to channel."`
 	At            string `help:"Schedule send at RFC 3339 timestamp or YYYY-MM-DD."`
 	DateScheduled int64  `help:"Schedule send at Unix epoch (alternative to --at)."`
+	Table         string `help:"Build a table from a CSV/TSV file and attach it (first row bold)."`
+	NoHeader      bool   `help:"With --table, treat the first row as data, not a bold header."`
 }
 
 func (DraftCreateCmd) Help() string {
-	return `Block Kit JSON is piped on stdin (required). Only rich_text
-top-level blocks are allowed - Slack Desktop's Drafts compose editor
-silently strips section / divider / header / context / table / data_table
-blocks when the user opens the draft. For tabular data, put a monospace
-ASCII table in a rich_text_preformatted element inside a top-level
-rich_text block. For the full Block Kit shape, load the slack-cli skill
-(install: 'skills add tammersaleh/slack-cli -g -y').
+	return `Pipe Block Kit JSON on stdin: either a bare array of top-level
+blocks, or an object {"blocks":[...],"attachments":[...]}.
+
+Top-level blocks must be rich_text - Slack's draft compose editor strips
+section / divider / header / context and bare table blocks when the user
+opens the draft. A table goes in an attachment instead: put a "table"
+block in attachments[].blocks[], or use --table to build one from CSV/TSV.
 
 Minimal invocation:
 
   echo '[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hello"}]}]}]' \
     | slack draft create '#general'
 
-Thread reply:
+With a table (the table block lives in an attachment):
+
+  slack draft create '#general' < payload.json   # {"blocks":[...],"attachments":[{"blocks":[{"type":"table",...}]}]}
+  slack draft create '#general' --table report.tsv   # build the table from a file (first row bold; --no-header to disable)
+
+Thread reply / scheduled send:
 
   slack draft create '#general' --thread 1713299000.123456 < blocks.json
+  slack draft create '#general' --at 2026-04-20T09:00:00-07:00 < blocks.json
 
-Scheduled send:
-
-  slack draft create '#general' --at 2026-04-20T09:00:00-07:00 < blocks.json`
+For the full Block Kit shape, load the slack-cli skill
+(install: 'skills add tammersaleh/slack-cli -g -y').`
 }
 
 func (c *DraftCreateCmd) Run(cli *CLI) error {
@@ -172,9 +183,18 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--at and --date-scheduled are mutually exclusive", Code: output.ExitGeneral}
 	}
 
-	blocksJSON, err := readBlocksRequired(cli)
+	payload, err := readDraftPayload(cli)
 	if err != nil {
 		return err
+	}
+	if payload, err = applyTableFlag(payload, c.Table, !c.NoHeader); err != nil {
+		return err
+	}
+	if payload.empty() {
+		return output.MissingBlocks()
+	}
+	if !payload.hasRenderableContent() {
+		return errNoRenderableContent()
 	}
 
 	scheduled := c.DateScheduled
@@ -211,11 +231,14 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	}
 
 	params := map[string]string{
-		"blocks":           blocksJSON,
+		"blocks":           payload.blocksOrEmpty(),
 		"destinations":     string(destsJSON),
 		"client_msg_id":    uuid.NewString(),
 		"file_ids":         "[]",
 		"is_from_composer": "true",
+	}
+	if payload.hasAttachments {
+		params["attachments"] = payload.attachments
 	}
 	if scheduled > 0 {
 		params["date_scheduled"] = strconv.FormatInt(scheduled, 10)
@@ -243,24 +266,29 @@ type DraftUpdateCmd struct {
 	At            string `help:"Reschedule send at RFC 3339 timestamp or YYYY-MM-DD."`
 	DateScheduled int64  `help:"Reschedule send at Unix epoch (use --clear-schedule to remove)."`
 	ClearSchedule bool   `help:"Remove scheduled send."`
+	Table         string `help:"Replace attachments with a table built from a CSV/TSV file (first row bold)."`
+	NoHeader      bool   `help:"With --table, treat the first row as data, not a bold header."`
 }
 
 func (DraftUpdateCmd) Help() string {
-	return `Replace a draft's blocks and/or reschedule it. Block Kit JSON
-on stdin is optional: if piped, it replaces the draft's 'blocks';
-if omitted, existing blocks are preserved (useful for schedule-only
-updates). Same rich_text-only rule as draft create.
+	return `Update a draft's content and/or reschedule it. Optional Block Kit
+JSON on stdin: a bare blocks array, or an object {"blocks":...,
+"attachments":...}. Each field is independent - a provided field replaces,
+an absent one is preserved; {"attachments":[]} clears attachments. --table
+replaces the attachments with a table built from a CSV/TSV file. Same
+rich_text-only rule for top-level blocks as draft create.
 
-If Slack Desktop has already tombstoned the draft (is_deleted=true),
-the CLI transparently creates a replacement at the same destination
-and emits the new draft ID to stdout, with a warning on stderr.
+If Slack Desktop has already tombstoned the draft (is_deleted=true), the
+CLI transparently creates a replacement at the same destination - carrying
+its blocks and attachments - and emits the new draft ID to stdout.
 
 Examples:
 
-  slack draft update Dr01234 < blocks.json           # replace content
+  slack draft update Dr01234 < blocks.json           # replace blocks
+  echo '{"attachments":[{"blocks":[{"type":"table","rows":[...]}]}]}' | slack draft update Dr01234
+  slack draft update Dr01234 --table report.tsv      # replace attachments with a table
   slack draft update Dr01234 --at 2026-04-22         # reschedule only
-  slack draft update Dr01234 --clear-schedule        # drop scheduled send
-  slack draft update Dr01234 --clear-schedule < blocks.json  # both`
+  slack draft update Dr01234 --clear-schedule        # drop scheduled send`
 }
 
 func (c *DraftUpdateCmd) Run(cli *CLI) error {
@@ -278,13 +306,17 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--at, --date-scheduled, and --clear-schedule are mutually exclusive", Code: output.ExitGeneral}
 	}
 
-	// Blocks come from stdin; empty means "keep existing blocks".
-	newBlocks, err := readBlocksIfProvided(cli)
+	// stdin payload (blocks and/or attachments); absent fields keep their
+	// existing values.
+	payload, err := readDraftPayload(cli)
 	if err != nil {
 		return err
 	}
-	if newBlocks == "" && scheduledFlags == 0 {
-		return &output.Error{Err: "invalid_input", Detail: "No update specified: pipe Block Kit JSON on stdin, or pass --at / --date-scheduled / --clear-schedule", Code: output.ExitGeneral}
+	if payload, err = applyTableFlag(payload, c.Table, !c.NoHeader); err != nil {
+		return err
+	}
+	if payload.empty() && scheduledFlags == 0 {
+		return &output.Error{Err: "invalid_input", Detail: "No update specified: pipe Block Kit JSON (blocks and/or attachments) on stdin, pass --table, or pass --at / --date-scheduled / --clear-schedule", Code: output.ExitGeneral}
 	}
 
 	client, err := cli.NewSessionClient()
@@ -303,14 +335,14 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 		return cli.ClassifyError(err)
 	}
 
-	intent, err := c.buildIntent(existing, newBlocks)
+	intent, err := c.buildIntent(existing, payload)
 	if err != nil {
 		return err
 	}
 
 	// Skip the doomed update when we already know the draft is tombstoned.
 	// Desktop's Drafts-panel reconciliation tombstones any server draft
-	// whose blocks lack a rich_text body (see validateBlocksShape), and
+	// whose blocks lack a rich_text body (see validateBlockShapes), and
 	// a second Slack client (browser, another Desktop) can tombstone one
 	// out of band too. Once tombstoned, drafts.update returns
 	// draft_update_invalid and drafts.delete returns draft_delete_invalid.
@@ -329,6 +361,9 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 		"file_ids":               intent.fileIDs,
 		"is_from_composer":       "true", // match drafts.create; heal old drafts stuck at false
 		"date_scheduled":         strconv.FormatInt(intent.scheduled, 10),
+	}
+	if intent.attachments != "" {
+		params["attachments"] = intent.attachments
 	}
 
 	data, err := client.PostInternalForm(ctx, "drafts.update", params)
@@ -357,21 +392,44 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 // in-place update and a replacement create. Built once per command.
 type draftWriteIntent struct {
 	blocks       string // JSON-encoded Block Kit array
+	attachments  string // JSON-encoded attachments array; "" omits the param
 	destinations string // JSON-encoded destinations array (normalized)
 	fileIDs      string // JSON-encoded file_ids array
 	scheduled    int64
 }
 
-func (c *DraftUpdateCmd) buildIntent(existing *draftData, newBlocks string) (*draftWriteIntent, error) {
+func (c *DraftUpdateCmd) buildIntent(existing *draftData, payload draftPayload) (*draftWriteIntent, error) {
+	// Tri-state per field: a provided field replaces, an absent one preserves
+	// the existing value. Provided fields were shape-checked at parse time.
 	blocksJSON := string(existing.Blocks)
-	if newBlocks != "" {
-		blocksJSON = newBlocks
-	} else if err := validateBlocksShape([]byte(blocksJSON)); err != nil {
-		// A schedule-only update would round-trip the existing blocks to
-		// drafts.update. If those blocks can't survive Desktop's
-		// reconciliation, skip the doomed call and tell the caller to
-		// pipe a replacement body.
+	if payload.hasBlocks {
+		blocksJSON = payload.blocks
+	}
+	if blocksJSON == "" || blocksJSON == "null" {
+		blocksJSON = "[]"
+	}
+
+	attachmentsJSON := string(existing.Attachments)
+	if payload.hasAttachments {
+		attachmentsJSON = payload.attachments
+	}
+	// Don't echo a server-sent null back as the attachments param; treat it
+	// as "none" so it's omitted (preserve-nothing) rather than sent.
+	if attachmentsJSON == "null" {
+		attachmentsJSON = ""
+	}
+
+	// Renderable-content rule on the EFFECTIVE draft. Re-running
+	// validateBlockShapes also guards a schedule-only update that would
+	// round-trip existing blocks unable to survive reconciliation. Existing
+	// attachments are detected leniently (round-tripped verbatim, not
+	// re-validated against the supported subset).
+	hasBody, err := validateBlockShapes([]byte(blocksJSON))
+	if err != nil {
 		return nil, err
+	}
+	if !hasBody && !attachmentsContainTable([]byte(attachmentsJSON)) {
+		return nil, errNoRenderableContent()
 	}
 
 	destsJSON, err := json.Marshal(normalizeDestinationsForWrite(existing.Destinations))
@@ -404,6 +462,7 @@ func (c *DraftUpdateCmd) buildIntent(existing *draftData, newBlocks string) (*dr
 
 	return &draftWriteIntent{
 		blocks:       blocksJSON,
+		attachments:  attachmentsJSON,
 		destinations: string(destsJSON),
 		fileIDs:      fileIDs,
 		scheduled:    scheduled,
@@ -415,8 +474,13 @@ func (c *DraftUpdateCmd) createReplacement(ctx context.Context, cli *CLI, client
 		"blocks":           intent.blocks,
 		"destinations":     intent.destinations,
 		"client_msg_id":    uuid.NewString(),
-		"file_ids":         "[]", // file attachments don't carry across to replacement
+		"file_ids":         "[]", // uploaded files don't carry across to a replacement
 		"is_from_composer": "true",
+	}
+	// Block attachments (e.g. a table) DO carry across - dropping them here
+	// would silently lose the table on the very path meant to preserve drafts.
+	if intent.attachments != "" {
+		params["attachments"] = intent.attachments
 	}
 	if intent.scheduled > 0 {
 		params["date_scheduled"] = strconv.FormatInt(intent.scheduled, 10)
@@ -558,94 +622,251 @@ func padDraftTS(ts string) string {
 	return ts[:i+1] + frac
 }
 
-// readBlocksRequired reads Block Kit JSON from stdin and returns it as a
-// string. Fails with missing_blocks if stdin is a TTY (nothing piped) or if
-// the input is empty.
-func readBlocksRequired(cli *CLI) (string, error) {
-	s, err := readBlocksIfProvided(cli)
-	if err != nil {
-		return "", err
-	}
-	if s == "" {
-		return "", output.MissingBlocks()
-	}
-	return s, nil
+// draftPayload is the parsed stdin payload for a draft write. stdin may be a
+// bare JSON array (the legacy "just blocks" form) or an object
+// {"blocks":[...],"attachments":[...]}. Tables live in attachments[].blocks[],
+// never top-level blocks (the compose editor strips them there). Presence is
+// tracked per field so `draft update` can tell "replace this" from "leave it
+// alone".
+type draftPayload struct {
+	blocks         string // JSON array; meaningful only when hasBlocks
+	hasBlocks      bool
+	attachments    string // JSON array; meaningful only when hasAttachments
+	hasAttachments bool
 }
 
-// readBlocksIfProvided reads Block Kit JSON from stdin if any is piped in.
-// Returns "" with no error when stdin is a TTY (interactive - nothing piped).
-// Runs validateBlocksShape, which checks the JSON shape and enforces that
-// at least one block is a rich_text with non-empty elements (anything less
-// gets tombstoned by Desktop). Deeper block-level semantics surface from
-// Slack's API as invalid_blocks.
-func readBlocksIfProvided(cli *CLI) (string, error) {
+func (p draftPayload) empty() bool { return !p.hasBlocks && !p.hasAttachments }
+
+// blocksOrEmpty returns the blocks JSON to send, defaulting to an empty array
+// when only attachments were provided (an attachments-only table draft).
+func (p draftPayload) blocksOrEmpty() string {
+	if p.hasBlocks {
+		return p.blocks
+	}
+	return "[]"
+}
+
+// hasRenderableContent reports whether a freshly-provided payload carries a
+// non-empty rich_text body or a table attachment. A draft with neither gets
+// tombstoned by Slack's reconciliation pass. Inputs are already shape-valid.
+func (p draftPayload) hasRenderableContent() bool {
+	if p.hasBlocks {
+		if has, _ := validateBlockShapes([]byte(p.blocks)); has {
+			return true
+		}
+	}
+	return p.hasAttachments && attachmentsContainTable([]byte(p.attachments))
+}
+
+// errNoRenderableContent is the shared "draft would tombstone" rejection.
+func errNoRenderableContent() error {
+	return &output.Error{
+		Err:    "invalid_blocks",
+		Detail: "a draft needs a non-empty rich_text block or a table attachment - Slack tombstones drafts with no renderable content.",
+		Hint:   skillHint,
+		Code:   output.ExitGeneral,
+	}
+}
+
+// applyTableFlag folds a --table CSV/TSV file into the payload as a table
+// attachment. It is mutually exclusive with stdin-provided attachments to
+// avoid silent merge/ordering questions.
+func applyTableFlag(p draftPayload, file string, header bool) (draftPayload, error) {
+	if file == "" {
+		return p, nil
+	}
+	if p.hasAttachments {
+		return p, &output.Error{Err: "invalid_input", Detail: "--table and stdin attachments are mutually exclusive; provide one or the other", Code: output.ExitGeneral}
+	}
+	att, err := buildTableAttachment(file, header)
+	if err != nil {
+		return p, err
+	}
+	p.attachments, p.hasAttachments = att, true
+	return p, nil
+}
+
+// buildTableAttachment reads a CSV/TSV file and renders it as a single table
+// block wrapped in an attachment. The delimiter is auto-detected (tab vs
+// comma) from the first line. With header, the first row's cells are bold
+// rich_text; all other cells are plain raw_text - matching what Slack's own
+// composer produces when you paste a table.
+func buildTableAttachment(path string, header bool) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", &output.Error{Err: "invalid_input", Detail: "reading --table file: " + err.Error(), Code: output.ExitGeneral}
+	}
+	data = bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")) // strip UTF-8 BOM
+	delim := ','
+	firstLine, _, _ := bytes.Cut(data, []byte{'\n'})
+	if bytes.IndexByte(firstLine, '\t') >= 0 {
+		delim = '\t'
+	}
+	r := csv.NewReader(bytes.NewReader(data))
+	r.Comma = delim
+	r.FieldsPerRecord = -1 // tolerate ragged rows
+	records, err := r.ReadAll()
+	if err != nil {
+		return "", &output.Error{Err: "invalid_input", Detail: "parsing --table file: " + err.Error(), Code: output.ExitGeneral}
+	}
+	if len(records) == 0 {
+		return "", &output.Error{Err: "invalid_input", Detail: "--table file has no rows", Code: output.ExitGeneral}
+	}
+	rows := make([][]map[string]any, len(records))
+	for i, rec := range records {
+		cells := make([]map[string]any, len(rec))
+		for j, field := range rec {
+			if header && i == 0 {
+				cells[j] = boldTableCell(field)
+			} else {
+				cells[j] = plainTableCell(field)
+			}
+		}
+		rows[i] = cells
+	}
+	table := map[string]any{"type": "table", "rows": rows}
+	att := []map[string]any{{"blocks": []map[string]any{table}, "fallback": "[table]"}}
+	b, err := json.Marshal(att)
+	if err != nil {
+		return "", &output.Error{Err: "encode_error", Detail: err.Error(), Code: output.ExitGeneral}
+	}
+	return string(b), nil
+}
+
+// plainTableCell is a raw_text table cell.
+func plainTableCell(s string) map[string]any {
+	return map[string]any{"type": "raw_text", "text": s}
+}
+
+// boldTableCell is a rich_text table cell with bold text, for header rows.
+func boldTableCell(s string) map[string]any {
+	return map[string]any{"type": "rich_text", "elements": []map[string]any{
+		{"type": "rich_text_section", "elements": []map[string]any{
+			{"type": "text", "text": s, "style": map[string]any{"bold": true}},
+		}},
+	}}
+}
+
+// readDraftPayload reads and shape-validates the stdin payload, if any. Returns
+// an empty payload when stdin is a TTY or nothing is piped. Shape validation
+// runs here; the renderable-content rule is applied by the caller (create
+// requires content in what's provided; update may inherit it from the existing
+// draft).
+func readDraftPayload(cli *CLI) (draftPayload, error) {
 	// In tests, cli.in is overridden with a bytes.Reader - always try to read.
 	// In production, skip the read if stdin is a terminal.
 	if cli.in == nil {
 		info, err := os.Stdin.Stat()
 		if err != nil {
-			return "", &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
+			return draftPayload{}, &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
 		}
 		if (info.Mode() & os.ModeCharDevice) != 0 {
-			return "", nil
+			return draftPayload{}, nil
 		}
 	}
 	raw, err := io.ReadAll(cli.Stdin())
 	if err != nil {
-		return "", &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
+		return draftPayload{}, &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
 	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" {
-		return "", nil
+	if strings.TrimSpace(string(raw)) == "" {
+		return draftPayload{}, nil
 	}
-	if err := validateBlocksShape([]byte(trimmed)); err != nil {
-		return "", err
-	}
-	return trimmed, nil
+	return parseDraftPayload(raw)
 }
 
-// validateBlocksShape is the local gate before shipping draft blocks to
-// Slack. Beyond basic JSON shape, it enforces:
-//
-//  1. Every top-level block is a non-empty rich_text. Slack Desktop's
-//     Drafts-panel reconciliation tombstones drafts without rich_text
-//     content, and its compose editor silently strips any non-rich_text
-//     top-level block when the user opens the draft to edit.
-//
-//  2. A rich_text_section directly before a rich_text_list,
-//     rich_text_preformatted, or rich_text_quote must terminate its
-//     element stream with a text inline whose `text` ends with "\n".
-//     Otherwise the following container absorbs the section's content
-//     (the heading glues onto the first bullet / merges into the code
-//     block / glues into the quote). Slack's own compose editor always
-//     emits the trailing newline; hand-built blocks must match.
-//     The check spans top-level rich_text boundaries because Desktop
-//     flattens adjacent rich_text blocks before rendering.
-func validateBlocksShape(raw []byte) error {
-	var arr []map[string]any
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		return &output.Error{
+// parseDraftPayload accepts either a bare blocks array or a {blocks,
+// attachments} object and shape-validates whatever is present.
+func parseDraftPayload(raw []byte) (draftPayload, error) {
+	var p draftPayload
+	switch firstJSONToken(raw) {
+	case '[':
+		p.blocks, p.hasBlocks = string(raw), true
+	case '{':
+		var obj struct {
+			Blocks      *json.RawMessage `json:"blocks"`
+			Attachments *json.RawMessage `json:"attachments"`
+		}
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			return p, &output.Error{Err: "invalid_blocks", Detail: "stdin is not valid JSON: " + err.Error(), Code: output.ExitGeneral}
+		}
+		// A literal JSON null for either field is treated as absent (preserve
+		// on update), not as a value to send.
+		if obj.Blocks != nil && string(*obj.Blocks) != "null" {
+			p.blocks, p.hasBlocks = string(*obj.Blocks), true
+		}
+		if obj.Attachments != nil && string(*obj.Attachments) != "null" {
+			p.attachments, p.hasAttachments = string(*obj.Attachments), true
+		}
+	default:
+		return p, &output.Error{
 			Err:    "invalid_blocks",
-			Detail: "blocks input is not a JSON array of objects: " + err.Error(),
+			Detail: "stdin must be a JSON array of blocks or an object with \"blocks\" and/or \"attachments\". Tables go in attachments (or use --table); prose goes in top-level rich_text blocks.",
+			Hint:   skillHint,
 			Code:   output.ExitGeneral,
 		}
 	}
-	if len(arr) == 0 {
-		return &output.Error{Err: "invalid_blocks", Detail: "blocks array is empty", Code: output.ExitGeneral}
+	if p.hasBlocks {
+		if _, err := validateBlockShapes([]byte(p.blocks)); err != nil {
+			return p, err
+		}
 	}
-	hasRichText := false
+	if p.hasAttachments {
+		if _, err := validateAttachmentBlocks([]byte(p.attachments)); err != nil {
+			return p, err
+		}
+	}
+	return p, nil
+}
+
+// firstJSONToken returns the first non-whitespace byte of raw, or 0 if none.
+func firstJSONToken(raw []byte) byte {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			return b
+		}
+	}
+	return 0
+}
+
+// validateBlockShapes is the local gate for a draft's top-level blocks. It
+// enforces:
+//
+//  1. Every top-level block is rich_text. Slack Desktop's Drafts compose
+//     editor silently strips every other top-level block type when the user
+//     opens the draft, and table/data_table belong in attachments (the only
+//     place a draft preserves them).
+//
+//  2. A rich_text_section directly before a rich_text_list,
+//     rich_text_preformatted, or rich_text_quote must terminate its element
+//     stream with a text inline whose `text` ends with "\n", or the following
+//     container absorbs it. The check spans top-level rich_text boundaries
+//     because Desktop flattens adjacent rich_text blocks before rendering.
+//
+// It returns whether a non-empty rich_text body is present so the caller can
+// apply the renderable-content rule (a draft needs a body or a table
+// attachment, else reconciliation tombstones it).
+func validateBlockShapes(raw []byte) (hasRichTextBody bool, err error) {
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return false, &output.Error{
+			Err:    "invalid_blocks",
+			Detail: "blocks is not a JSON array of objects: " + err.Error(),
+			Code:   output.ExitGeneral,
+		}
+	}
 	// Track the last recognized container type seen across the flattened
 	// element stream. Desktop merges adjacent top-level rich_text blocks
 	// before rendering, so absorption reaches across block boundaries.
-	// Unrecognized/untyped elements don't reset this - they'd be invisible
-	// to Desktop's flattener too.
 	var prevElem string
 	var prevBlock, prevIdx int
 	var prevSection map[string]any
 	for i, block := range arr {
 		t, ok := block["type"].(string)
 		if !ok || t == "" {
-			return &output.Error{
+			return false, &output.Error{
 				Err:    "invalid_blocks",
 				Detail: fmt.Sprintf("blocks[%d] is missing a string \"type\" field", i),
 				Code:   output.ExitGeneral,
@@ -654,22 +875,20 @@ func validateBlocksShape(raw []byte) error {
 		if t != "rich_text" {
 			// table/data_table are uniquely seductive: unlike section/divider,
 			// drafts.create returns ok and stores them verbatim, so they feel
-			// supported. They are not - Slack's compose editor has no table
-			// control and strips them on open (a table-only draft is also
-			// tombstoned). Steer the caller to the preformatted fallback rather
-			// than the generic "only rich_text" message. `table` is verified
-			// end-to-end (2026-05-29, see docs/draft-messages.md); `data_table`
-			// is the same unsupported top-level block class (non-rich_text,
-			// API-accepted) and is rejected identically.
+			// supported as top-level blocks. They are not - the compose editor
+			// strips them on open. A `table` IS preserved in
+			// attachments[].blocks[] (verified end-to-end 2026-05-29, see
+			// docs/draft-messages.md; data_table is the same block class), so
+			// steer the caller there rather than at the generic message.
 			if t == "table" || t == "data_table" {
-				return &output.Error{
+				return false, &output.Error{
 					Err:    "invalid_blocks",
-					Detail: fmt.Sprintf("blocks[%d] is a %q block. Slack's drafts API accepts table/data_table blocks but the draft compose editor has no table support and strips them when the user opens the draft (a table-only draft is also tombstoned). For tabular data in a draft, put a monospace ASCII table in a rich_text_preformatted element inside a top-level rich_text block.", i, t),
+					Detail: fmt.Sprintf("blocks[%d] is a %q block. A table in top-level blocks is stripped by Slack's draft compose editor. Put the table in an attachment instead - pipe {\"blocks\":[...],\"attachments\":[{\"blocks\":[<table>]}]} - or use --table to build one from CSV/TSV.", i, t),
 					Hint:   skillHint,
 					Code:   output.ExitGeneral,
 				}
 			}
-			return &output.Error{
+			return false, &output.Error{
 				Err:    "invalid_blocks",
 				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text top-level blocks. Slack Desktop's Drafts compose editor strips non-rich_text blocks when the user opens the draft.", i, t),
 				Hint:   skillHint,
@@ -678,7 +897,7 @@ func validateBlocksShape(raw []byte) error {
 		}
 		elems, _ := block["elements"].([]any)
 		if len(elems) > 0 {
-			hasRichText = true
+			hasRichTextBody = true
 		}
 		for j, elem := range elems {
 			em, ok := elem.(map[string]any)
@@ -690,7 +909,7 @@ func validateBlocksShape(raw []byte) error {
 				continue
 			}
 			if absorbingContainerType(et) && prevElem == "rich_text_section" && !sectionEndsWithNewline(prevSection) {
-				return &output.Error{
+				return false, &output.Error{
 					Err:    "invalid_blocks",
 					Detail: fmt.Sprintf("blocks[%d].elements[%d] is a %s directly after the rich_text_section at blocks[%d].elements[%d]; Slack absorbs the section into the following container (heading glues onto the first bullet / merges into the code block / glues into the quote) unless the section's element stream ends with a text inline whose text ends with \"\\n\". Append {\"type\":\"text\",\"text\":\"\\n\"} (or extend the existing trailing text element with \"\\n\") to the section's elements.", i, j, et, prevBlock, prevIdx),
 					Hint:   skillHint,
@@ -705,15 +924,74 @@ func validateBlocksShape(raw []byte) error {
 			prevElem, prevBlock, prevIdx = et, i, j
 		}
 	}
-	if !hasRichText {
-		return &output.Error{
+	return hasRichTextBody, nil
+}
+
+// validateAttachmentBlocks shape-checks CALLER-SUPPLIED attachments. Each
+// attachment's blocks must be table or data_table - the only block types
+// verified to survive a draft round-trip in attachments (table end-to-end;
+// data_table is the same block class, API-confirmed). Other attachment shapes
+// Slack itself round-trips are NOT validated here; this gate only constrains
+// what the caller hands us. Returns whether a table is present for the
+// renderable-content rule.
+func validateAttachmentBlocks(raw []byte) (hasTable bool, err error) {
+	var arr []struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return false, &output.Error{
 			Err:    "invalid_blocks",
-			Detail: "drafts must include at least one rich_text block with non-empty elements. Slack Desktop tombstones drafts without rich_text content.",
-			Hint:   skillHint,
+			Detail: "attachments is not a JSON array of objects: " + err.Error(),
 			Code:   output.ExitGeneral,
 		}
 	}
-	return nil
+	for i, att := range arr {
+		if len(att.Blocks) == 0 {
+			return false, &output.Error{
+				Err:    "invalid_blocks",
+				Detail: fmt.Sprintf("attachments[%d] has no blocks; a draft attachment must hold a table / data_table block. Put prose in top-level rich_text blocks; only the table belongs in the attachment.", i),
+				Hint:   skillHint,
+				Code:   output.ExitGeneral,
+			}
+		}
+		for j, block := range att.Blocks {
+			t, _ := block["type"].(string)
+			if t != "table" && t != "data_table" {
+				return false, &output.Error{
+					Err:    "invalid_blocks",
+					Detail: fmt.Sprintf("attachments[%d].blocks[%d] is %q; draft attachments support only table / data_table blocks. Put prose in top-level rich_text blocks; only the table belongs in the attachment.", i, j, t),
+					Hint:   skillHint,
+					Code:   output.ExitGeneral,
+				}
+			}
+			hasTable = true
+		}
+	}
+	return hasTable, nil
+}
+
+// attachmentsContainTable reports whether an attachments array carries a
+// table/data_table block. Unlike validateAttachmentBlocks it does not reject
+// anything - it is used to detect renderable content in EXISTING attachments
+// (which we round-trip verbatim rather than re-validate).
+func attachmentsContainTable(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var arr []struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if json.Unmarshal(raw, &arr) != nil {
+		return false
+	}
+	for _, att := range arr {
+		for _, block := range att.Blocks {
+			if t, _ := block["type"].(string); t == "table" || t == "data_table" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // absorbingContainerType reports whether a rich_text element type
@@ -782,6 +1060,9 @@ func formatDraft(d draftData) map[string]any {
 		"date_scheduled":   d.DateScheduled,
 		"last_updated_ts":  d.LastUpdatedTS,
 		"blocks":           d.Blocks,
+	}
+	if len(d.Attachments) > 0 {
+		m["attachments"] = d.Attachments
 	}
 	if d.DateScheduled > 0 {
 		m["date_scheduled_iso"] = time.Unix(d.DateScheduled, 0).UTC().Format(time.RFC3339)

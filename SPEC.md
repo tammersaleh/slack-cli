@@ -1139,10 +1139,13 @@ slack draft create <channel> [flags]
   --broadcast         When set with --thread, also post to channel.
   --at                Schedule send at RFC 3339 timestamp or YYYY-MM-DD.
   --date-scheduled    Schedule send at Unix epoch (alternative to --at).
+  --table             Build a table from a CSV/TSV file and attach it.
+  --no-header         With --table, treat the first row as data, not a bold header.
 
-Block Kit JSON on stdin (required). The array you pipe becomes the
-draft's `blocks` field verbatim. No plain-text shortcut - this CLI is
-for agents, which can always emit structured JSON.
+Block Kit JSON on stdin: either a bare array of top-level blocks, or an
+object {"blocks":[...],"attachments":[...]}. Top-level blocks must be
+rich_text; tables go in attachments[].blocks[] (or use --table). No
+plain-text shortcut - this CLI is for agents, which emit structured JSON.
 ```
 
 Channel accepts `#name` or `Cxxx`. For DM drafts, use the channel ID
@@ -1173,16 +1176,23 @@ Scheduled send:
 $ slack draft create #general --at 2026-04-20T09:00:00-04:00 < blocks.json
 ```
 
+Table (CSV/TSV file, or a `table` block in the stdin object's attachments):
+
+```
+$ slack draft create #general --table report.tsv
+$ slack draft create #general < payload.json   # {"blocks":[...],"attachments":[{"blocks":[{"type":"table","rows":[...]}]}]}
+```
+
 Errors:
 
 - `channel_not_found` (exit 1): No channel matching the input.
-- `missing_blocks` (exit 1): No Block Kit JSON piped on stdin.
-- `invalid_blocks` (exit 1): stdin is not a non-empty JSON array of objects, a top-level block is not `rich_text`, or no `rich_text` block has non-empty `elements`.
-- `invalid_input` (exit 1): `--broadcast` without `--thread`, or conflicting schedule flags.
+- `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
+- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, a caller-supplied attachment block isn't `table`/`data_table`, or the draft has no renderable content (no non-empty `rich_text` body and no table attachment).
+- `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, or `--table` together with stdin attachments.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
 - `not_authed` (exit 2): No session token.
 
-Local validation enforces: valid JSON, non-empty array, every top-level block is `rich_text`, at least one with non-empty `elements`. Slack's API accepts non-`rich_text` top-level blocks, but Slack Desktop's Drafts compose editor silently strips them when rendering - same user-visible effect as a dropped payload, so the CLI rejects them locally. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's `invalid_blocks` response.
+Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`; caller-supplied attachment blocks are `table`/`data_table`; and the draft has renderable content (a non-empty `rich_text` block or a table attachment). Slack's API accepts non-`rich_text` top-level blocks, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
 
 Slack API: `drafts.create`
 
@@ -1193,10 +1203,13 @@ slack draft update <draft_id> [flags]
   --at                Reschedule send at RFC 3339 timestamp.
   --date-scheduled    Reschedule send at Unix epoch (use --clear-schedule to zero).
   --clear-schedule    Remove scheduled send.
+  --table             Replace attachments with a table built from a CSV/TSV file.
+  --no-header         With --table, treat the first row as data, not a bold header.
 
-Optional Block Kit JSON on stdin. If piped, replaces the draft's
-`blocks`. If omitted, existing blocks are preserved (useful for
-schedule-only updates).
+Optional Block Kit JSON on stdin: a bare blocks array, or an object
+{"blocks":...,"attachments":...}. Each field is independent - a provided
+field replaces, an absent one is preserved; {"attachments":[]} clears
+attachments. Omit stdin entirely for a schedule-only update.
 ```
 
 `client_last_updated_ts` is fetched from `drafts.list` and padded to 7
@@ -1206,8 +1219,8 @@ Auto-replace on tombstoned drafts: when Slack Desktop marks a draft
 `is_deleted: true` (can happen after viewing a CLI-created draft in the
 Desktop client), `drafts.update` and `drafts.delete` both reject the
 draft. This CLI detects the tombstone and transparently creates a fresh
-draft at the same destination with the new content. The warning goes to
-stderr; the new draft object lands on stdout as usual.
+draft at the same destination, carrying its blocks and attachments. The
+warning goes to stderr; the new draft object lands on stdout as usual.
 
 ```
 $ slack draft update Dr01234 < blocks.json
@@ -1224,8 +1237,8 @@ $ slack draft update Dr01234 --at 2026-04-21T09:00:00-04:00
 Errors:
 
 - `draft_not_found` (exit 1): No draft with the given id.
-- `invalid_input` (exit 1): No change specified, or conflicting schedule flags.
-- `invalid_blocks` (exit 1): stdin input is not valid Block Kit shape.
+- `invalid_input` (exit 1): No change specified, conflicting schedule flags, or `--table` together with stdin attachments.
+- `invalid_blocks` (exit 1): stdin isn't a valid blocks array / `{blocks, attachments}` object, or the resulting draft has no renderable content.
 - `not_authed` (exit 2): No session token.
 
 Slack API: `drafts.update` (or `drafts.create` on auto-replace)

@@ -105,11 +105,12 @@ func TestSkill_DraftGuidance(t *testing.T) {
 		"internal_error",
 		// section+mrkdwn looks like it works but tombstones into a leaked draft.
 		"draft_delete_invalid",
-		// Tables are app-only blocks the compose editor strips; the skill must
-		// name them and point at the monospace preformatted fallback. Assert
-		// content (not heading level) so a hollow section can't pass.
-		"data_table",
+		// Tables are draftable via attachments (not top-level blocks). The
+		// skill must show the attachment shape and the --table helper, plus
+		// the inline monospace fallback. Assert content, not heading level.
 		"Tabular data",
+		"attachments[].blocks[]",
+		"--table FILE",
 		"monospace ASCII",
 	} {
 		if !strings.Contains(out, want) {
