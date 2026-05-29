@@ -340,11 +340,13 @@ In top-level blocks the compose editor strips it on open; in an
 attachment it survives and renders as an editable Table card.
 
 Verified 2026-05-29 against the live `drafts.*` API plus the
-`app.slack.com` compose editor (DOM inspection), self-DM only. `table`
-was tested end-to-end (created via paste and via raw `drafts.create`,
-through reconciliation and reopen). `data_table` was confirmed at the
-API only (`drafts.create` returns ok); it is the same block class and
-treated identically.
+`app.slack.com` compose editor (DOM inspection), self-DM only. Both
+`table` and `data_table` were tested end-to-end (created via raw
+`drafts.create`, through reconciliation and reopen). They diverge:
+`table` survives in an attachment and renders as an editable Table card,
+but `data_table` (the interactive variant) is stripped from the compose
+editor even in an attachment, and a data_table-only draft is tombstoned.
+So `data_table` is NOT draftable - the CLI rejects it.
 
 History: an earlier pass shipped the conclusion "tables can't be
 drafted." It had only tried a `table` in *top-level blocks*, watched the
@@ -356,6 +358,8 @@ editor strip it, and stopped. The fix is the attachment location below.
 | `[rich_text, table]` (both top-level)           | ok     | yes (rich_text body)     | no - table stripped  |
 | `table` in `attachments[].blocks[]` + rich_text | ok     | yes                      | yes - Table card     |
 | `table` in `attachments[].blocks[]`, no blocks  | ok     | yes                      | yes - Table card     |
+| `data_table` in `attachments[]` + rich_text     | ok     | yes (rich_text body)     | no - stripped        |
+| `data_table` in `attachments[]`, no blocks      | ok     | no (tombstoned)          | n/a - gone           |
 | `rich_text_preformatted` ASCII table            | ok     | yes                      | yes - monospace text |
 
 How Slack itself does it: pasting tabular data into the composer (or
@@ -380,7 +384,7 @@ The CLI accepts a stdin object `{"blocks":[...],"attachments":[...]}`, or
 builds a table attachment from CSV/TSV via `--table`. `validateBlockShapes`
 still rejects a `table` in top-level blocks (pointing the caller at
 attachments); `validateAttachmentBlocks` restricts caller-supplied
-attachment blocks to `table`/`data_table` (the verified-draftable types)
+attachment blocks to `table` (it rejects `data_table` - not draftable)
 while round-tripping existing attachments verbatim. The tombstone
 auto-replace path carries attachments across. See `cmd/draft.go` and
 `skills/slack-cli/SKILL.md` "Tabular data".

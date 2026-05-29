@@ -112,6 +112,9 @@ func TestSkill_DraftGuidance(t *testing.T) {
 		"attachments[].blocks[]",
 		"--table FILE",
 		"monospace ASCII",
+		// data_table (interactive variant) is NOT draftable - the skill must
+		// warn so agents don't reach for it.
+		"data_table",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected skill output to mention %q for draft rendering guidance", want)

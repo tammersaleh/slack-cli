@@ -836,8 +836,8 @@ func firstJSONToken(raw []byte) byte {
 //
 //  1. Every top-level block is rich_text. Slack Desktop's Drafts compose
 //     editor silently strips every other top-level block type when the user
-//     opens the draft, and table/data_table belong in attachments (the only
-//     place a draft preserves them).
+//     opens the draft. A table belongs in an attachment (the only place a
+//     draft preserves it); data_table isn't draftable anywhere.
 //
 //  2. A rich_text_section directly before a rich_text_list,
 //     rich_text_preformatted, or rich_text_quote must terminate its element
@@ -873,17 +873,25 @@ func validateBlockShapes(raw []byte) (hasRichTextBody bool, err error) {
 			}
 		}
 		if t != "rich_text" {
-			// table/data_table are uniquely seductive: unlike section/divider,
-			// drafts.create returns ok and stores them verbatim, so they feel
-			// supported as top-level blocks. They are not - the compose editor
-			// strips them on open. A `table` IS preserved in
-			// attachments[].blocks[] (verified end-to-end 2026-05-29, see
-			// docs/draft-messages.md; data_table is the same block class), so
-			// steer the caller there rather than at the generic message.
-			if t == "table" || t == "data_table" {
+			// table/data_table feel supported as top-level blocks (drafts.create
+			// returns ok and stores them) but the compose editor strips them on
+			// open. The two diverge in attachments, verified end-to-end
+			// 2026-05-29 (see docs/draft-messages.md): a `table` survives and
+			// renders as an editable Table card, but a `data_table` (the
+			// interactive variant) is still stripped and a data_table-only draft
+			// is tombstoned - it is not draftable at all. Steer accordingly.
+			if t == "data_table" {
 				return false, &output.Error{
 					Err:    "invalid_blocks",
-					Detail: fmt.Sprintf("blocks[%d] is a %q block. A table in top-level blocks is stripped by Slack's draft compose editor. Put the table in an attachment instead - pipe {\"blocks\":[...],\"attachments\":[{\"blocks\":[<table>]}]} - or use --table to build one from CSV/TSV.", i, t),
+					Detail: fmt.Sprintf("blocks[%d] is a data_table block. data_table is stripped from drafts and a data_table-only draft is tombstoned - it is not draftable, even in an attachment. Use a table block (in an attachment, or via --table) instead.", i),
+					Hint:   skillHint,
+					Code:   output.ExitGeneral,
+				}
+			}
+			if t == "table" {
+				return false, &output.Error{
+					Err:    "invalid_blocks",
+					Detail: fmt.Sprintf("blocks[%d] is a table block. A table in top-level blocks is stripped by Slack's draft compose editor. Put the table in an attachment instead - pipe {\"blocks\":[...],\"attachments\":[{\"blocks\":[<table>]}]} - or use --table to build one from CSV/TSV.", i),
 					Hint:   skillHint,
 					Code:   output.ExitGeneral,
 				}
@@ -928,12 +936,13 @@ func validateBlockShapes(raw []byte) (hasRichTextBody bool, err error) {
 }
 
 // validateAttachmentBlocks shape-checks CALLER-SUPPLIED attachments. Each
-// attachment's blocks must be table or data_table - the only block types
-// verified to survive a draft round-trip in attachments (table end-to-end;
-// data_table is the same block class, API-confirmed). Other attachment shapes
-// Slack itself round-trips are NOT validated here; this gate only constrains
-// what the caller hands us. Returns whether a table is present for the
-// renderable-content rule.
+// attachment's blocks must be a `table` - the only block type that survives a
+// draft round-trip in attachments (verified end-to-end 2026-05-29). A
+// `data_table` (the interactive variant) is rejected: the compose editor
+// strips it and a data_table-only draft is tombstoned, so it is not draftable.
+// Other attachment shapes Slack itself round-trips are NOT validated here; this
+// gate only constrains what the caller hands us. Returns whether a table is
+// present for the renderable-content rule.
 func validateAttachmentBlocks(raw []byte) (hasTable bool, err error) {
 	var arr []struct {
 		Blocks []map[string]any `json:"blocks"`
@@ -949,17 +958,25 @@ func validateAttachmentBlocks(raw []byte) (hasTable bool, err error) {
 		if len(att.Blocks) == 0 {
 			return false, &output.Error{
 				Err:    "invalid_blocks",
-				Detail: fmt.Sprintf("attachments[%d] has no blocks; a draft attachment must hold a table / data_table block. Put prose in top-level rich_text blocks; only the table belongs in the attachment.", i),
+				Detail: fmt.Sprintf("attachments[%d] has no blocks; a draft attachment must hold a table block. Put prose in top-level rich_text blocks; only a table belongs in the attachment.", i),
 				Hint:   skillHint,
 				Code:   output.ExitGeneral,
 			}
 		}
 		for j, block := range att.Blocks {
 			t, _ := block["type"].(string)
-			if t != "table" && t != "data_table" {
+			if t == "data_table" {
 				return false, &output.Error{
 					Err:    "invalid_blocks",
-					Detail: fmt.Sprintf("attachments[%d].blocks[%d] is %q; draft attachments support only table / data_table blocks. Put prose in top-level rich_text blocks; only the table belongs in the attachment.", i, j, t),
+					Detail: fmt.Sprintf("attachments[%d].blocks[%d] is a data_table; data_table is not draftable - the compose editor strips it and a data_table-only draft is tombstoned. Use a table block instead.", i, j),
+					Hint:   skillHint,
+					Code:   output.ExitGeneral,
+				}
+			}
+			if t != "table" {
+				return false, &output.Error{
+					Err:    "invalid_blocks",
+					Detail: fmt.Sprintf("attachments[%d].blocks[%d] is %q; draft attachments support only table blocks. Put prose in top-level rich_text blocks; only a table belongs in the attachment.", i, j, t),
 					Hint:   skillHint,
 					Code:   output.ExitGeneral,
 				}
@@ -971,9 +988,10 @@ func validateAttachmentBlocks(raw []byte) (hasTable bool, err error) {
 }
 
 // attachmentsContainTable reports whether an attachments array carries a
-// table/data_table block. Unlike validateAttachmentBlocks it does not reject
-// anything - it is used to detect renderable content in EXISTING attachments
-// (which we round-trip verbatim rather than re-validate).
+// `table` block - the only attachment content that renders in a draft. Unlike
+// validateAttachmentBlocks it rejects nothing; it detects renderable content in
+// EXISTING attachments (round-tripped verbatim rather than re-validated). A
+// data_table does NOT count: it is stripped/tombstoned, so it is not renderable.
 func attachmentsContainTable(raw []byte) bool {
 	if len(raw) == 0 {
 		return false
@@ -986,7 +1004,7 @@ func attachmentsContainTable(raw []byte) bool {
 	}
 	for _, att := range arr {
 		for _, block := range att.Blocks {
-			if t, _ := block["type"].(string); t == "table" || t == "data_table" {
+			if t, _ := block["type"].(string); t == "table" {
 				return true
 			}
 		}
