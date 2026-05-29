@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/tammersaleh/slack-cli/compare/v3.1.1...v3.2.0) (2026-05-29)
+
+
+### Features
+
+* draft tables via attachments (blocks object + --table) ([db26a73](https://github.com/tammersaleh/slack-cli/commit/db26a73b78003802b974c582572fc2ea9ef26e35))
+
 ## [3.1.1](https://github.com/tammersaleh/slack-cli/compare/v3.1.0...v3.1.1) (2026-05-29)
 
 
