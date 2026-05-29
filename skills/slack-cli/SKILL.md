@@ -250,6 +250,17 @@ the rejection less surprising and discourages bypassing the CLI:
   recommends for LLM output): `drafts.create` returns
   `internal_error` - the drafts API doesn't support it,
   regardless of content.
+- **`table` / `data_table` blocks** (Slack's native table
+  blocks): `drafts.create` returns ok and stores them verbatim, so
+  they look supported - but Slack's compose editor has no table
+  control and silently strips the table when the user opens the
+  draft (they would send a message with no table). A table-only
+  draft, having no `rich_text` body, is additionally tombstoned by
+  the reconciliation pass within seconds. `table`/`data_table` are
+  app-only `chat.postMessage` blocks and this CLI never posts. For
+  tabular data in a draft, use a monospace ASCII table in a
+  `rich_text_preformatted` element inside a top-level `rich_text`
+  block (see Tabular data below).
 - **`section` + `mrkdwn`**: `drafts.create` returns ok,
   but Slack Desktop's Drafts-panel reconciliation tombstones the
   draft (sets `is_deleted=true` on the server) within seconds.
@@ -471,6 +482,27 @@ literal `•` characters. Tradeoff: the `•` markers
 are plain text, so the recipient can't indent or reorder them like a
 native list - but you avoid the section terminator rule entirely.
 
+##### Tabular data
+
+There is no table in a draft. Slack's `table` and `data_table`
+blocks are app-only (`chat.postMessage`) and the draft compose editor
+strips them on open (see "look right but break" above), so a drafted
+table reaches the user as nothing. Render columns as a monospace ASCII
+table in a `rich_text_preformatted` element inside a top-level
+`rich_text` block - preformatted is the only container whose column
+alignment holds:
+
+```json
+[{"type":"rich_text","elements":[
+  {"type":"rich_text_section","elements":[{"type":"text","text":"Cluster status:\n"}]},
+  {"type":"rich_text_preformatted","elements":[{"type":"text","text":"Region    Status\n--------  --------\nus-east   green\nus-west   degraded"}]}
+]}]
+```
+
+Pad the columns with spaces yourself - the monospace block keeps them
+aligned. The heading section ends with `\n` so the preformatted block
+doesn't absorb it (the section terminator rule above).
+
 
 ##### Validation
 
@@ -481,10 +513,11 @@ directly preceding `rich_text_list`, `rich_text_preformatted`,
 or `rich_text_quote` must terminate with a text inline whose
 `text` ends with `\n` (trailing empty text inlines
 are ignored). All failures emit `invalid_blocks` locally so
-Slack never sees the bad shape. Semantic errors inside blocks
-(missing required subfields, unknown inline types, malformed style
-objects) surface as `invalid_blocks` from Slack's API, not
-locally.
+Slack never sees the bad shape. Semantic errors inside otherwise-valid
+blocks (missing required subfields, unknown inline types, malformed
+style objects, a `table` nested in a `rich_text` element) aren't
+validated locally - Slack rejects them upstream (the error code
+varies, e.g. `invalid_blocks` or `invalid_message`).
 
 ### User State
 
