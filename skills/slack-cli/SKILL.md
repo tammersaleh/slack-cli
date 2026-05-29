@@ -220,23 +220,27 @@ slack section create <name>
 ### Drafts (requires session token)
 
 Stage unsent messages. The CLI never sends - the human sends from the
-Slack app. Block Kit JSON is always piped on stdin; there is no
-plain-text shortcut.
+Slack app. Block Kit JSON is piped on stdin; there is no plain-text
+shortcut.
 
 ```
 slack draft list [--active] [--include-sent] [--include-deleted] [--limit N]
-slack draft create <channel> [--thread TS [--broadcast]] [--at RFC3339] < blocks.json
-slack draft update <draft-id> [--at RFC3339] [--clear-schedule] [< blocks.json]
+slack draft create <channel> [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] < payload.json
+slack draft update <draft-id> [--at RFC3339] [--clear-schedule] [--table FILE] [< payload.json]
 slack draft delete <draft-id>...
 ```
 
 #### Block Kit for drafts
 
-Drafts must contain only `rich_text` top-level blocks, and at
-least one must have non-empty `elements`. The CLI rejects
-non-rich_text blocks up front with `invalid_blocks`. Express
-anything that would normally be a `section` or `header` (bold
-headings, mrkdwn prose) inside a rich_text block instead.
+stdin is either a bare array of top-level blocks (prose), or an object
+`{"blocks":[...],"attachments":[...]}`. Top-level blocks must be
+`rich_text` - Slack's draft compose editor strips every other top-level
+block type when the user opens the draft, so express `section`/`header`
+headings as bold `rich_text` instead. A draft needs renderable content:
+at least one `rich_text` block with non-empty `elements`, **or** a table
+attachment - one with neither is tombstoned. **Tables go in attachments,
+not top-level blocks** (see Tabular data). The CLI rejects bad shapes up
+front with `invalid_blocks`.
 
 ##### Block types that look right but break
 
@@ -250,17 +254,14 @@ the rejection less surprising and discourages bypassing the CLI:
   recommends for LLM output): `drafts.create` returns
   `internal_error` - the drafts API doesn't support it,
   regardless of content.
-- **`table` / `data_table` blocks** (Slack's native table
-  blocks): `drafts.create` returns ok and stores them verbatim, so
-  they look supported - but Slack's compose editor has no table
-  control and silently strips the table when the user opens the
-  draft (they would send a message with no table). A table-only
-  draft, having no `rich_text` body, is additionally tombstoned by
-  the reconciliation pass within seconds. `table`/`data_table` are
-  app-only `chat.postMessage` blocks and this CLI never posts. For
-  tabular data in a draft, use a monospace ASCII table in a
-  `rich_text_preformatted` element inside a top-level `rich_text`
-  block (see Tabular data below).
+- **`table` / `data_table` as a *top-level* block**:
+  `drafts.create` returns ok and stores it, so it looks supported -
+  but Slack's compose editor strips the table when the user opens the
+  draft (and a table-only top-level draft, having no `rich_text` body,
+  is tombstoned within seconds). Tables are not broken in drafts -
+  they just belong in an **attachment**: put the `table` block in
+  `attachments[].blocks[]`, where it survives and renders as a Table
+  card. See Tabular data below.
 - **`section` + `mrkdwn`**: `drafts.create` returns ok,
   but Slack Desktop's Drafts-panel reconciliation tombstones the
   draft (sets `is_deleted=true` on the server) within seconds.
@@ -484,13 +485,43 @@ native list - but you avoid the section terminator rule entirely.
 
 ##### Tabular data
 
-There is no table in a draft. Slack's `table` and `data_table`
-blocks are app-only (`chat.postMessage`) and the draft compose editor
-strips them on open (see "look right but break" above), so a drafted
-table reaches the user as nothing. Render columns as a monospace ASCII
-table in a `rich_text_preformatted` element inside a top-level
-`rich_text` block - preformatted is the only container whose column
-alignment holds:
+Tables ARE draftable - the `table` block (or `data_table` for the
+interactive variant) goes in an **attachment**, not in top-level
+`blocks` (where the compose editor strips it). Three ways, easiest
+first:
+
+**1. `--table FILE`** - build a table from a CSV/TSV file. The first
+row becomes a bold header (`--no-header` to disable); the delimiter is
+auto-detected. The CLI wraps it in an attachment for you:
+
+```
+slack draft create '#general' --table report.tsv
+```
+
+**2. Attachment passthrough** - for per-cell control (bold, links,
+column alignment), pipe an object with the `table` block under
+`attachments[].blocks[]`. Cells are `raw_text` (plain) or `rich_text`
+(styled); optional `column_settings` set per-column `align` /
+`is_wrapped`:
+
+```json
+{"blocks":[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Cluster status:"}]}]}],
+ "attachments":[{"blocks":[{"type":"table","column_settings":[{},{"align":"right"}],"rows":[
+   [{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Region","style":{"bold":true}}]}]},
+    {"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Status","style":{"bold":true}}]}]}],
+   [{"type":"raw_text","text":"us-east"},{"type":"raw_text","text":"green"}],
+   [{"type":"raw_text","text":"us-west"},{"type":"raw_text","text":"degraded"}]
+ ]}]}]}
+```
+
+A table-only draft is fine - the `blocks` array may be empty; the table
+attachment alone survives reconciliation. The table renders in the draft
+compose editor as a Table card the human edits and sends.
+
+**3. Inline monospace fallback** - to keep columns inline in the prose
+with no attachment, put a monospace ASCII table in a
+`rich_text_preformatted` element. It is plain text (not an editable
+table) but needs no attachment:
 
 ```json
 [{"type":"rich_text","elements":[
@@ -499,9 +530,9 @@ alignment holds:
 ]}]
 ```
 
-Pad the columns with spaces yourself - the monospace block keeps them
-aligned. The heading section ends with `\n` so the preformatted block
-doesn't absorb it (the section terminator rule above).
+Pad the columns with spaces yourself. The heading section ends with
+`\n` so the preformatted block doesn't absorb it (the section
+terminator rule above).
 
 
 ##### Validation

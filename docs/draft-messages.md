@@ -334,60 +334,60 @@ content loss.
 
 ## Tables
 
-Slack shipped `table` and `data_table` blocks, but they are app-only -
-posted via `chat.postMessage`. They are not part of the human
-compose/edit surface, and drafts go through that surface. So they don't
-work in drafts, for the same reason `section` doesn't.
+Tables ARE draftable - but the `table` block has to live in an
+**attachment** (`attachments[].blocks[]`), never in top-level `blocks`.
+In top-level blocks the compose editor strips it on open; in an
+attachment it survives and renders as an editable Table card.
 
 Verified 2026-05-29 against the live `drafts.*` API plus the
 `app.slack.com` compose editor (DOM inspection), self-DM only. `table`
-was tested end-to-end (create, reconciliation, compose-editor DOM).
-`data_table` was only confirmed at the API (`drafts.create` returns ok);
-its editor behavior is inferred from being the same block class - it
-shares the rich_text-only compose surface, so it strips the same way.
+was tested end-to-end (created via paste and via raw `drafts.create`,
+through reconciliation and reopen). `data_table` was confirmed at the
+API only (`drafts.create` returns ok); it is the same block class and
+treated identically.
 
-What makes tables worth a dedicated note is that the drafts API
-*accepts* them. `drafts.create` returns ok and stores the block
-verbatim (it only stamps a `block_id`). That makes them feel supported
-in a way `section` (tombstones) and `markdown` (`internal_error`) do
-not. They are not.
+History: an earlier pass shipped the conclusion "tables can't be
+drafted." It had only tried a `table` in *top-level blocks*, watched the
+editor strip it, and stopped. The fix is the attachment location below.
 
-| Blocks                              | create | Survives reconciliation | Renders in compose editor |
-|-------------------------------------|--------|-------------------------|---------------------------|
-| `[table]`                           | ok     | no (tombstoned)         | n/a - gone                |
-| `[rich_text, table]`                | ok     | yes                     | no - table stripped       |
-| `[rich_text, data_table]`           | ok     | yes                     | same class as table       |
-| `[rich_text, rich_text_preformatted]` | ok   | yes                     | yes - columns aligned     |
+| Payload                                         | create | Survives reconciliation  | Renders in editor    |
+|-------------------------------------------------|--------|--------------------------|----------------------|
+| `table` in top-level `blocks`                   | ok     | no (tombstoned if alone) | no - stripped        |
+| `[rich_text, table]` (both top-level)           | ok     | yes (rich_text body)     | no - table stripped  |
+| `table` in `attachments[].blocks[]` + rich_text | ok     | yes                      | yes - Table card     |
+| `table` in `attachments[].blocks[]`, no blocks  | ok     | yes                      | yes - Table card     |
+| `rich_text_preformatted` ASCII table            | ok     | yes                      | yes - monospace text |
 
-Two failure modes, both already covered by the general rules:
+How Slack itself does it: pasting tabular data into the composer (or
+••• -> Format this message -> Create a Table) produces a `table` block
+stored in the draft's `attachments[0].blocks[]` - not top-level blocks.
+The composer's formatting *toolbar* has no table button, which is why
+the earlier pass wrongly concluded "no table support"; the feature lives
+behind the paste/format paths and stores into attachments.
 
-- A table-only draft has no `rich_text` body, so the Drafts-panel
-  reconciliation tombstones it within seconds (`is_deleted=true`,
-  `last_updated_ts` advances). Same as section-only / divider-only.
-- A `[rich_text, table]` draft survives reconciliation but the compose
-  editor strips the `table` block on open. Inspecting the composer DOM
-  (`.p-composer_page__footer`) after opening such a draft shows only the
-  rich_text paragraph - no `<table>`, no table widget
-  (`tableLikeCount: 0`). Same as any non-rich_text top-level block.
+Cells are `raw_text` (plain) or `rich_text` (bold/italic/link/...).
+Slack's paste bolds the header row (rich_text cells) and leaves body
+cells `raw_text`; there is no "header row" flag. `column_settings`
+(`[{align, is_wrapped}]`) is accepted and stored.
 
-Root cause: the compose editor's formatting toolbar has no table
-control - only bold, italic, underline, strike, link, ordered list,
-bulleted list, blockquote, code, and code block. The editor can't
-represent a table, so its rebuild path drops it. Slack *renders* `table`
-blocks in messages apps post; it just can't *edit* them. Opening a draft
-doesn't persist the strip server-side - the stored blocks keep the table
-until an edit - but the stripped working copy is what gets sent, so the
-table is lost end to end the moment a human touches it.
+Reconciliation survives on renderable content - a non-empty `rich_text`
+block OR a table attachment. An attachments-only table draft (empty
+`blocks`) does NOT tombstone: opening the Drafts panel repeatedly left
+`is_deleted` false.
 
-`validateBlocksShape` already rejects `table`/`data_table` as
-non-rich_text top-level blocks. The message is special-cased to name the
-block and point at the fallback, because the API accepting them makes a
-generic "only rich_text" message confusing.
-
-The fallback: a monospace ASCII table in a `rich_text_preformatted`
-element inside a top-level `rich_text` block. It survives both failure
-modes (it is rich_text) and renders with aligned columns. See
+CLI support: `drafts.create`/`update` carry an `attachments` form param.
+The CLI accepts a stdin object `{"blocks":[...],"attachments":[...]}`, or
+builds a table attachment from CSV/TSV via `--table`. `validateBlockShapes`
+still rejects a `table` in top-level blocks (pointing the caller at
+attachments); `validateAttachmentBlocks` restricts caller-supplied
+attachment blocks to `table`/`data_table` (the verified-draftable types)
+while round-tripping existing attachments verbatim. The tombstone
+auto-replace path carries attachments across. See `cmd/draft.go` and
 `skills/slack-cli/SKILL.md` "Tabular data".
+
+The inline alternative (no attachment): a monospace ASCII table in a
+`rich_text_preformatted` element - plain text, not an editable table,
+but it needs no attachment.
 
 ## Red herrings
 

@@ -109,8 +109,8 @@ func InvalidTimestamp(flag, value string) *Error {
 func MissingBlocks() *Error {
 	return &Error{
 		Err:    "missing_blocks",
-		Detail: "pipe Block Kit JSON on stdin (this CLI requires structured input, no plain-text shortcut)",
-		Hint:   `Minimal example: echo '[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hello"}]}]}]' | slack draft create <channel>. For the full Block Kit shape, load the slack-cli skill (install: 'skills add tammersaleh/slack-cli -g -y').`,
+		Detail: `pipe Block Kit JSON on stdin - a blocks array or {"blocks":...,"attachments":...} - or pass --table to attach a table from a CSV/TSV file`,
+		Hint:   `Minimal example: echo '[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hello"}]}]}]' | slack draft create <channel>. Tables go in attachments, or use --table <file>. For the full Block Kit shape, load the slack-cli skill (install: 'skills add tammersaleh/slack-cli -g -y').`,
 		Code:   ExitGeneral,
 	}
 }
