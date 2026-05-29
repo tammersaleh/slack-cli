@@ -485,6 +485,69 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 			if !strings.Contains(oe.Detail, "rich_text") || !strings.Contains(oe.Detail, "strip") {
 				t.Errorf("expected Detail mentioning rich_text and stripping, got %q", oe.Detail)
 			}
+			// Pin these to the generic branch. The table-specific message also
+			// mentions rich_text + strip, but only it names the preformatted
+			// fallback - the generic message must not, or this test would pass
+			// against the wrong branch.
+			if strings.Contains(oe.Detail, "rich_text_preformatted") {
+				t.Errorf("non-table block should hit the generic message, not the table-specific one: %q", oe.Detail)
+			}
+			if !strings.Contains(oe.Hint, "skills add tammersaleh/slack-cli") {
+				t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
+			}
+		})
+	}
+}
+
+func TestDraftCreate_RejectsTableBlocks(t *testing.T) {
+	// Slack's drafts API accepts table / data_table blocks and stores them
+	// verbatim, but the compose editor has no table control and strips them
+	// when the user opens the draft (a table-only draft is additionally
+	// tombstoned by the Drafts-panel reconciliation). `table` was verified
+	// end-to-end 2026-05-29 (see docs/draft-messages.md); `data_table` is the
+	// same block class and is rejected by the same code path. The CLI rejects
+	// both up front with a message that names the block and points at the
+	// rich_text_preformatted fallback.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("drafts.create should not be called when validation rejects")
+	})
+
+	for _, tc := range []struct {
+		name, blocks string
+	}{
+		{
+			name:   "table_only",
+			blocks: `[{"type":"table","rows":[[{"type":"raw_text","text":"A"},{"type":"raw_text","text":"B"}]]}]`,
+		},
+		{
+			name:   "table_alongside_rich_text",
+			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"table","rows":[[{"type":"raw_text","text":"A"}]]}]`,
+		},
+		{
+			name:   "data_table_alongside_rich_text",
+			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"data_table","caption":"c","rows":[[{"type":"raw_text","text":"A"}]]}]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runWithMockSessionStdin(t, tc.blocks, mux, "draft", "create", "C01ABC")
+			if err == nil {
+				t.Fatal("expected invalid_blocks error for table block")
+			}
+			var oe *output.Error
+			if !errors.As(err, &oe) {
+				t.Fatalf("expected *output.Error, got %T: %v", err, err)
+			}
+			if oe.Err != "invalid_blocks" {
+				t.Errorf("expected err=invalid_blocks, got %q", oe.Err)
+			}
+			// The message must name the offending block, explain the strip,
+			// and steer the caller to the working fallback.
+			for _, want := range []string{"table", "strip", "rich_text_preformatted"} {
+				if !strings.Contains(oe.Detail, want) {
+					t.Errorf("expected Detail to contain %q, got %q", want, oe.Detail)
+				}
+			}
 			if !strings.Contains(oe.Hint, "skills add tammersaleh/slack-cli") {
 				t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
 			}

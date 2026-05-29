@@ -144,9 +144,11 @@ type DraftCreateCmd struct {
 func (DraftCreateCmd) Help() string {
 	return `Block Kit JSON is piped on stdin (required). Only rich_text
 top-level blocks are allowed - Slack Desktop's Drafts compose editor
-silently strips section / divider / header / context blocks when the
-user opens the draft. For the full Block Kit shape, load the slack-cli
-skill (install: 'skills add tammersaleh/slack-cli -g -y').
+silently strips section / divider / header / context / table / data_table
+blocks when the user opens the draft. For tabular data, put a monospace
+ASCII table in a rich_text_preformatted element inside a top-level
+rich_text block. For the full Block Kit shape, load the slack-cli skill
+(install: 'skills add tammersaleh/slack-cli -g -y').
 
 Minimal invocation:
 
@@ -650,6 +652,23 @@ func validateBlocksShape(raw []byte) error {
 			}
 		}
 		if t != "rich_text" {
+			// table/data_table are uniquely seductive: unlike section/divider,
+			// drafts.create returns ok and stores them verbatim, so they feel
+			// supported. They are not - Slack's compose editor has no table
+			// control and strips them on open (a table-only draft is also
+			// tombstoned). Steer the caller to the preformatted fallback rather
+			// than the generic "only rich_text" message. `table` is verified
+			// end-to-end (2026-05-29, see docs/draft-messages.md); `data_table`
+			// is the same unsupported top-level block class (non-rich_text,
+			// API-accepted) and is rejected identically.
+			if t == "table" || t == "data_table" {
+				return &output.Error{
+					Err:    "invalid_blocks",
+					Detail: fmt.Sprintf("blocks[%d] is a %q block. Slack's drafts API accepts table/data_table blocks but the draft compose editor has no table support and strips them when the user opens the draft (a table-only draft is also tombstoned). For tabular data in a draft, put a monospace ASCII table in a rich_text_preformatted element inside a top-level rich_text block.", i, t),
+					Hint:   skillHint,
+					Code:   output.ExitGeneral,
+				}
+			}
 			return &output.Error{
 				Err:    "invalid_blocks",
 				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text top-level blocks. Slack Desktop's Drafts compose editor strips non-rich_text blocks when the user opens the draft.", i, t),
