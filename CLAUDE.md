@@ -75,9 +75,24 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    is the only exception.
 7. Merge to main and push. The pre-push hook runs `mise run check`
    (test + lint); never bypass with `--no-verify`.
-8. Retrospective: review your approach and these instructions. Update
+8. **Not done until installed and verified locally.** A push is not the
+   finish line. After pushing, wait for the release to actually cut:
+   release-please opens a release PR that auto-merges once CI is green,
+   then GoReleaser tags it and pushes the Homebrew formula - minutes, not
+   instant, so poll `gh release list` / `gh run list`. Then install and
+   verify against the real artifact, never your local build:
+   - Binary change (`feat:`/`fix:`): `brew upgrade tammersaleh/tap/slack-cli`,
+     confirm `slack version` is the version just cut, and exercise the new
+     behavior with the installed `slack`.
+   - Skill change (`SKILL.md`): run `skills update`, then confirm the
+     expected text is in the installed skill.
+   `chore:`/`docs:`/`test:`/`refactor:` cut no release, so there's no
+   binary to install - but a `docs:` edit to `SKILL.md` still ships via
+   `skills update`. Never report a change "done" off a push alone; if the
+   release hasn't cut yet, wait and re-check.
+9. Retrospective: review your approach and these instructions. Update
    CLAUDE.md with anything you learned that would help future sessions.
-9. Move on to the next feature.
+10. Move on to the next feature.
 
 ## Release versioning
 
