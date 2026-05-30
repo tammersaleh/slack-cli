@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.1](https://github.com/tammersaleh/slack-cli/compare/v3.2.0...v3.2.1) (2026-05-30)
+
+
+### Bug Fixes
+
+* reject data_table in drafts (not draftable) ([b912ee5](https://github.com/tammersaleh/slack-cli/commit/b912ee54fb169b99e80aa5db10e8cf5a15e75a11))
+
 ## [3.2.0](https://github.com/tammersaleh/slack-cli/compare/v3.1.1...v3.2.0) (2026-05-29)
 
 
