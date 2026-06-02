@@ -570,6 +570,8 @@ Slack API: `users.list`
 
 ```
 slack user info <user>...
+  --full        Fetch custom profile fields (Manager, Division, Department,
+                Employee ID, etc.) via users.profile.get
 ```
 
 ```
@@ -578,12 +580,67 @@ $ slack user info tammer@example.com
 {"_meta":{"has_more":false}}
 ```
 
+Plain `user info` returns `profile.fields: []` - Slack does not expand custom
+profile fields there. `--full` adds a top-level `custom_fields` object keyed by
+normalized snake_case label. The base `slack.User` shape is unchanged
+(additive); `profile.fields` stays `[]`. User-ID-valued fields (Manager) get a
+resolved `value_name`.
+
+```
+$ slack user info --full @alice
+{"input":"@alice","id":"U06...","name":"alice","real_name":"Alice Adams","profile":{...},"custom_fields":{"manager":{"id":"Xf01AAA","label":"Manager","value":"U02MGR","value_name":"Bob Brown"},"title":{"id":"Xf01BBB","label":"Title","value":"VP, Customer Experience"},"division":{"id":"Xf01CCC","label":"Division","value":"Technology"},"employee_id":{"id":"Xf01DDD","label":"Employee ID","value":"1234"}}}
+{"_meta":{"has_more":false}}
+```
+
+`--full` needs the `users.profile:read` scope. Desktop session tokens have it;
+OAuth tokens issued before this scope was added must re-auth (`slack auth login`).
+
 Errors:
 
 - `user_not_found` (exit 1): No user matching the input.
+- `missing_scope` (exit 2): Token lacks `users.profile:read` (with `--full`).
 - `not_authed` (exit 2): No token.
 
-Slack API: `users.info` (by ID), `users.lookupByEmail` (by email)
+Slack API: `users.info` (by ID), `users.lookupByEmail` (by email),
+`users.profile.get` (with `--full`)
+
+#### slack user manager-chain
+
+```
+slack user manager-chain <user>...
+  --manager-field   Custom profile field label holding the manager reference
+                    (default: "Manager")
+```
+
+Walks the management chain upward, one JSONL row per level. Slack stores no
+reliable downward (direct-reports) data, so traversal is upward-only.
+
+```
+$ slack user manager-chain @alice
+{"input":"@alice","root_user_id":"U06...","level":0,"id":"U06...","display_name":"Alice Adams","real_name":"Alice Adams","title":"VP, Customer Experience","manager_id":"U02MGR","manager_name":"Bob Brown"}
+{"input":"@alice","root_user_id":"U06...","level":1,"id":"U02MGR","display_name":"Bob Brown","real_name":"Bob Brown","title":"Chief Revenue Officer","manager_id":"U013...","manager_name":"Carol Chen"}
+{"input":"@alice","root_user_id":"U06...","level":2,"id":"U013...","display_name":"Carol Chen","real_name":"Carol Chen","title":"CEO","stop_reason":"no_manager"}
+{"_meta":{"has_more":false,"error_count":0}}
+```
+
+The terminal row carries a `stop_reason`:
+
+- `no_manager`: no manager field set (not an error).
+- `invalid_manager_value`: manager field is not a user ID (error).
+- `ambiguous_manager_field`: more than one field matches `--manager-field` (error).
+- `cycle_detected`: a manager loop was hit (error).
+- `max_depth`: chain exceeded the depth cap of 20 (error).
+- `profile_lookup_failed`: a hop's profile fetch failed (error).
+
+Error stop_reasons increment `_meta.error_count` and set exit code 1.
+
+Errors:
+
+- `user_not_found` (exit 1): Root user not found.
+- `missing_scope` (exit 2): Token lacks `users.profile:read`.
+- `not_authed` (exit 2): No token.
+
+Slack API: `users.profile.get`
 
 #### slack user lookup (Phase 2)
 

@@ -15,6 +15,11 @@ import (
 
 var userIDPattern = regexp.MustCompile(`^[UW][A-Z0-9]+$`)
 
+// IsUserID reports whether s is shaped like a Slack user ID (U.../W...).
+// Used by callers that need to decide whether a custom-field value is a
+// user reference worth resolving to a name.
+func IsUserID(s string) bool { return userIDPattern.MatchString(s) }
+
 // userFileCache is the on-disk format for the user cache.
 type userFileCache struct {
 	UpdatedAt time.Time              `json:"updated_at"`

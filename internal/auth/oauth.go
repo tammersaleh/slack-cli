@@ -21,7 +21,7 @@ const (
 	defaultSlackBaseURL = "https://slack.com"
 
 	// Scopes requested for the bot token.
-	botScopes = "channels:read,groups:read,im:read,mpim:read,users:read,reactions:read"
+	botScopes = "channels:read,groups:read,im:read,mpim:read,users:read,users.profile:read,reactions:read"
 
 	// Scopes requested for the user token.
 	userScopes = "search:read"
