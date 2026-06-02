@@ -76,10 +76,15 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
 7. Merge to main and push. The pre-push hook runs `mise run check`
    (test + lint); never bypass with `--no-verify`.
 8. **Not done until installed and verified locally.** A push is not the
-   finish line. After pushing, wait for the release to actually cut:
-   release-please opens a release PR that auto-merges once CI is green,
-   then GoReleaser tags it and pushes the Homebrew artifact - minutes, not
-   instant, so poll `gh release list` / `gh run list`. The artifact is a
+   finish line. After every release-cutting push, launch a background
+   sub-agent to wait for the release and upgrade, so the main session isn't
+   blocked babysitting CI. The sub-agent polls `gh release list` /
+   `gh run list` until the new tag cuts, then runs
+   `brew upgrade --cask tammersaleh/tap/slack-cli` and reports the installed
+   `slack version`; the main session then exercises the new behavior. The
+   release flow: release-please opens a release PR that auto-merges once CI
+   is green, then GoReleaser tags it and pushes the Homebrew artifact -
+   minutes, not instant. The artifact is a
    **cask**, not a formula: it lives at `Casks/slack-cli.rb` in the tap (not
    `Formula/`), and the version line is `version "x.y.z"`. Don't waste time
    grepping `Formula/`. Then install and verify against the real artifact,
