@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.0](https://github.com/tammersaleh/slack-cli/compare/v3.2.1...v3.3.0) (2026-06-02)
+
+
+### Features
+
+* add user info --full and user manager-chain ([1b3c701](https://github.com/tammersaleh/slack-cli/commit/1b3c70104b95c7694ee22a137f5207b20c5feada))
+
 ## [3.2.1](https://github.com/tammersaleh/slack-cli/compare/v3.2.0...v3.2.1) (2026-05-30)
 
 
