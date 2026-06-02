@@ -162,16 +162,34 @@ slack channel info https://acme.slack.com/archives/C01ABC --fields id,name,topic
 
 ```
 slack user list [--limit N] [--query STR] [--presence]
-slack user info <user>...
+slack user info [--full] <user>...
+slack user manager-chain [--manager-field LABEL] <user>...
 ```
 
 User arguments accept IDs (`U...`), emails, or `@name` (display
 name, username, or real name). On Enterprise Grid with a session
 token, email lookup may fail - prefer `@name` there.
 
+Use `--full` whenever you need to know anything about a person beyond
+their name. Plain `slack user info` returns `profile.fields: []` - it does
+NOT include title, manager, department, or any org data. `--full` fetches
+the custom profile fields and adds a top-level `custom_fields` object
+(keyed by snake_case label: `manager`, `title`, `division`, `department`,
+`employee_id`, etc.). The Manager field is a user ID, resolved to a name in
+`value_name`. For "who is X / what's their role / who do they report to",
+reach for `--full` first.
+
+`manager-chain` walks the reporting line upward (one row per level, to the
+top). Traversal is upward-only - Slack exposes no reliable direct-reports
+data. `--full` and `manager-chain` need the `users.profile:read` scope;
+desktop auth has it, older OAuth tokens must re-auth.
+
 Examples:
 
 ```
+slack user info --full @jmancuso                      # title, manager, dept, etc.
+slack user info --full @jmancuso | jq '.custom_fields.manager.value_name'
+slack user manager-chain @jmancuso                    # full reporting line up
 slack user info https://acme.slack.com/team/U01ABC    # by profile link
 slack user list --query tamm                          # find by partial name
 slack user info @alice U09T3DUS6P9 alice@example.com   # or name / ID / email (incl. bulk)

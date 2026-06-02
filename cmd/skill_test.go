@@ -37,6 +37,7 @@ func TestSkill_Frontmatter(t *testing.T) {
 		"slack search messages",
 		"slack channel list",
 		"slack user info",
+		"slack user manager-chain",
 		"slack saved list",
 		"slack section list",
 		"slack file list",
@@ -76,6 +77,10 @@ func TestSkill_DiscoverabilityContent(t *testing.T) {
 		"`im`",
 		// User resolution gotcha - email + Grid + session token.
 		"Enterprise Grid",
+		// --full is the steer for any person lookup beyond a name.
+		"profile.fields: []",
+		"custom_fields",
+		"value_name",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected skill output to contain %q for discoverability", want)
