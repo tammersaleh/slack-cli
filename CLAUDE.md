@@ -78,12 +78,19 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
 8. **Not done until installed and verified locally.** A push is not the
    finish line. After pushing, wait for the release to actually cut:
    release-please opens a release PR that auto-merges once CI is green,
-   then GoReleaser tags it and pushes the Homebrew formula - minutes, not
-   instant, so poll `gh release list` / `gh run list`. Then install and
-   verify against the real artifact, never your local build:
-   - Binary change (`feat:`/`fix:`): `brew upgrade tammersaleh/tap/slack-cli`,
-     confirm `slack version` is the version just cut, and exercise the new
-     behavior with the installed `slack`.
+   then GoReleaser tags it and pushes the Homebrew artifact - minutes, not
+   instant, so poll `gh release list` / `gh run list`. The artifact is a
+   **cask**, not a formula: it lives at `Casks/slack-cli.rb` in the tap (not
+   `Formula/`), and the version line is `version "x.y.z"`. Don't waste time
+   grepping `Formula/`. Then install and verify against the real artifact,
+   never your local build:
+   - Binary change (`feat:`/`fix:`): `brew upgrade --cask tammersaleh/tap/slack-cli`
+     (plain `brew upgrade slack-cli` can no-op if the cask tap hasn't synced;
+     poll the tap's `Casks/slack-cli.rb` for the new `version` first), confirm
+     `slack version` is the version just cut, and exercise the new behavior
+     with the installed `slack`. Note Slack rate-limits quickly under repeated
+     manual calls - a `{"error":"ratelimited"}` row is the expected systemic
+     fail-fast, not a bug; wait and retry.
    - Skill change (`SKILL.md`): run `skills update`, then confirm the
      expected text is in the installed skill.
    `chore:`/`docs:`/`test:`/`refactor:` cut no release, so there's no
@@ -234,6 +241,7 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 - Output pipeline order: `filterFields` → `enrichTimestamps` → `EnrichFunc`. Enrichment runs after `--fields` so `--fields user` keeps the resolved `user_name`; enrichment is "extra," not user-filterable.
 - Pagination cursors pass Slack's tokens through unchanged. For page-number APIs (`search.messages`, `search.files`, `files.list`), the cursor is the raw next page number as a string; `parsePageCursor` in cmd/search.go handles it.
 - Resolver user cache: `LookupUser(id)` falls back to `users.info` on miss rather than bulk-loading via `users.list`. `ResolveUser(@name|email)` still bulk-loads since there's no single-user API that scans by display name. Single-user inserts via `addUserToCache` mirror the bulk `setUserMaps` indexing (users/usersByEmail/usersByName) so a follow-up name lookup in the same session hits memory cache.
+- User custom-profile data (`user info --full`, `user manager-chain`): plain `users.info` returns `profile.fields: []` - it does NOT expand custom profile fields (Manager, Division, Department, Employee ID, GitHub Handle, Start Date, etc.). Those come only from `users.profile.get` with `include_labels=true`, which returns a map keyed by opaque field ID (`Xf…`) with `{value, alt, label}`. slack-go wraps it as `Bot().GetUserProfileContext(ctx, &slack.GetUserProfileParameters{UserID, IncludeLabels:true})`; it's a public method (no internal-API plumbing) but needs the `users.profile:read` scope - added to `botScopes` in `internal/auth/oauth.go`, so OAuth tokens issued before that must re-auth (desktop session tokens already have it). `--full` adds a top-level `custom_fields` object keyed by normalized snake_case label (additive; `profile.fields` stays `[]`), keys assigned deterministically (sorted by field ID, `_2`/`_3` collision suffixes, `field_<id>` for empty labels) so they don't flap with Go map iteration. User-ID-valued fields (Manager) resolve to `value_name` via `resolve.IsUserID` + `LookupUser`. The Manager field value is a user ID; the **Direct Reports** field exists but is empty in SCIM (no reliable downward data), so `manager-chain` is upward-only. `manager-chain` walks the field labeled "Manager" (case-insensitive; `--manager-field` override), one row per level, with a command-local profile cache (shared manager fetched once), depth cap 20 (`len(chain) >= managerChainMaxDepth`), seen-set cycle guard, and `stop_reason` on the terminal row (`no_manager` not an error; `invalid_manager_value`/`ambiguous_manager_field`/`cycle_detected`/`max_depth`/`profile_lookup_failed` are, counted in `_meta.error_count`). Rows emit `id` not `user_id` to dodge the printer's `user_id`→`user_name` auto-enrichment re-fetch (see `internal/resolve/enrich.go`); `manager_name` comes from the next hop's profile, no extra lookup. Error split via `isSystemicErr`: auth/`missing_scope`/`ratelimited`/`account_inactive`/`token_revoked` fail the whole command fast; other errors are per-item rows. Full write-up in `docs/profile-feature-plan.md`.
 - Channel cache: `Enrich` warms via `ensureChannelCache` when the item being printed contains a channel ID, so output enrichment is deterministic across commands. Commands that never emit channel IDs don't pay the `conversations.list` cost.
 - Timeout E2E tests: assert on the error text (`"deadline exceeded"`), not elapsed time. `httptest.Server.Close` waits for in-flight handlers, so a passing test run looks slow even when the client returned promptly.
 - Slack URL input: `internal/slackurl` is a pure, route-aware parser (`Parse(s) (Ref, matched, err)`). Route picks the `Kind` (channel/message/user/file); the prefix letter only validates the extracted id. Tri-state result: `matched=false` = not a URL (caller falls through to ID/name handling); `matched=true, err!=nil` = URL-shaped but unusable (caller fast-fails, no pagination). A file URL embeds a uploader `U…` *and* an `F…`, so kind must come from the route, not a prefix scan. ts comes from the `p<digits>` segment (last 6 = micros); `thread_ts`/`cid` are validated and `cid` must match the path channel.
