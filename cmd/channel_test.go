@@ -510,6 +510,169 @@ func TestChannelMembers_MockAPI(t *testing.T) {
 	}
 }
 
+func TestChannelManagers_Basic(t *testing.T) {
+	var gotEntityID string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/admin.roles.entity.listAssignments", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotEntityID = r.FormValue("entity_id")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"role_assignments": []map[string]any{
+				{"role_id": "Rl0A", "users": []string{"U018Z62JVG8", "U02ABC"}},
+			},
+		})
+	})
+
+	out, err := runWithMockSession(t, mux, "channel", "managers", "C0A065FTV4H")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if gotEntityID != "C0A065FTV4H" {
+		t.Errorf("expected entity_id='C0A065FTV4H' in request, got %q", gotEntityID)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines (2 managers + meta), got %d:\n%s", len(lines), out)
+	}
+
+	first := parseJSON(t, lines[0])
+	if first["user_id"] != "U018Z62JVG8" {
+		t.Errorf("expected first user_id='U018Z62JVG8', got %q", first["user_id"])
+	}
+	if first["role_id"] != "Rl0A" {
+		t.Errorf("expected role_id='Rl0A', got %q", first["role_id"])
+	}
+	second := parseJSON(t, lines[1])
+	if second["user_id"] != "U02ABC" {
+		t.Errorf("expected second user_id='U02ABC', got %q", second["user_id"])
+	}
+}
+
+// TestChannelManagers_EmitsAllRoles verifies the command does not hard-filter
+// to one role ID: every returned assignment is emitted, one row per user,
+// carrying its own role_id. Guards against silently dropping managers if
+// Slack's channel-manager role ID ever differs from the observed Rl0A.
+func TestChannelManagers_EmitsAllRoles(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/admin.roles.entity.listAssignments", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"role_assignments": []map[string]any{
+				{"role_id": "Rl0A", "users": []string{"U01"}},
+				{"role_id": "Rl99", "users": []string{"U02"}},
+				{"role_id": "RlEMPTY", "users": []string{}},
+			},
+		})
+	})
+
+	out, err := runWithMockSession(t, mux, "channel", "managers", "C01ABC")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines (2 users + meta; empty assignment skipped), got %d:\n%s", len(lines), out)
+	}
+	if r0 := parseJSON(t, lines[0]); r0["user_id"] != "U01" || r0["role_id"] != "Rl0A" {
+		t.Errorf("row 0 = %v, want U01/Rl0A", r0)
+	}
+	if r1 := parseJSON(t, lines[1]); r1["user_id"] != "U02" || r1["role_id"] != "Rl99" {
+		t.Errorf("row 1 = %v, want U02/Rl99", r1)
+	}
+}
+
+func TestChannelManagers_Empty(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/admin.roles.entity.listAssignments", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":               true,
+			"role_assignments": []map[string]any{},
+		})
+	})
+
+	out, err := runWithMockSession(t, mux, "channel", "managers", "C01ABC")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line (meta only), got %d:\n%s", len(lines), out)
+	}
+	meta := parseJSON(t, lines[0])["_meta"].(map[string]any)
+	if meta["error_count"] != nil {
+		t.Errorf("empty managers must not be an error, got error_count=%v", meta["error_count"])
+	}
+}
+
+// TestChannelManagers_ByName exercises the two-client split: a channel *name*
+// is resolved via conversations.list (public client), and the resolved ID is
+// forwarded as entity_id to the internal endpoint (session client).
+func TestChannelManagers_ByName(t *testing.T) {
+	var gotEntityID string
+	listCalled := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		listCalled = true
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"channels": []map[string]any{
+				{"id": "C0A065FTV4H", "name": "sa-approvals", "is_channel": true},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/admin.roles.entity.listAssignments", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotEntityID = r.FormValue("entity_id")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"role_assignments": []map[string]any{
+				{"role_id": "Rl0A", "users": []string{"U018Z62JVG8"}},
+			},
+		})
+	})
+
+	out, err := runWithMockSession(t, mux, "channel", "managers", "#sa-approvals")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !listCalled {
+		t.Error("expected conversations.list to be called to resolve the channel name")
+	}
+	if gotEntityID != "C0A065FTV4H" {
+		t.Errorf("expected resolved entity_id='C0A065FTV4H', got %q", gotEntityID)
+	}
+	if first := parseJSON(t, nonEmptyLines(out)[0]); first["user_id"] != "U018Z62JVG8" {
+		t.Errorf("expected manager 'U018Z62JVG8', got %q", first["user_id"])
+	}
+}
+
+func TestChannelManagers_SessionTokenRequired(t *testing.T) {
+	// A regular xoxb- token must be rejected as session_token_required (exit 2)
+	// before any API call - and as *output.Error so main.go prints it to stderr.
+	mux := http.NewServeMux()
+	r := runWithMockFull(t, mux, "channel", "managers", "C01ABC")
+	if r.err == nil {
+		t.Fatal("expected error for non-session token")
+	}
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected *output.Error, got %T: %v", r.err, r.err)
+	}
+	if oErr.Err != "session_token_required" {
+		t.Errorf("expected error 'session_token_required', got %q", oErr.Err)
+	}
+	if oErr.Code != output.ExitAuth {
+		t.Errorf("expected exit code %d (auth), got %d", output.ExitAuth, oErr.Code)
+	}
+}
+
 func TestChannelInfo_PartialFailure_NoStderr(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {

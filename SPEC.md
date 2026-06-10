@@ -407,6 +407,44 @@ Errors:
 
 Slack API: `conversations.members`
 
+#### slack channel managers
+
+Lists a channel's Channel Managers - the users shown under "Managed by"
+in the channel's About tab. Returns the role assignments reported by
+Slack's internal Managed-by data, one JSONL row per assigned user.
+
+Requires a session token (`xoxc-`); uses an undocumented internal API.
+On Enterprise Grid the org (`E`-prefix) token is used for the internal
+call (`SLACK_WORKSPACE_ORG`), while channel-name resolution uses the
+workspace (`T`-prefix) token.
+
+```
+slack channel managers <channel>
+```
+
+```
+$ slack channel managers #sa-approvals
+{"user_id":"U018Z62JVG8","role_id":"Rl0A"}
+{"_meta":{"has_more":false}}
+```
+
+`role_id` is passed through verbatim (`Rl0A` is the Channel Manager
+role). It is not mapped to a human label - the mapping is undocumented
+and could drift. A channel with no managers emits zero rows; that is
+success, not an error. A user appearing under multiple role assignments
+yields one row per assignment.
+
+The `user_id` field name (rather than `id`) lets the enrichment layer
+attach a resolved `user_name`.
+
+Errors:
+
+- `channel_not_found` (exit 1): No channel matching the input.
+- `session_token_required` (exit 2): Token is not a session (`xoxc-`) token.
+- `not_authed` (exit 2): No token.
+
+Slack API: `admin.roles.entity.listAssignments` (internal)
+
 ### message
 
 #### slack message list

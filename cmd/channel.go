@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -8,9 +9,10 @@ import (
 )
 
 type ChannelCmd struct {
-	List    ChannelListCmd    `cmd:"" help:"List channels."`
-	Info    ChannelInfoCmd    `cmd:"" help:"Show channel details."`
-	Members ChannelMembersCmd `cmd:"" help:"List channel members."`
+	List     ChannelListCmd     `cmd:"" help:"List channels."`
+	Info     ChannelInfoCmd     `cmd:"" help:"Show channel details."`
+	Members  ChannelMembersCmd  `cmd:"" help:"List channel members."`
+	Managers ChannelManagersCmd `cmd:"" help:"List a channel's Channel Managers."`
 }
 
 type ChannelListCmd struct {
@@ -225,6 +227,95 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 		}
 		cursor = nextCursor
 	}
+}
+
+type ChannelManagersCmd struct {
+	Channel string `arg:"" required:"" help:"Channel ID or name."`
+}
+
+func (ChannelManagersCmd) Help() string {
+	return `List a channel's Channel Managers - the users under "Managed by" in the
+channel's About tab. Emits one JSONL row per assigned user, carrying the
+verbatim role_id (Rl0A is the Channel Manager role). A channel with no
+managers emits zero rows; that is success, not an error.
+
+Requires a session token (xoxc-); uses an undocumented internal API. On
+Enterprise Grid the org token (SLACK_WORKSPACE_ORG) backs the internal call,
+while channel-name resolution uses the workspace token.
+
+Examples:
+
+  slack channel managers C0A065FTV4H
+  slack channel managers #sa-approvals`
+}
+
+// roleEntityAssignmentsResponse is the parsed admin.roles.entity.listAssignments
+// response. Each assignment scopes a role to the channel entity; for a channel
+// the assignments are its "Managed by" entries.
+type roleEntityAssignmentsResponse struct {
+	RoleAssignments []struct {
+		RoleID string   `json:"role_id"`
+		Users  []string `json:"users"`
+	} `json:"role_assignments"`
+}
+
+func (c *ChannelManagersCmd) Run(cli *CLI) error {
+	// The internal endpoint needs a session (xoxc-) token. Build that client
+	// first so a non-session token fails fast, before any channel resolution.
+	sessionClient, err := cli.NewSessionClient()
+	if err != nil {
+		return err
+	}
+	// NewClient below overwrites the auth method captured by NewSessionClient.
+	// The only auth-classified call here is the internal endpoint on the
+	// session client, so its re-auth hint must reflect the session token.
+	sessionAuthMethod := cli.authMethod
+
+	// Channel-name resolution and output enrichment use the workspace
+	// (T-prefix) token: conversations.list is restricted on the org context
+	// that the session client targets on Enterprise Grid.
+	client, err := cli.NewClient()
+	if err != nil {
+		return err
+	}
+	cli.authMethod = sessionAuthMethod
+	r := cli.NewResolver(client)
+	p := cli.NewPrinter()
+	ctx, cancel := cli.Context()
+	defer cancel()
+
+	channelID, err := r.ResolveChannel(ctx, c.Channel)
+	if err != nil {
+		return channelResolveError(c.Channel, err)
+	}
+
+	data, err := sessionClient.PostInternalForm(ctx, "admin.roles.entity.listAssignments", map[string]string{
+		"entity_id": channelID,
+	})
+	if err != nil {
+		return cli.ClassifyError(err)
+	}
+
+	var resp roleEntityAssignmentsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return &output.Error{Err: "parse_error", Detail: "Failed to parse admin.roles.entity.listAssignments response", Code: output.ExitGeneral}
+	}
+
+	// Emit every assignment's users with the verbatim role_id. We don't filter
+	// to a known channel-manager role ID: if Slack's ID ever differs from the
+	// observed Rl0A, a hard filter would silently report no managers.
+	for _, a := range resp.RoleAssignments {
+		for _, uid := range a.Users {
+			if err := p.PrintItem(map[string]any{
+				"user_id": uid,
+				"role_id": a.RoleID,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	return p.PrintMeta(output.Meta{})
 }
 
 func channelTypes(t string) []string {
