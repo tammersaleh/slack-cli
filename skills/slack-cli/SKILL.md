@@ -144,6 +144,7 @@ includes `channel` (object with `id`/`name`), `user`, `ts`,
 slack channel list [--limit N] [--type all|public|private|mpim|im] [--query STR] [--include-non-member]
 slack channel info <channel>...
 slack channel members <channel> [--limit N]
+slack channel managers <channel>                       # "Managed by" users (session token)
 ```
 
 Defaults to channels you're a member of, all types. Add `--include-non-member`
