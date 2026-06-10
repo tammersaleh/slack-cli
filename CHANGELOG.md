@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/tammersaleh/slack-cli/compare/v3.3.0...v3.4.0) (2026-06-10)
+
+
+### Features
+
+* add channel managers command ([0ef8307](https://github.com/tammersaleh/slack-cli/commit/0ef83077bb763fbffccf09c91e41cbb7fa747b6d))
+
 ## [3.3.0](https://github.com/tammersaleh/slack-cli/compare/v3.2.1...v3.3.0) (2026-06-02)
 
 
