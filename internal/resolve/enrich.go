@@ -25,11 +25,11 @@ var enrichChannelFields = map[string]string{
 }
 
 // Enrich adds resolved names to a map for any recognized user/channel ID fields.
-// Enrichment is best-effort: missing cache entries are silently skipped. Only
-// file/memory caches are consulted up front; when a user ID is missing, the
-// per-call LookupUser falls back to a single users.info instead of paginating
-// users.list. The channel cache is warmed only when the item contains a
-// channel ID.
+// Enrichment is best-effort: missing cache entries are silently skipped. On a
+// cache miss, LookupUser falls back to a single users.info and LookupChannel to
+// a single conversations.info, rather than paginating users.list /
+// conversations.list. Cost is O(unique unresolved IDs in the output), not
+// O(workspace size).
 func (r *Resolver) Enrich(ctx context.Context, m map[string]any) {
 	r.ensureUserCacheLazy()
 
@@ -51,23 +51,12 @@ func (r *Resolver) Enrich(ctx context.Context, m map[string]any) {
 		}
 	}
 
-	var hasChannelField bool
-	for field := range enrichChannelFields {
-		if id, ok := m[field].(string); ok && enrichChannelPattern.MatchString(id) {
-			hasChannelField = true
-			break
-		}
-	}
-	if hasChannelField {
-		_ = r.ensureChannelCache(ctx)
-	}
-
 	for field, nameField := range enrichChannelFields {
 		if _, already := m[nameField]; already {
 			continue
 		}
 		if id, ok := m[field].(string); ok && enrichChannelPattern.MatchString(id) {
-			if name, found := r.LookupChannelName(id); found {
+			if name, found := r.LookupChannel(ctx, id); found {
 				m[nameField] = name
 			}
 		}

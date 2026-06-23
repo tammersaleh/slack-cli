@@ -243,10 +243,9 @@ func TestSavedList_Enrich(t *testing.T) {
 }
 
 // TestSavedList_AutoEnrichChannelName verifies that saved list always
-// resolves channel_name from the channel cache, even without --enrich.
-// Previously this only worked when the cache was already warm from a prior
-// operation; now enrichment unconditionally warms the channel cache when
-// the output contains channel IDs.
+// resolves channel_name even without --enrich. Enrichment resolves a channel
+// ID via a single conversations.info call (not a conversations.list bulk
+// load) when the name isn't already cached.
 func TestSavedList_AutoEnrichChannelName(t *testing.T) {
 	items := []map[string]any{
 		{"item_id": "C01ABC", "ts": "1709251200.000100", "date_created": 1709251200, "todo_state": "uncompleted"},
@@ -256,12 +255,16 @@ func TestSavedList_AutoEnrichChannelName(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/saved.list", savedListHandler(t, items, counts, ""))
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("conversations.list must not be called during enrichment")
+	})
+	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if got := r.FormValue("channel"); got != "C01ABC" {
+			t.Errorf("conversations.info channel=%q, want C01ABC", got)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channels": []map[string]any{
-				{"id": "C01ABC", "name": "general", "is_channel": true},
-			},
-			"response_metadata": map[string]string{"next_cursor": ""},
+			"ok":      true,
+			"channel": map[string]any{"id": "C01ABC", "name": "general", "is_channel": true},
 		})
 	})
 

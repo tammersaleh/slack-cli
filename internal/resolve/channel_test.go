@@ -416,29 +416,34 @@ func TestLoadFileCache_FastFailsOnStaleMtime(t *testing.T) {
 	}
 }
 
-// When conversations.list fails (e.g. Enterprise Grid returns
-// enterprise_is_restricted), Enrich should not re-trigger the bulk load on
-// every subsequent item. Without this guard, a long thread with --fields
-// channel_id turns into a per-message retry storm that compounds into
-// rate-limit sleeps.
+// When conversations.info fails (e.g. Enterprise Grid returns
+// enterprise_is_restricted), Enrich should not re-hit the API on every
+// subsequent row. The per-session negative memo bounds it to one call per
+// unresolvable ID; without it, a long thread with --fields channel_id turns
+// into a per-message retry storm that compounds into rate-limit sleeps.
 func TestEnsureChannelCache_FailureCachedAcrossEnrichCalls(t *testing.T) {
 	calls := 0
-	client := newTestClient(t, conversationsListMux(func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("conversations.list must not be called during enrichment")
+	})
+	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":    false,
 			"error": "enterprise_is_restricted",
 		})
-	}))
+	})
+	client := newTestClient(t, mux)
 
 	r := NewResolver(client, "", "")
 	ctx := context.Background()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		r.Enrich(ctx, map[string]any{"channel_id": "C01ABC123"})
 	}
 
 	if calls != 1 {
-		t.Errorf("conversations.list hit %d times, want 1 (failure should be cached)", calls)
+		t.Errorf("conversations.info hit %d times, want 1 (failure should be memoized)", calls)
 	}
 }

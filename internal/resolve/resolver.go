@@ -31,10 +31,11 @@ type Resolver struct {
 	teamID   string
 	cacheDir string
 
-	mu           sync.RWMutex
-	channels     map[string]string // name -> ID
-	channelsByID map[string]string // ID -> name
-	channelsAt   time.Time
+	mu             sync.RWMutex
+	channels       map[string]string   // name -> ID
+	channelsByID   map[string]string   // ID -> name
+	channelsAt     time.Time
+	failedChannels map[string]struct{} // IDs that failed conversations.info this session
 
 	users        map[string]slack.User // ID -> User
 	usersByEmail map[string]string     // email -> ID
