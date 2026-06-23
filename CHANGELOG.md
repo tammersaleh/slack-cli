@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.4.1](https://github.com/tammersaleh/slack-cli/compare/v3.4.0...v3.4.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* resolve channel names via conversations.info during enrichment ([83ce710](https://github.com/tammersaleh/slack-cli/commit/83ce71012e45d036b14eb2462cf9d65f391196da))
+* resolve channel names via conversations.info during enrichment ([8fca518](https://github.com/tammersaleh/slack-cli/commit/8fca518c3fc3445631ff972d6d2d0ec5837d7679))
+
 ## [3.4.0](https://github.com/tammersaleh/slack-cli/compare/v3.3.0...v3.4.0) (2026-06-10)
 
 
