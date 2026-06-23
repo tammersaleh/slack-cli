@@ -82,13 +82,14 @@ func TestLookupChannel_CacheReuse(t *testing.T) {
 }
 
 // TestLookupChannel_NegativeMemo verifies a failed lookup is memoized for the
-// session so repeated rows with the same unresolvable ID don't re-hit the API.
+// session so repeated rows with the same unresolvable ID don't re-hit the API,
+// while a *different* ID is unaffected (the memo is keyed by ID, not global).
 func TestLookupChannel_NegativeMemo(t *testing.T) {
 	calls := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		conversationsInfoHandler(t, map[string]string{})(w, r) // always channel_not_found
+		conversationsInfoHandler(t, map[string]string{"C0GOOD": "general"})(w, r)
 	})
 	r := NewResolver(newTestClient(t, mux), "T123", t.TempDir())
 	ctx := context.Background()
@@ -101,6 +102,14 @@ func TestLookupChannel_NegativeMemo(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("got %d conversations.info calls, want 1 (failure memoized)", calls)
+	}
+
+	// A different, resolvable ID must not be blocked by C0BAD's memo.
+	if name, found := r.LookupChannel(ctx, "C0GOOD"); !found || name != "general" {
+		t.Errorf("got (%q, %v) for C0GOOD, want (\"general\", true)", name, found)
+	}
+	if calls != 2 {
+		t.Errorf("got %d conversations.info calls, want 2 (memo must be per-ID)", calls)
 	}
 }
 
