@@ -73,42 +73,67 @@ func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, er
 	return r.resolveByPagination(ctx, name)
 }
 
-// ensureChannelCache populates the channel name cache if it's empty or stale.
-// Returns nil even on API failure - enrichment is best-effort.
-func (r *Resolver) ensureChannelCache(ctx context.Context) error {
+// LookupChannel resolves a single channel ID to its name. It checks the
+// in-memory cache and, on a miss, falls back to a single conversations.info
+// call rather than bulk-loading the whole workspace via conversations.list
+// (which is Tier-2 rate-limited and can take minutes on a large Enterprise
+// Grid org). This mirrors LookupUser's single-fetch fallback. Failures are
+// memoized for the process so a wide result set with an unresolvable channel
+// ID doesn't re-hit conversations.info on every row. Best-effort: returns
+// ("", false) on any error or an empty name (e.g. a DM).
+func (r *Resolver) LookupChannel(ctx context.Context, id string) (string, bool) {
+	if name, found := r.LookupChannelName(id); found {
+		return name, true
+	}
+
 	r.mu.RLock()
-	if r.channels != nil && time.Since(r.channelsAt) < memoryCacheTTL {
-		r.mu.RUnlock()
-		return nil
-	}
+	_, failed := r.failedChannels[id]
 	r.mu.RUnlock()
-
-	// Try file cache first.
-	if fc, err := r.loadFileCache(); err == nil && fc != nil {
-		r.mu.Lock()
-		if r.channels == nil || time.Since(r.channelsAt) >= memoryCacheTTL {
-			r.setChannelMaps(fc.Channels)
-		}
-		r.mu.Unlock()
-		return nil
+	if failed {
+		return "", false
 	}
 
-	// Bulk-load via full pagination. Reuses resolveByPagination with a name
-	// that won't match so every page is fetched and the cache is populated.
-	// We ignore the "channel not found" error this will return.
-	_, _ = r.resolveByPagination(ctx, "\x00__slack_cli_warm_cache__")
+	info, err := r.client.Bot().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: id})
+	if err != nil || info == nil || info.Name == "" {
+		r.markChannelFailed(id)
+		return "", false
+	}
 
-	// Record the attempt even if pagination failed, so every enriched row
-	// with a channel_id doesn't re-trigger conversations.list. Without this,
-	// workspaces where conversations.list 403s (e.g. Enterprise Grid
-	// `enterprise_is_restricted`) turn long threads into per-item retry
-	// storms that compound into rate-limit sleeps.
 	r.mu.Lock()
-	if r.channels == nil {
-		r.setChannelMaps(map[string]string{})
-	}
+	r.addChannelToCache(info.ID, info.Name)
 	r.mu.Unlock()
-	return nil
+	return info.Name, true
+}
+
+// addChannelToCache inserts a single channel into the in-memory cache maps,
+// creating them if necessary. Mirrors addUserToCache: it never persists to the
+// file cache, so a sparse enrich-time lookup can't be mistaken for the complete
+// conversations.list snapshot that saveFileCache writes. Must be called with
+// r.mu held.
+func (r *Resolver) addChannelToCache(id, name string) {
+	if r.channels == nil {
+		r.channels = make(map[string]string)
+		r.channelsByID = make(map[string]string)
+		r.channelsAt = time.Now()
+	}
+	// First-write-wins on the forward map, matching ResolveChannel's
+	// collision semantics. Channel names are unique per workspace, so this
+	// only matters for the empty-name DMs we already reject.
+	if _, exists := r.channels[name]; !exists {
+		r.channels[name] = id
+	}
+	r.channelsByID[id] = name
+}
+
+// markChannelFailed records a channel ID whose conversations.info lookup failed
+// so subsequent enrichment rows skip the call.
+func (r *Resolver) markChannelFailed(id string) {
+	r.mu.Lock()
+	if r.failedChannels == nil {
+		r.failedChannels = make(map[string]struct{})
+	}
+	r.failedChannels[id] = struct{}{}
+	r.mu.Unlock()
 }
 
 // resolveByPagination fetches channels page-by-page, stopping as soon as the
