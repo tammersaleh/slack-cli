@@ -254,6 +254,8 @@ Anywhere a channel is required, the CLI accepts:
 
 Names are resolved via `conversations.list` with in-memory caching (5-minute TTL). On name collision, first match wins. A URL that isn't a usable channel reference (wrong kind or malformed) is rejected as `invalid_input` rather than treated as a name.
 
+Output enrichment (resolving a `channel_id` to a `channel_name` on emitted rows) does *not* trigger the `conversations.list` bulk load. On a cache miss it resolves the single ID via `conversations.info`, mirroring how user enrichment falls back to `users.info`. Enrichment cost is proportional to the number of distinct unresolved IDs in the output, not to workspace size. Failed lookups are memoized for the process so a wide result set with an unresolvable channel doesn't re-hit the API per row.
+
 ### Users
 
 Anywhere a user is required, the CLI accepts:
@@ -1379,7 +1381,10 @@ TTL is configurable via `SLACK_CACHE_TTL` env var (e.g., `1h`, `24h`,
 
 User cache is populated on first miss by paginating `users.list --all`,
 then point lookups hit the cache. Channel cache uses the existing
-early-exit pagination pattern.
+early-exit pagination pattern. Single-ID lookups during output enrichment
+bypass both bulk loads and hit `users.info` / `conversations.info` instead,
+so a cold cache never forces a full-workspace crawl just to name the handful
+of IDs in a command's output.
 
 ## Configuration
 
