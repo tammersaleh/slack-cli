@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.0](https://github.com/tammersaleh/slack-cli/compare/v3.4.1...v3.5.0) (2026-06-25)
+
+
+### Features
+
+* draft create to new DMs/MPDMs via user recipients ([0f15008](https://github.com/tammersaleh/slack-cli/commit/0f15008c4750d720d6743990d9a90a2e24db02a9))
+
 ## [3.4.1](https://github.com/tammersaleh/slack-cli/compare/v3.4.0...v3.4.1) (2026-06-23)
 
 
