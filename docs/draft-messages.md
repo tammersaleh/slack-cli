@@ -143,6 +143,19 @@ destinations that also have `channel_id`, or the API rejects with
 `both_user_ids_and_channel_id_provided_in_destination`. See
 `normalizeDestinationsForWrite` in `cmd/draft.go`.
 
+### Drafting to a conversation that doesn't exist yet
+
+A `channel_id` only exists once a DM/MPDM has been opened. To stage a
+draft to people the user has never messaged, send a `user_ids`
+destination instead - no `channel_id`. Slack opens the conversation when
+the draft is sent. `drafts.create` accepts `{"user_ids":["U1","U2",...]}`;
+this is exactly what the web client does for a new DM/MPDM. `draft create`
+builds it from user recipient args (`@name` / email / `Uxxx`), one for a
+1:1 DM, several for an MPDM. Set exactly one of `channel_id` / `user_ids`
+per destination, never both. Order is preserved and duplicates removed;
+no local recipient cap (MPDMs cap near 8 people - Slack rejects an
+oversized list).
+
 ## Auth
 
 Cookie auth only. Any xoxc- session token plus the matching `d` cookie

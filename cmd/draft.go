@@ -17,6 +17,8 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
+	"github.com/tammersaleh/slack-cli/internal/resolve"
+	"github.com/tammersaleh/slack-cli/internal/slackurl"
 )
 
 type DraftCmd struct {
@@ -137,14 +139,114 @@ func fetchDrafts(ctx context.Context, client *api.Client, activeOnly bool, limit
 	return resp.Drafts, resp.HasMore, nil
 }
 
+type recipientKind int
+
+const (
+	recipientChannel recipientKind = iota
+	recipientUser
+)
+
+// classifyRecipient decides, syntactically, whether a draft recipient arg
+// names a channel or a user. No network calls. User-shaped: @name, an email,
+// a Uxxx/Wxxx id, or a user-profile URL. Everything else (#name, bare name,
+// C/D/G/M id, channel/message URL) is a channel; bare names stay channels for
+// backward compatibility, so a person must be given as @name, email, or id.
+func classifyRecipient(s string) recipientKind {
+	if ref, ok, _ := slackurl.Parse(s); ok {
+		if ref.Kind == slackurl.KindUser {
+			return recipientUser
+		}
+		return recipientChannel
+	}
+	// An "@" means a @name handle (leading) or an email (interior); channel
+	// names can't contain one, and a URL with an "@" was handled above.
+	if strings.Contains(s, "@") {
+		return recipientUser
+	}
+	if resolve.IsUserID(s) {
+		return recipientUser
+	}
+	return recipientChannel
+}
+
+// resolveDestination turns the recipient args into a single draft destination:
+// a channel_id (exactly one channel recipient, current behavior) or a user_ids
+// set (one or more user recipients, a DM/MPDM that need not exist yet). Mixing
+// kinds, multiple channels, or --thread/--broadcast on a user destination are
+// fatal input errors. User recipients are resolved fully before any write;
+// every unresolved input is reported and aborts the command.
+func (c *DraftCreateCmd) resolveDestination(ctx context.Context, r *resolve.Resolver) (destination, error) {
+	var channels, users []string
+	for _, rec := range c.Recipients {
+		// A URL that parsed but is malformed/wrong-kind must surface its own
+		// precise reason, ahead of the mix/arity checks below - otherwise a bad
+		// URL gets bucketed as a channel and reported as "cannot mix" or "one
+		// channel only", hiding the actual problem.
+		if _, matched, perr := slackurl.Parse(rec); matched && perr != nil {
+			return destination{}, output.InvalidURL(rec, perr.Error())
+		}
+		switch classifyRecipient(rec) {
+		case recipientUser:
+			users = append(users, rec)
+		default:
+			channels = append(channels, rec)
+		}
+	}
+
+	if len(channels) > 0 && len(users) > 0 {
+		return destination{}, &output.Error{Err: "invalid_input", Detail: "cannot mix channel and user recipients; bare names are channels, use @name for a person", Code: output.ExitGeneral}
+	}
+
+	if len(users) > 0 {
+		if c.Thread != "" || c.Broadcast {
+			return destination{}, &output.Error{Err: "invalid_input", Detail: "--thread/--broadcast apply to a channel destination only, not a DM/MPDM (user) destination", Code: output.ExitGeneral}
+		}
+		// Malformed URLs were already rejected above, and a well-formed user
+		// URL resolves cleanly, so ResolveUser here never hits the
+		// bad-URL/invalid_input case - any failure is a genuine not-found.
+		ids := make([]string, 0, len(users))
+		seen := make(map[string]bool, len(users))
+		var failed []string
+		for _, u := range users {
+			id, err := r.ResolveUser(ctx, u)
+			if err != nil {
+				failed = append(failed, u)
+				continue
+			}
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+		if len(failed) > 0 {
+			return destination{}, output.UserNotFound(strings.Join(failed, ", "))
+		}
+		return destination{UserIDs: ids}, nil
+	}
+
+	if len(channels) != 1 {
+		return destination{}, &output.Error{Err: "invalid_input", Detail: "exactly one channel recipient is allowed (use multiple @name/Uxxx args for a DM/MPDM)", Code: output.ExitGeneral}
+	}
+	channelID, err := r.ResolveChannel(ctx, channels[0])
+	if err != nil {
+		return destination{}, channelResolveError(channels[0], err)
+	}
+	dest := destination{ChannelID: channelID}
+	if c.Thread != "" {
+		dest.ThreadTS = c.Thread
+		dest.Broadcast = c.Broadcast
+	}
+	return dest, nil
+}
+
 type DraftCreateCmd struct {
-	Channel       string `arg:"" required:"" help:"Channel ID or name."`
-	Thread        string `help:"Thread timestamp to reply to."`
-	Broadcast     bool   `help:"With --thread, also post to channel."`
-	At            string `help:"Schedule send at RFC 3339 timestamp or YYYY-MM-DD."`
-	DateScheduled int64  `help:"Schedule send at Unix epoch (alternative to --at)."`
-	Table         string `help:"Build a table from a CSV/TSV file and attach it (first row bold)."`
-	NoHeader      bool   `help:"With --table, treat the first row as data, not a bold header."`
+	Recipients    []string `arg:"" required:"" name:"recipient" help:"Channel (one) or users (@name/email/Uxxx, one or more for a DM/MPDM)."`
+	Thread        string   `help:"Thread timestamp to reply to."`
+	Broadcast     bool     `help:"With --thread, also post to channel."`
+	At            string   `help:"Schedule send at RFC 3339 timestamp or YYYY-MM-DD."`
+	DateScheduled int64    `help:"Schedule send at Unix epoch (alternative to --at)."`
+	Table         string   `help:"Build a table from a CSV/TSV file and attach it (first row bold)."`
+	NoHeader      bool     `help:"With --table, treat the first row as data, not a bold header."`
 }
 
 func (DraftCreateCmd) Help() string {
@@ -155,6 +257,15 @@ Top-level blocks must be rich_text - Slack's draft compose editor strips
 section / divider / header / context and bare table blocks when the user
 opens the draft. A table goes in an attachment instead: put a "table"
 block in attachments[].blocks[], or use --table to build one from CSV/TSV.
+
+Recipients: one channel (#name, bare name, or Cxxx/Dxxx id), or one or
+more users (@name, email, or Uxxx id) for a DM / multi-person DM that need
+not exist yet. Bare names are channels; use @name for a person. Channel
+and user recipients can't be mixed. --thread / --broadcast apply to a
+channel destination only.
+
+  slack draft create @alice            < blocks.json   # new 1:1 DM
+  slack draft create @alice @bob U0333 < blocks.json   # new MPDM (<=8 people)
 
 Minimal invocation:
 
@@ -215,15 +326,9 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	channelID, err := r.ResolveChannel(ctx, c.Channel)
-	if err != nil {
-		return channelResolveError(c.Channel, err)
-	}
-
-	dest := destination{ChannelID: channelID}
-	if c.Thread != "" {
-		dest.ThreadTS = c.Thread
-		dest.Broadcast = c.Broadcast
+	dest, derr := c.resolveDestination(ctx, r)
+	if derr != nil {
+		return derr
 	}
 	destsJSON, err := json.Marshal([]destination{dest})
 	if err != nil {

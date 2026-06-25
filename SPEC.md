@@ -1231,8 +1231,8 @@ Slack API: `drafts.list`
 #### slack draft create
 
 ```
-slack draft create <channel> [flags]
-  --thread            Thread timestamp to reply to.
+slack draft create <recipient>... [flags]
+  --thread            Thread timestamp to reply to (channel destination only).
   --broadcast         When set with --thread, also post to channel.
   --at                Schedule send at RFC 3339 timestamp or YYYY-MM-DD.
   --date-scheduled    Schedule send at Unix epoch (alternative to --at).
@@ -1245,8 +1245,21 @@ rich_text; tables go in attachments[].blocks[] (or use --table). No
 plain-text shortcut - this CLI is for agents, which emit structured JSON.
 ```
 
-Channel accepts `#name` or `Cxxx`. For DM drafts, use the channel ID
-(e.g. `Dxxx`). Resolving user IDs (`Uxxx`) as channels fails fast.
+Recipients are either one channel or one-or-more users:
+
+- Channel: `#name`, a bare name, or `Cxxx`/`Dxxx`. Exactly one. Resolved
+  via `conversations.list`.
+- Users: `@name`, an email, or `Uxxx`/`Wxxx` id. One produces a 1:1 DM,
+  several produce a multi-person DM (MPDM). The conversation need not exist
+  yet - Slack opens it on send, so this is how you draft to people you've
+  never messaged. Stamped as `user_ids` (no `channel_id`). Order preserved,
+  duplicates removed. Slack caps MPDMs near 8 people; an oversized list is
+  rejected by Slack.
+
+Bare names are treated as channels (backward compatible); use `@name` for a
+person. Channel and user recipients can't be mixed. `--thread` / `--broadcast`
+apply to a channel destination only. A user URL (profile link) is a user
+recipient; a channel/message URL is a channel recipient.
 
 Minimal plain-text draft:
 
@@ -1259,6 +1272,13 @@ Rich text (file with bullets, link, bold, code):
 
 ```
 $ slack draft create #general < rich.json
+```
+
+New DM / multi-person DM (recipients need not exist as a conversation yet):
+
+```
+$ slack draft create @alice < blocks.json              # 1:1 DM
+$ slack draft create @alice @bob U07XYZ < blocks.json  # MPDM
 ```
 
 Thread reply:
@@ -1283,9 +1303,10 @@ $ slack draft create #general < payload.json   # {"blocks":[...],"attachments":[
 Errors:
 
 - `channel_not_found` (exit 1): No channel matching the input.
+- `user_not_found` (exit 1): One or more user recipients couldn't be resolved (the message lists every unresolved input).
 - `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
 - `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body and no table attachment).
-- `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, or `--table` together with stdin attachments.
+- `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
 - `not_authed` (exit 2): No session token.
 
