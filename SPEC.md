@@ -495,6 +495,8 @@ Slack API: `conversations.history`
 
 Retrieves specific messages by timestamp. Uses `conversations.history` with `oldest=ts&latest=ts&inclusive=true&limit=1`. Accepts either a channel plus timestamps, or one-or-more message permalinks (which may span channels in one call); the two forms can't be mixed. Output rows carry `channel_id`.
 
+`conversations.history` never returns thread replies, so when it comes up empty the command falls back to a thread lookup: `chat.getPermalink` on the ts yields the parent `thread_ts` (a reply permalink already carries it, skipping this call), then `conversations.replies` fetches the reply directly. A ts that is neither a top-level message nor a reply is `message_not_found` as before.
+
 ```
 slack message get <channel> <timestamp>...
 slack message get <message-url>...
@@ -519,7 +521,7 @@ Errors:
 - `message_not_found` (exit 1): No message at the given timestamp.
 - `not_authed` (exit 2): No token.
 
-Slack API: `conversations.history` (filtered)
+Slack API: `conversations.history` (filtered), with `chat.getPermalink` + `conversations.replies` fallback for thread replies
 
 #### slack message permalink (Phase 2)
 

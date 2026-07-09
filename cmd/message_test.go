@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -136,6 +137,105 @@ func TestMessageGet_MockAPI(t *testing.T) {
 	}
 }
 
+// TestMessageGet_ThreadReply exercises the fallback: conversations.history
+// never returns thread replies, so an empty history triggers a chat.getPermalink
+// lookup (which carries thread_ts) followed by a targeted conversations.replies.
+func TestMessageGet_ThreadReply(t *testing.T) {
+	const replyTS = "1783406403.451509"
+	const parentTS = "1781254110.069429"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		// A reply ts is invisible to conversations.history.
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "messages": []map[string]any{}})
+	})
+	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":        true,
+			"channel":   "C01ABC",
+			"permalink": "https://test.slack.com/archives/C01ABC/p1783406403451509?thread_ts=" + parentTS + "&cid=C01ABC",
+		})
+	})
+	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("ts") != parentTS {
+			t.Errorf("expected replies ts=%s (thread parent), got %q", parentTS, r.FormValue("ts"))
+		}
+		// conversations.replies always prepends the thread parent, even with a
+		// tight oldest/latest window - the fallback must scan past it.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"has_more": false,
+			"messages": []map[string]any{
+				{"type": "message", "user": "U09", "text": "the parent", "ts": parentTS, "thread_ts": parentTS, "reply_count": 2},
+				{"type": "message", "user": "U01", "text": "the reply", "ts": replyTS, "thread_ts": parentTS},
+			},
+		})
+	})
+
+	out, err := runWithMock(t, mux, "message", "get", "C01ABC", replyTS)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (reply + meta), got %d:\n%s", len(lines), out)
+	}
+
+	msg := parseJSON(t, lines[0])
+	if msg["text"] != "the reply" {
+		t.Errorf("expected text='the reply', got %q", msg["text"])
+	}
+	if msg["ts"] != replyTS {
+		t.Errorf("expected ts=%q, got %q", replyTS, msg["ts"])
+	}
+	if msg["input"] != replyTS {
+		t.Errorf("expected input=%q, got %q", replyTS, msg["input"])
+	}
+	if msg["channel_id"] != "C01ABC" {
+		t.Errorf("expected channel_id='C01ABC', got %v", msg["channel_id"])
+	}
+}
+
+// TestMessageGet_ThreadReplyURL: a reply *permalink* already carries thread_ts,
+// so the fallback must skip chat.getPermalink and go straight to replies.
+func TestMessageGet_ThreadReplyURL(t *testing.T) {
+	const replyTS = "1783406403.451509"
+	const parentTS = "1781254110.069429"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "messages": []map[string]any{}})
+	})
+	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("chat.getPermalink must not be called when the input URL already carries thread_ts")
+	})
+	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
+		// conversations.replies always prepends the thread parent, even with a
+		// tight oldest/latest window - the fallback must scan past it.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"has_more": false,
+			"messages": []map[string]any{
+				{"type": "message", "user": "U09", "text": "the parent", "ts": parentTS, "thread_ts": parentTS, "reply_count": 2},
+				{"type": "message", "user": "U01", "text": "the reply", "ts": replyTS, "thread_ts": parentTS},
+			},
+		})
+	})
+
+	url := "https://test.slack.com/archives/C01ABC/p1783406403451509?thread_ts=" + parentTS + "&cid=C01ABC"
+	out, err := runWithMock(t, mux, "message", "get", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg := parseJSON(t, nonEmptyLines(out)[0])
+	if msg["text"] != "the reply" {
+		t.Errorf("expected text='the reply', got %q", msg["text"])
+	}
+}
+
 func TestMessageGet_NotFound(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +243,12 @@ func TestMessageGet_NotFound(t *testing.T) {
 			"ok":       true,
 			"messages": []map[string]any{},
 		})
+	})
+	// A genuinely missing ts: history is empty and the fallback's permalink
+	// lookup 404s. The fallback must collapse this back to message_not_found,
+	// not surface getPermalink's error.
+	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "message_not_found"})
 	})
 
 	out, err := runWithMock(t, mux, "message", "get", "C01ABC", "9999999999.999999")
@@ -161,6 +267,51 @@ func TestMessageGet_NotFound(t *testing.T) {
 	}
 	if errLine["channel_id"] != "C01ABC" {
 		t.Errorf("expected channel_id='C01ABC' on error row, got %v", errLine["channel_id"])
+	}
+}
+
+// TestMessageGet_FallbackSystemicError: a non-miss error from the fallback
+// (here missing_scope, which classifies as ExitGeneral just like
+// message_not_found) must abort fatally, NOT collapse into a soft
+// message_not_found row. Guards the isMessageMiss gate against being reduced
+// to an exit-code check.
+func TestMessageGet_FallbackSystemicError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "messages": []map[string]any{}})
+	})
+	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing_scope"})
+	})
+
+	out, err := runWithMock(t, mux, "message", "get", "C01ABC", "1783406403.451509")
+	if err == nil {
+		t.Fatal("expected a fatal error when the fallback hits missing_scope")
+	}
+	if strings.Contains(out, "message_not_found") {
+		t.Errorf("systemic error must not be masked as message_not_found; got:\n%s", out)
+	}
+}
+
+// TestMessageGet_FallbackParseDrift: if chat.getPermalink returns a permalink
+// slackurl.Parse can't handle (Slack changed the format), that's drift - it
+// must surface, not silently regress to the original not-found bug.
+func TestMessageGet_FallbackParseDrift(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "messages": []map[string]any{}})
+	})
+	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
+		// Not a slack.com host - slackurl.Parse returns matched=true, err!=nil.
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "permalink": "https://example.com/nope"})
+	})
+
+	out, err := runWithMock(t, mux, "message", "get", "C01ABC", "1783406403.451509")
+	if err == nil {
+		t.Fatal("expected a fatal error on permalink parse drift")
+	}
+	if strings.Contains(out, "message_not_found") {
+		t.Errorf("parse drift must not be masked as message_not_found; got:\n%s", out)
 	}
 }
 

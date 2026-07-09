@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
+	"github.com/tammersaleh/slack-cli/internal/slackurl"
 )
 
 type MessageCmd struct {
@@ -207,7 +210,24 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 			continue
 		}
 
-		if len(resp.Messages) == 0 {
+		msgs := resp.Messages
+		if len(msgs) == 0 {
+			// conversations.history omits thread replies; fall back to a
+			// permalink+replies lookup before declaring the ts missing.
+			reply, ferr := findThreadReply(ctx, client, channelID, ref.ts, ref.threadTS)
+			if ferr != nil {
+				oErr := cli.ClassifyError(ferr)
+				if !isMessageMiss(oErr) {
+					return oErr
+				}
+				// A semantic miss just means "not a reply either" - fall
+				// through to the message_not_found row below.
+			} else if reply != nil {
+				msgs = []slack.Message{*reply}
+			}
+		}
+
+		if len(msgs) == 0 {
 			errorCount++
 			if err := p.PrintItem(map[string]any{
 				"input":      ref.input,
@@ -220,7 +240,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 			continue
 		}
 
-		m := messageToMap(resp.Messages[0])
+		m := messageToMap(msgs[0])
 		m["input"] = ref.input
 		m["channel_id"] = channelID
 		if err := p.PrintItem(m); err != nil {
@@ -239,6 +259,64 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 }
 
 func messageToMap(msg slack.Message) map[string]any { return toMap(msg) }
+
+// findThreadReply resolves a ts that conversations.history can't see - a thread
+// reply - by discovering its parent thread and fetching the reply directly.
+//
+// knownThreadTS short-circuits the parent lookup when the caller already has it
+// (a reply permalink carries thread_ts). Otherwise chat.getPermalink is asked
+// for the ts; its permalink embeds thread_ts when the ts is a reply.
+//
+// Returns (nil, nil) when the ts is not a reply (no thread_ts) or the parent
+// thread has no such message. A non-nil error is a live API failure or a
+// permalink Slack returned that we couldn't parse (drift); the caller
+// classifies it.
+func findThreadReply(ctx context.Context, client *api.Client, channelID, ts, knownThreadTS string) (*slack.Message, error) {
+	threadTS := knownThreadTS
+	if threadTS == "" {
+		permalink, err := client.Bot().GetPermalinkContext(ctx, &slack.PermalinkParameters{Channel: channelID, Ts: ts})
+		if err != nil {
+			return nil, err
+		}
+		ref, _, err := slackurl.Parse(permalink)
+		if err != nil {
+			return nil, fmt.Errorf("parse permalink %q: %w", permalink, err)
+		}
+		if ref.ThreadTS == "" {
+			return nil, nil // not a threaded reply
+		}
+		threadTS = ref.ThreadTS
+	}
+
+	// conversations.replies takes the parent ts; the oldest/latest window
+	// narrows the returned page to just the target. Slack always prepends the
+	// thread parent regardless of the window, so scan for the matching ts
+	// rather than assuming a single-message response.
+	msgs, _, _, err := client.Bot().GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
+		ChannelID: channelID,
+		Timestamp: threadTS,
+		Oldest:    ts,
+		Latest:    ts,
+		Inclusive: true,
+		Limit:     2,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i := range msgs {
+		if msgs[i].Timestamp == ts {
+			return &msgs[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// isMessageMiss reports whether a classified error is a semantic "this ts isn't
+// there" signal (as opposed to auth/rate/scope/network/drift), so the caller
+// can collapse it into a message_not_found row instead of aborting.
+func isMessageMiss(oErr *output.Error) bool {
+	return oErr.Err == "message_not_found" || oErr.Err == "thread_not_found"
+}
 
 // parseTimestamp accepts a Unix timestamp string or ISO 8601 datetime.
 func parseTimestamp(s string) (string, error) {

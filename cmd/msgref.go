@@ -14,6 +14,10 @@ type msgRef struct {
 	channel string
 	ts      string
 	input   string
+	// threadTS is the parent thread ts, known only when the ref came from a
+	// reply permalink. Lets message get skip the chat.getPermalink round-trip
+	// in its thread-reply fallback. Empty for bare-ts and non-reply inputs.
+	threadTS string
 }
 
 // messageURLRef reports whether arg is a self-contained message permalink and,
@@ -46,13 +50,13 @@ func parseMessageRefs(args []string) ([]msgRef, error) {
 	}
 
 	if ref, ok := messageURLRef(args[0]); ok {
-		refs := []msgRef{{channel: ref.ChannelID, ts: ref.TS, input: args[0]}}
+		refs := []msgRef{{channel: ref.ChannelID, ts: ref.TS, input: args[0], threadTS: ref.ThreadTS}}
 		for _, a := range args[1:] {
 			r, ok := messageURLRef(a)
 			if !ok {
 				return nil, fmt.Errorf("cannot mix message URLs with other arguments: %q", a)
 			}
-			refs = append(refs, msgRef{channel: r.ChannelID, ts: r.TS, input: a})
+			refs = append(refs, msgRef{channel: r.ChannelID, ts: r.TS, input: a, threadTS: r.ThreadTS})
 		}
 		return refs, nil
 	}
