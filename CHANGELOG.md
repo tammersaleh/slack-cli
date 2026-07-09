@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.1](https://github.com/tammersaleh/slack-cli/compare/v3.5.0...v3.5.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* resolve thread replies in message get ([dd3dc95](https://github.com/tammersaleh/slack-cli/commit/dd3dc95af1af75f00c8cf6b78100622cb5dc9f56))
+
 ## [3.5.0](https://github.com/tammersaleh/slack-cli/compare/v3.4.1...v3.5.0) (2026-06-25)
 
 
