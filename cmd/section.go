@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 
@@ -325,68 +326,84 @@ func (c *SectionMoveCmd) Run(cli *CLI) error {
 		return cli.ClassifyError(err)
 	}
 
-	if targetSectionName == "" {
+	// Resolve and validate the target for the --section path. A typo'd id would
+	// otherwise silently no-op (the same failure class as this bug). The
+	// --new-section path already has both id and name from createSection.
+	if c.NewSection == "" {
+		found := false
 		for _, s := range sections {
 			if s.ID == targetSectionID {
 				targetSectionName = s.Name
+				found = true
 				break
 			}
 		}
+		if !found {
+			return output.SectionNotFound(targetSectionID)
+		}
 	}
 
-	channelIDs := strings.Split(c.Channels, ",")
-	for i := range channelIDs {
-		channelIDs[i] = strings.TrimSpace(channelIDs[i])
+	channelIDs := normalizeChannelIDs(c.Channels)
+	if len(channelIDs) == 0 {
+		return &output.Error{Err: "invalid_input", Detail: "no channel IDs provided", Code: output.ExitGeneral}
 	}
-
 	moveSet := make(map[string]bool, len(channelIDs))
 	for _, id := range channelIDs {
 		moveSet[id] = true
 	}
 
-	// Build section updates: remove moved channels from current sections,
-	// add them to the target.
-	updates := make([]map[string]any, 0, len(sections)+1)
+	// The bulkUpdate endpoint takes form-encoded insert/remove operations, not
+	// a full channel_ids_page replacement. Moving an already-sectioned channel
+	// requires both: insert into the target AND remove from its current
+	// section - insert alone is silently ignored by Slack.
+	removeBySource := make(map[string][]string)
 	for _, s := range sections {
-		filtered := make([]string, 0)
+		if s.ID == targetSectionID {
+			continue
+		}
 		for _, ch := range s.ChannelIDs.IDs {
-			if !moveSet[ch] {
-				filtered = append(filtered, ch)
+			if moveSet[ch] {
+				removeBySource[s.ID] = append(removeBySource[s.ID], ch)
 			}
 		}
-		if s.ID == targetSectionID {
-			filtered = append(filtered, channelIDs...)
-		}
-		updates = append(updates, map[string]any{
-			"channel_section_id": s.ID,
-			"channel_ids_page":   map[string]any{"channel_ids": filtered},
-		})
 	}
 
-	// If target section is new and not in the existing list, add it.
-	found := false
-	for _, s := range sections {
-		if s.ID == targetSectionID {
-			found = true
-			break
+	insert := []map[string]any{{
+		"channel_section_id": targetSectionID,
+		"channel_ids":        channelIDs,
+	}}
+	params := map[string]string{"insert": mustJSONString(insert)}
+
+	if len(removeBySource) > 0 {
+		sourceIDs := make([]string, 0, len(removeBySource))
+		for sid := range removeBySource {
+			sourceIDs = append(sourceIDs, sid)
 		}
-	}
-	if !found {
-		updates = append(updates, map[string]any{
-			"channel_section_id": targetSectionID,
-			"channel_ids_page":   map[string]any{"channel_ids": channelIDs},
-		})
+		sort.Strings(sourceIDs)
+		remove := make([]map[string]any, 0, len(sourceIDs))
+		for _, sid := range sourceIDs {
+			remove = append(remove, map[string]any{
+				"channel_section_id": sid,
+				"channel_ids":        removeBySource[sid],
+			})
+		}
+		params["remove"] = mustJSONString(remove)
 	}
 
-	_, err = client.PostInternal(ctx, "users.channelSections.channels.bulkUpdate", map[string]any{
-		"channel_sections": updates,
-	})
-	if err != nil {
+	if _, err = client.PostInternalForm(ctx, "users.channelSections.channels.bulkUpdate", params); err != nil {
 		return cli.ClassifyError(err)
 	}
 
+	// The endpoint returns a bare {"ok":true} even when it changes nothing, so
+	// re-fetch and count only channels now in the target and nowhere else.
+	after, err := fetchSections(ctx, client)
+	if err != nil {
+		return cli.ClassifyError(err)
+	}
+	moved := countMoved(after, channelIDs, targetSectionID)
+
 	result := map[string]any{
-		"moved_count":    len(channelIDs),
+		"moved_count":    moved,
 		"target_section": targetSectionName,
 	}
 	if c.NewSection != "" {
@@ -396,4 +413,53 @@ func (c *SectionMoveCmd) Run(cli *CLI) error {
 		return err
 	}
 	return p.PrintMeta(output.Meta{})
+}
+
+// normalizeChannelIDs splits a comma-separated list, trims each entry, drops
+// empties, and dedupes while preserving first-seen order.
+func normalizeChannelIDs(s string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0)
+	for _, part := range strings.Split(s, ",") {
+		id := strings.TrimSpace(part)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// countMoved reports how many of the given channels are now in the target
+// section and in no other section - the only state that counts as a
+// successful move.
+func countMoved(sections []sectionData, channelIDs []string, targetSectionID string) int {
+	moved := 0
+	for _, id := range channelIDs {
+		inTarget, elsewhere := false, false
+		for _, s := range sections {
+			for _, ch := range s.ChannelIDs.IDs {
+				if ch != id {
+					continue
+				}
+				if s.ID == targetSectionID {
+					inTarget = true
+				} else {
+					elsewhere = true
+				}
+			}
+		}
+		if inTarget && !elsewhere {
+			moved++
+		}
+	}
+	return moved
+}
+
+// mustJSONString marshals v to a JSON string. The inputs here are plain
+// maps/slices of strings, which never fail to marshal.
+func mustJSONString(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

@@ -1165,23 +1165,28 @@ Slack API: `client.counts` + `conversations.info` + `users.channelSections.list`
 slack section move --channels <id>[,<id>...] (--section <id> | --new-section <name>)
 ```
 
-Moves channels to an existing section or creates a new one. Processes
-in batches of 50 with 1-second delays between batches.
+Moves channels to an existing section or creates a new one. Channel IDs are
+trimmed and deduped. `--section` must name an existing section (a bad ID is
+`section_not_found`, not a silent no-op). `moved_count` is verified: after the
+update the sections are re-fetched and only channels now in the target section
+(and no other) are counted.
 
 ```
 $ slack section move --channels C01ABC,C02DEF --section S02DEF
-{"moved":[{"id":"C01ABC","name":"ext-acme"},{"id":"C02DEF","name":"ext-globex"}],"target_section":"Customers","moved_count":2}
+{"moved_count":2,"target_section":"Customers"}
 {"_meta":{"has_more":false}}
 ```
 
 ```
 $ slack section move --channels C03GHI --new-section "Archive"
-{"moved":[{"id":"C03GHI","name":"ext-initech"}],"target_section":"Archive","target_section_id":"S04JKL","moved_count":1}
+{"moved_count":1,"target_section":"Archive","target_section_id":"S04JKL"}
 {"_meta":{"has_more":false}}
 ```
 
 Slack API: `users.channelSections.channels.bulkUpdate`,
-optionally `users.channelSections.create`
+optionally `users.channelSections.create`. The bulkUpdate call is form-encoded
+with `insert`/`remove` JSON arrays (`[{channel_section_id, channel_ids}]`), one
+insert for the target and one remove per source section.
 
 #### slack section create
 

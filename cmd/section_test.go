@@ -2,11 +2,125 @@ package cmd_test
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
+
+// bulkOp mirrors one entry in the insert/remove arrays sent to
+// users.channelSections.channels.bulkUpdate.
+type bulkOp struct {
+	SectionID  string   `json:"channel_section_id"`
+	ChannelIDs []string `json:"channel_ids"`
+}
+
+// sectionStore is a stateful in-memory model of a workspace's sidebar
+// sections, used to faithfully exercise the section-move round-trip. It
+// reproduces the real API's insert/remove semantics: remove pulls a channel
+// out of a section; insert adds a channel to a section ONLY if that channel
+// is not currently held by any other section (insert on an already-sectioned
+// channel is a no-op, which is the whole bug under test).
+type sectionStore struct {
+	mu       sync.Mutex
+	order    []string            // stable section id order
+	names    map[string]string   // section id -> name
+	channels map[string][]string // section id -> channel ids
+}
+
+func newSectionStore() *sectionStore {
+	return &sectionStore{names: map[string]string{}, channels: map[string][]string{}}
+}
+
+func (s *sectionStore) addSection(id, name string, chans []string) {
+	s.order = append(s.order, id)
+	s.names[id] = name
+	s.channels[id] = append([]string{}, chans...)
+}
+
+func (s *sectionStore) sectionOf(ch string) string {
+	for _, sid := range s.order {
+		for _, c := range s.channels[sid] {
+			if c == ch {
+				return sid
+			}
+		}
+	}
+	return ""
+}
+
+func (s *sectionStore) applyRemove(ops []bulkOp) {
+	for _, op := range ops {
+		remaining := s.channels[op.SectionID][:0:0]
+		drop := map[string]bool{}
+		for _, c := range op.ChannelIDs {
+			drop[c] = true
+		}
+		for _, c := range s.channels[op.SectionID] {
+			if !drop[c] {
+				remaining = append(remaining, c)
+			}
+		}
+		s.channels[op.SectionID] = remaining
+	}
+}
+
+func (s *sectionStore) applyInsert(ops []bulkOp) {
+	for _, op := range ops {
+		for _, c := range op.ChannelIDs {
+			// Slack ignores an insert while the channel still lives in
+			// another section.
+			if cur := s.sectionOf(c); cur != "" && cur != op.SectionID {
+				continue
+			}
+			if s.sectionOf(c) == op.SectionID {
+				continue
+			}
+			s.channels[op.SectionID] = append(s.channels[op.SectionID], c)
+		}
+	}
+}
+
+// mux builds a handler serving list + bulkUpdate (remove applied before
+// insert, matching the real single-call move). Captured insert/remove ops
+// are written to the provided pointers.
+func (s *sectionStore) mux(gotInsert, gotRemove *[]bulkOp) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.channelSections.list", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		var secs []map[string]any
+		for _, sid := range s.order {
+			secs = append(secs, map[string]any{
+				"channel_section_id": sid,
+				"name":               s.names[sid],
+				"type":               "channels",
+				"channel_ids_page":   map[string]any{"channel_ids": s.channels[sid]},
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel_sections": secs})
+	})
+	mux.HandleFunc("/api/users.channelSections.channels.bulkUpdate", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if v := r.FormValue("remove"); v != "" {
+			var ops []bulkOp
+			_ = json.Unmarshal([]byte(v), &ops)
+			*gotRemove = ops
+			s.applyRemove(ops)
+		}
+		if v := r.FormValue("insert"); v != "" {
+			var ops []bulkOp
+			_ = json.Unmarshal([]byte(v), &ops)
+			*gotInsert = ops
+			s.applyInsert(ops)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+	return mux
+}
 
 func sectionListHandler(t *testing.T, sections []map[string]any) http.HandlerFunc {
 	t.Helper()
@@ -232,63 +346,32 @@ func TestSectionFind(t *testing.T) {
 }
 
 func TestSectionMove(t *testing.T) {
-	var gotPayload map[string]any
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/users.channelSections.channels.bulkUpdate", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &gotPayload)
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-	})
-	mux.HandleFunc("/api/users.channelSections.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channel_sections": []map[string]any{
-				{
-					"channel_section_id": "S01ABC",
-					"name":               "Customers",
-					"type":               "channels",
-					"channel_ids_page":   map[string]any{"channel_ids": []string{"C01", "C03"}},
-				},
-				{
-					"channel_section_id": "S02DEF",
-					"name":               "Archive",
-					"type":               "channels",
-					"channel_ids_page":   map[string]any{"channel_ids": []string{}},
-				},
-			},
-		})
-	})
+	store := newSectionStore()
+	store.addSection("S01ABC", "Customers", []string{"C01", "C03"})
+	store.addSection("S02DEF", "Archive", nil)
+
+	var gotInsert, gotRemove []bulkOp
+	mux := store.mux(&gotInsert, &gotRemove)
 
 	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01", "--section", "S02DEF")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Verify the bulkUpdate payload.
-	if gotPayload == nil {
-		t.Fatal("expected bulkUpdate to be called")
+	// The move must both insert C01 into the target and remove it from its
+	// current section - insert alone is a silent no-op on the real API.
+	if len(gotInsert) != 1 || gotInsert[0].SectionID != "S02DEF" ||
+		len(gotInsert[0].ChannelIDs) != 1 || gotInsert[0].ChannelIDs[0] != "C01" {
+		t.Errorf("expected insert [{S02DEF:[C01]}], got %+v", gotInsert)
 	}
-	sections, ok := gotPayload["channel_sections"].([]any)
-	if !ok {
-		t.Fatalf("expected channel_sections array, got %T", gotPayload["channel_sections"])
+	if len(gotRemove) != 1 || gotRemove[0].SectionID != "S01ABC" ||
+		len(gotRemove[0].ChannelIDs) != 1 || gotRemove[0].ChannelIDs[0] != "C01" {
+		t.Errorf("expected remove [{S01ABC:[C01]}], got %+v", gotRemove)
 	}
-	// S01ABC should have C01 removed (only C03 left).
-	// S02DEF should have C01 added.
-	for _, raw := range sections {
-		s := raw.(map[string]any)
-		sid := s["channel_section_id"].(string)
-		page := s["channel_ids_page"].(map[string]any)
-		ids := page["channel_ids"].([]any)
-		if sid == "S01ABC" {
-			if len(ids) != 1 || ids[0] != "C03" {
-				t.Errorf("S01ABC should have [C03], got %v", ids)
-			}
-		}
-		if sid == "S02DEF" {
-			if len(ids) != 1 || ids[0] != "C01" {
-				t.Errorf("S02DEF should have [C01], got %v", ids)
-			}
-		}
+
+	// The channel actually landed in the target and left the source.
+	if got := store.sectionOf("C01"); got != "S02DEF" {
+		t.Errorf("C01 should now be in S02DEF, got %q", got)
 	}
 
 	lines := nonEmptyLines(out)
@@ -301,6 +384,117 @@ func TestSectionMove(t *testing.T) {
 	}
 	if result["target_section"] != "Archive" {
 		t.Errorf("expected target_section='Archive', got %q", result["target_section"])
+	}
+}
+
+// TestSectionMove_MultiSource covers moving several channels that live in
+// different source sections in one call: remove groups per source, insert
+// into the single target.
+func TestSectionMove_MultiSource(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Customers", []string{"C01", "C02"})
+	store.addSection("S02DEF", "Partners", []string{"C03"})
+	store.addSection("S03GHI", "Archive", nil)
+
+	var gotInsert, gotRemove []bulkOp
+	mux := store.mux(&gotInsert, &gotRemove)
+
+	// Move C01 (from S01ABC) and C03 (from S02DEF) into S03GHI.
+	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01,C03", "--section", "S03GHI")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(gotInsert) != 1 || gotInsert[0].SectionID != "S03GHI" {
+		t.Fatalf("expected single insert into S03GHI, got %+v", gotInsert)
+	}
+	// remove is grouped by source section, sorted by section id.
+	sort.Slice(gotRemove, func(i, j int) bool { return gotRemove[i].SectionID < gotRemove[j].SectionID })
+	if len(gotRemove) != 2 {
+		t.Fatalf("expected 2 remove groups, got %+v", gotRemove)
+	}
+	if gotRemove[0].SectionID != "S01ABC" || gotRemove[0].ChannelIDs[0] != "C01" {
+		t.Errorf("expected S01ABC removes C01, got %+v", gotRemove[0])
+	}
+	if gotRemove[1].SectionID != "S02DEF" || gotRemove[1].ChannelIDs[0] != "C03" {
+		t.Errorf("expected S02DEF removes C03, got %+v", gotRemove[1])
+	}
+
+	if store.sectionOf("C01") != "S03GHI" || store.sectionOf("C03") != "S03GHI" {
+		t.Errorf("both channels should be in S03GHI: C01=%q C03=%q", store.sectionOf("C01"), store.sectionOf("C03"))
+	}
+
+	result := parseJSON(t, nonEmptyLines(out)[0])
+	if result["moved_count"] != float64(2) {
+		t.Errorf("expected moved_count=2, got %v", result["moved_count"])
+	}
+}
+
+// TestSectionMove_SectionNotFound guards against a typo'd --section silently
+// no-opping (a sibling of the original bug).
+func TestSectionMove_SectionNotFound(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Customers", []string{"C01"})
+	var gotInsert, gotRemove []bulkOp
+	mux := store.mux(&gotInsert, &gotRemove)
+
+	_, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01", "--section", "S99NOPE")
+	if err == nil {
+		t.Fatal("expected error for nonexistent target section")
+	}
+	if gotInsert != nil || gotRemove != nil {
+		t.Error("bulkUpdate must not be called when the target section is invalid")
+	}
+}
+
+// TestSectionMove_AlreadyInTarget: a channel already in the target and one
+// unsectioned channel. The insert-only path must add the unsectioned channel,
+// and re-running against a channel already in target is an idempotent success
+// (no remove, still counted as moved).
+func TestSectionMove_AlreadyInTarget(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Customers", []string{"C01"}) // C01 already in target
+	// C02 exists in no section at all.
+
+	var gotInsert, gotRemove []bulkOp
+	mux := store.mux(&gotInsert, &gotRemove)
+
+	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01,C02", "--section", "S01ABC")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Neither channel is in a *different* section, so there is nothing to
+	// remove and remove must be omitted entirely.
+	if gotRemove != nil {
+		t.Errorf("expected no remove ops, got %+v", gotRemove)
+	}
+	if len(gotInsert) != 1 || gotInsert[0].SectionID != "S01ABC" || len(gotInsert[0].ChannelIDs) != 2 {
+		t.Errorf("expected insert of both channels into S01ABC, got %+v", gotInsert)
+	}
+	if store.sectionOf("C01") != "S01ABC" || store.sectionOf("C02") != "S01ABC" {
+		t.Errorf("both channels should be in S01ABC: C01=%q C02=%q", store.sectionOf("C01"), store.sectionOf("C02"))
+	}
+	result := parseJSON(t, nonEmptyLines(out)[0])
+	if result["moved_count"] != float64(2) {
+		t.Errorf("expected moved_count=2 (both now in target), got %v", result["moved_count"])
+	}
+}
+
+// TestSectionMove_EmptyChannels: --channels that normalizes to nothing is a
+// fatal invalid_input and must not touch the API.
+func TestSectionMove_EmptyChannels(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Customers", nil)
+	var gotInsert, gotRemove []bulkOp
+	mux := store.mux(&gotInsert, &gotRemove)
+
+	_, err := runWithMockSession(t, mux, "section", "move", "--channels", " , ,", "--section", "S01ABC")
+	if err == nil {
+		t.Fatal("expected error for empty channel list")
+	}
+	if gotInsert != nil || gotRemove != nil {
+		t.Error("bulkUpdate must not be called with no channels")
 	}
 }
 
@@ -321,23 +515,21 @@ func TestSectionMove_ConflictingFlags(t *testing.T) {
 }
 
 func TestSectionMove_NewSection(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Customers", []string{"C01"})
+
 	var createdName string
-	mux := http.NewServeMux()
+	var gotInsert, gotRemove []bulkOp
+	mux := store.mux(&gotInsert, &gotRemove)
 	mux.HandleFunc("/api/users.channelSections.create", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		createdName = r.FormValue("name")
+		store.mu.Lock()
+		store.addSection("S99NEW", createdName, nil)
+		store.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":                 true,
 			"channel_section_id": "S99NEW",
-		})
-	})
-	mux.HandleFunc("/api/users.channelSections.channels.bulkUpdate", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
-	})
-	mux.HandleFunc("/api/users.channelSections.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":               true,
-			"channel_sections": []map[string]any{},
 		})
 	})
 
@@ -349,10 +541,24 @@ func TestSectionMove_NewSection(t *testing.T) {
 	if createdName != "Archive" {
 		t.Errorf("expected section create with name='Archive', got %q", createdName)
 	}
+	// C01 was in S01ABC, so the move must remove it there and insert into the
+	// freshly created section.
+	if len(gotInsert) != 1 || gotInsert[0].SectionID != "S99NEW" {
+		t.Errorf("expected insert into S99NEW, got %+v", gotInsert)
+	}
+	if len(gotRemove) != 1 || gotRemove[0].SectionID != "S01ABC" {
+		t.Errorf("expected remove from S01ABC, got %+v", gotRemove)
+	}
+	if store.sectionOf("C01") != "S99NEW" {
+		t.Errorf("C01 should be in S99NEW, got %q", store.sectionOf("C01"))
+	}
 
-	lines := nonEmptyLines(out)
-	if len(lines) < 1 {
-		t.Fatalf("expected at least 1 line, got %d:\n%s", len(lines), out)
+	result := parseJSON(t, nonEmptyLines(out)[0])
+	if result["moved_count"] != float64(1) {
+		t.Errorf("expected moved_count=1, got %v", result["moved_count"])
+	}
+	if result["target_section_id"] != "S99NEW" {
+		t.Errorf("expected target_section_id='S99NEW', got %q", result["target_section_id"])
 	}
 }
 
