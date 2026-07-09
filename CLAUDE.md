@@ -82,7 +82,16 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    blocked babysitting CI. The sub-agent polls `gh release list` /
    `gh run list` until the new tag cuts, then runs
    `brew upgrade --cask tammersaleh/tap/slack-cli` and reports the installed
-   `slack version`; the main session then exercises the new behavior. The
+   `slack version`; the main session then exercises the new behavior.
+   Practical note (learned 2026-07-09): a general-purpose sub-agent is a
+   poor poller - it repeatedly misreads its own role and bails early with
+   "I'll wait for the notification" instead of looping. A background `Bash`
+   poll loop (`run_in_background`) that re-invokes the main session on exit
+   works reliably: loop `gh release view vX.Y.Z` with `sleep 90` until the
+   tag cuts, then a second loop on the tap's raw `Casks/slack-cli.rb` until
+   `version "X.Y.Z"` appears (the cask artifact lags the git tag by minutes -
+   `brew upgrade` says "already installed" until then), then upgrade and
+   verify in the main session. The
    release flow: release-please opens a release PR that auto-merges once CI
    is green, then GoReleaser tags it and pushes the Homebrew artifact -
    minutes, not instant. The artifact is a
