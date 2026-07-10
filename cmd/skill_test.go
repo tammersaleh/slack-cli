@@ -48,6 +48,86 @@ func TestSkill_Frontmatter(t *testing.T) {
 	}
 }
 
+// TestSkill_AntiGuessGrammar guards the fix for issues/skill-not-triggering.md:
+// the frontmatter description (the only text always in the skill catalog) must
+// steer the model away from Slack Web-API method names, and the body must carry
+// the corrective mapping table for the recurring wrong guesses.
+func TestSkill_AntiGuessGrammar(t *testing.T) {
+	out := readSkill(t)
+
+	// The always-in-context description must tell the model to load before
+	// running slack and that this CLI is not the Slack Web API.
+	desc := frontmatterField(t, out, "description")
+	for _, want := range []string{
+		"BEFORE running",
+		"slack thread list",
+		"conversations.replies",
+	} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("expected description to contain %q, got %q", want, desc)
+		}
+	}
+
+	// The body table must pair each recurring wrong guess with the right
+	// command on the SAME row. Checking substring membership over the whole
+	// doc is not enough: the right-hand commands and two of the wrong guesses
+	// already appear elsewhere (command reference, the description), so a
+	// scrambled or truncated table would still pass. Scope to the Grammar
+	// section and require both halves on one table row.
+	grammar := sectionBody(t, out, "## Grammar")
+	for _, pair := range [][2]string{
+		{"conversations replies <channel> <ts>", "slack thread list <channel> <ts>"},
+		{"channel find <name>", "slack channel list --query <name>"},
+		{"message read <channel> <ts>", "slack message get <channel> <ts>"},
+		{"message list <channel> --thread <ts>", "slack thread list <channel> <ts>"},
+	} {
+		if !rowPairs(grammar, pair[0], pair[1]) {
+			t.Errorf("Grammar table missing row mapping %q -> %q", pair[0], pair[1])
+		}
+	}
+}
+
+// sectionBody returns the lines of a Markdown section (from its `## Heading`
+// up to the next `## ` heading or EOF).
+func sectionBody(t *testing.T, doc, heading string) string {
+	t.Helper()
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		t.Fatalf("no %q section", heading)
+	}
+	rest := doc[start+len(heading):]
+	before, _, _ := strings.Cut(rest, "\n## ")
+	return before
+}
+
+// rowPairs reports whether a single line in body contains both substrings -
+// i.e. they sit on the same table row.
+func rowPairs(body, wrong, right string) bool {
+	for line := range strings.SplitSeq(body, "\n") {
+		if strings.Contains(line, wrong) && strings.Contains(line, right) {
+			return true
+		}
+	}
+	return false
+}
+
+// frontmatterField extracts a top-level `key: value` from the YAML frontmatter.
+func frontmatterField(t *testing.T, doc, key string) string {
+	t.Helper()
+	end := strings.Index(doc[4:], "\n---")
+	if !strings.HasPrefix(doc, "---\n") || end < 0 {
+		t.Fatal("no frontmatter block")
+	}
+	fm := doc[4 : end+4]
+	for line := range strings.SplitSeq(fm, "\n") {
+		if v, ok := strings.CutPrefix(line, key+":"); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	t.Fatalf("frontmatter has no %q field", key)
+	return ""
+}
+
 // TestSkill_DiscoverabilityContent asserts the sections that exist to
 // let agents self-recover from errors, compose commands, and understand
 // the CLI's conventions without external help. If one of these goes
