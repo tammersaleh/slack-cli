@@ -91,40 +91,24 @@ func (c *FileListCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	for {
-		params := slack.GetFilesParameters{
+	fetch := pageCursorFetch(func(page int) ([]slack.File, *slack.Paging, error) {
+		return client.Bot().GetFilesContext(ctx, slack.GetFilesParameters{
 			Channel: channelID,
 			User:    userID,
 			Types:   c.Types,
 			Count:   limit,
 			Page:    page,
-		}
+		})
+	})
 
-		files, paging, err := client.Bot().GetFilesContext(ctx, params)
-		if err != nil {
-			return cli.ClassifyError(err)
-		}
-
+	return streamPages(ctx, cli, p, "files.list", strconv.Itoa(page), c.All, fetch, func(files []slack.File) error {
 		for _, f := range files {
 			if err := p.PrintItem(fileToMap(f)); err != nil {
 				return err
 			}
 		}
-
-		hasMore := paging != nil && paging.Page < paging.Pages
-		if !c.All || !hasMore {
-			nextCursor := ""
-			if hasMore {
-				nextCursor = strconv.Itoa(paging.Page + 1)
-			}
-			return p.PrintMeta(output.Meta{
-				HasMore:    hasMore,
-				NextCursor: nextCursor,
-			})
-		}
-
-		page++
-	}
+		return nil
+	})
 }
 
 type FileInfoCmd struct {

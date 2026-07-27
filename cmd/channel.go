@@ -23,7 +23,7 @@ type ChannelListCmd struct {
 	ExcludeArchived  bool   `help:"Exclude archived channels." default:"true" negatable:""`
 	IncludeNonMember bool   `help:"Include channels the user hasn't joined."`
 	HasUnread        bool   `help:"Only channels with unread messages."`
-	Query            string `help:"Filter by name substring (client-side)."`
+	Query            string `help:"Filter by name substring (client-side; pair with --all to search every page)."`
 }
 
 func (ChannelListCmd) Help() string {
@@ -39,9 +39,12 @@ Channel types:
             IMs don't have a member concept on the Slack API)
   all       all of the above (default)
 
+--query filters client-side over the pages actually fetched, so pair it
+with --all to search the whole workspace rather than just the first page.
+
 Examples:
 
-  slack channel list --query ext-                  # filter by name substring
+  slack channel list --all --query ext-            # filter by name substring
   slack channel list --type public                 # only public channels
   slack channel list --include-non-member --limit 200
   slack channel list --type private --has-unread   # only unread private channels`
@@ -68,17 +71,16 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 		limit = 100
 	}
 
-	for {
-		channels, nextCursor, err := client.Bot().GetConversationsContext(ctx, &slack.GetConversationsParameters{
+	fetch := func(cursor string) ([]slack.Channel, string, error) {
+		return client.Bot().GetConversationsContext(ctx, &slack.GetConversationsParameters{
 			Types:           types,
 			Limit:           limit,
 			ExcludeArchived: c.ExcludeArchived,
 			Cursor:          cursor,
 		})
-		if err != nil {
-			return cli.ClassifyError(err)
-		}
+	}
 
+	return streamPages(ctx, cli, p, "conversations.list", cursor, c.All, fetch, func(channels []slack.Channel) error {
 		for _, ch := range channels {
 			// IMs don't have a "member" concept - is_member is always
 			// false, so the member-only default would hide every DM.
@@ -96,15 +98,8 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 				return err
 			}
 		}
-
-		if !c.All || nextCursor == "" {
-			return p.PrintMeta(output.Meta{
-				HasMore:    nextCursor != "",
-				NextCursor: nextCursor,
-			})
-		}
-		cursor = nextCursor
-	}
+		return nil
+	})
 }
 
 type ChannelInfoCmd struct {
@@ -201,32 +196,22 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	cursor := c.Cursor
-
-	for {
-		members, nextCursor, err := client.Bot().GetUsersInConversationContext(ctx, &slack.GetUsersInConversationParameters{
+	fetch := func(cursor string) ([]string, string, error) {
+		return client.Bot().GetUsersInConversationContext(ctx, &slack.GetUsersInConversationParameters{
 			ChannelID: channelID,
 			Limit:     limit,
 			Cursor:    cursor,
 		})
-		if err != nil {
-			return cli.ClassifyError(err)
-		}
+	}
 
+	return streamPages(ctx, cli, p, "conversations.members", c.Cursor, c.All, fetch, func(members []string) error {
 		for _, uid := range members {
 			if err := p.PrintItem(map[string]any{"user_id": uid}); err != nil {
 				return err
 			}
 		}
-
-		if !c.All || nextCursor == "" {
-			return p.PrintMeta(output.Meta{
-				HasMore:    nextCursor != "",
-				NextCursor: nextCursor,
-			})
-		}
-		cursor = nextCursor
-	}
+		return nil
+	})
 }
 
 type ChannelManagersCmd struct {

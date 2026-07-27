@@ -86,6 +86,10 @@ Errors that prevent command execution entirely (auth failure, network error) go 
 
 Per-item errors in multi-argument info commands appear inline on stdout (see above).
 
+A failure that cuts a paginated command short also sets `error` in the `_meta`
+trailer, so the truncation is visible on stdout. See "Truncated results" under
+Pagination.
+
 Exit codes:
 
 - `0`: All items succeeded
@@ -292,6 +296,49 @@ $ slack channel list --all
 ```
 
 `--all` and `--cursor` are mutually exclusive. Providing both is an error.
+
+### Truncated results
+
+A paginated command can fail partway through, after some pages have already
+streamed to stdout. The rows already written stay there - they are real
+results - and the trailer marks the stream incomplete with the same error code
+the command writes to stderr:
+
+```
+$ slack channel list --all
+{"id":"C01ABC",...}
+{"_meta":{"has_more":true,"next_cursor":"dGVhbTpD","error":"rate_limited"}}
+```
+
+So a consumer reading stdout alone can still tell a truncated listing from a
+complete one. The rule: **a listing is complete only when the last line is a
+`_meta` object with no `error` field.** For an exhaustive `--all` scan, also
+require `has_more:false`.
+
+When `_meta.error` is present:
+
+- `has_more:true` with `next_cursor` means the named page never arrived -
+  resume from that cursor.
+- `has_more:true` with no `next_cursor` means the first page failed - rerun the
+  command.
+- `has_more:false` means the outcome is terminal and there is nothing to resume
+  (`thread_not_found`, for example).
+
+The cursor is a page-boundary retry point, not a transactional checkpoint.
+Slack cursors can expire, and page-number result sets shift between runs, so a
+resumed run can duplicate or miss items if the underlying data changed. Work
+that needs consistency should rerun from the start and deduplicate by ID.
+
+The trailer is not guaranteed in every circumstance: if stdout itself fails
+(broken pipe) nothing further can be written, and a fatal error raised before
+any data line - bad input, an unresolvable channel, auth failure - is reported
+on stderr with no trailer, as it always has been.
+
+Rate-limited pages are retried automatically: up to 5 attempts per page,
+honoring Slack's `Retry-After`, with no wait after the final failure. A
+command aborts on the first page that exhausts its budget. Because `--timeout`
+defaults to off, a heavily throttled `--all` can wait a long time; pass
+`--timeout` when a predictable bound matters.
 
 Pagination flags on list commands:
 

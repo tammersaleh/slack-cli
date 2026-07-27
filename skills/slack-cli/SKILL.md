@@ -9,7 +9,8 @@ allowed-tools:
 # Slack CLI
 
 CLI for Slack. JSONL output (one JSON object per line). All commands end with
-a `_meta` trailer: `{"_meta":{"has_more":false}}`.
+a `_meta` trailer: `{"_meta":{"has_more":false}}`. A trailer carrying an
+`error` field means the output above it is incomplete - see Pagination.
 
 Requires the `slack` binary on PATH. If `command not found`, install it:
 `brew install tammersaleh/tap/slack-cli` (macOS) or
@@ -54,14 +55,14 @@ Common errors and their recovery:
 | `error` | What to run next |
 |---|---|
 | `not_authed` | `slack auth login --desktop` (or `slack auth login` for OAuth) |
-| `channel_not_found` | `slack channel list --query <partial>`; add `--include-non-member` for channels you haven't joined |
-| `user_not_found` | `slack user list --query <partial>` or `slack user info <id-or-email>` |
+| `channel_not_found` | `slack channel list --all --query <partial>`; add `--include-non-member` for channels you haven't joined |
+| `user_not_found` | `slack user list --all --query <partial>` or `slack user info <id-or-email>` |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
 | `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. |
-| `rate_limited` | Retry after the delay Slack provided |
+| `rate_limited` | Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait |
 
 Per-item errors in bulk commands (e.g. `slack channel info X Y Z`)
 go to stdout inline as `{"input":..., "error":..., "detail":..., "hint":...}`
@@ -686,6 +687,23 @@ resolved `user_name` too (no need to list both).
 
 Most list commands return one page by default. Use `--all` to fetch
 everything, or use the `next_cursor` from `_meta` with `--cursor`.
+
+### Always check the trailer before trusting a list
+
+A list is complete only when the last stdout line is a `_meta` object with no
+`error` field. Rate-limited pages are retried automatically, but a run can
+still end early, and the rows already printed stay on stdout:
+
+```
+{"id":"C01"}
+{"_meta":{"has_more":true,"next_cursor":"dGVhbTpD","error":"rate_limited"}}
+```
+
+That is a partial result, not a short list. When `_meta.error` is set, resume
+with `--cursor <next_cursor>`, or rerun the command if no cursor is given.
+Treating a truncated `--all` run as the full set is the classic way to reach a
+wrong conclusion - for example "I'm only in 285 channels" when the run stopped
+a third of the way through.
 
 ## Channel and User Resolution
 

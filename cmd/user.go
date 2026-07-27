@@ -21,7 +21,7 @@ type UserListCmd struct {
 	Limit    int    `help:"Page size." default:"100"`
 	Cursor   string `help:"Continue from previous page."`
 	All      bool   `help:"Fetch all pages."`
-	Query    string `help:"Filter by name or email substring (client-side)."`
+	Query    string `help:"Filter by name or email substring (client-side; pair with --all to search every page)."`
 	Presence bool   `help:"Include presence information."`
 }
 
@@ -44,28 +44,27 @@ func (c *UserListCmd) Run(cli *CLI) error {
 		limit = 100
 	}
 
-	// slack-go's users.list uses its own pagination. We use GetUsersPaginated
-	// for single-page control.
-	pag := client.Bot().GetUsersPaginated(
-		slack.GetUsersOptionLimit(limit),
-		slack.GetUsersOptionPresence(c.Presence),
-	)
-
-	if c.Cursor != "" {
-		pag.Cursor = c.Cursor
+	// slack-go's users.list carries its pagination state in the paginator
+	// value. Build a fresh one per attempt with every option reapplied, so a
+	// retried page repeats the same request instead of restarting at page 1.
+	fetch := func(cursor string) ([]slack.User, string, error) {
+		pag := client.Bot().GetUsersPaginated(
+			slack.GetUsersOptionLimit(limit),
+			slack.GetUsersOptionPresence(c.Presence),
+			slack.GetUsersOptionCursor(cursor),
+		)
+		pag, err := pag.Next(ctx)
+		if err != nil {
+			if pag.Done(err) {
+				return nil, "", nil
+			}
+			return nil, "", err
+		}
+		return pag.Users, pag.Cursor, nil
 	}
 
-	for {
-		var fetchErr error
-		pag, fetchErr = pag.Next(ctx)
-		if pag.Done(fetchErr) {
-			return p.PrintMeta(output.Meta{})
-		}
-		if fetchErr != nil {
-			return cli.ClassifyError(fetchErr)
-		}
-
-		for _, user := range pag.Users {
+	return streamPages(ctx, cli, p, "users.list", c.Cursor, c.All, fetch, func(users []slack.User) error {
+		for _, user := range users {
 			if c.Query != "" && !matchesUserQuery(user, c.Query) {
 				continue
 			}
@@ -73,15 +72,8 @@ func (c *UserListCmd) Run(cli *CLI) error {
 				return err
 			}
 		}
-
-		nextCursor := pag.Cursor
-		if !c.All || nextCursor == "" {
-			return p.PrintMeta(output.Meta{
-				HasMore:    nextCursor != "",
-				NextCursor: nextCursor,
-			})
-		}
-	}
+		return nil
+	})
 }
 
 type UserInfoCmd struct {

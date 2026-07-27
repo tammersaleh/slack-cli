@@ -55,9 +55,13 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	cursor := c.Cursor
+	// The not-found checks describe the thread as a whole, so they run
+	// against the first page only - a later page is a continuation, not a
+	// verdict on whether the thread exists. Running them here, before any
+	// message is printed, keeps a not-found from cutting a stream in half.
+	firstPage := true
 
-	for {
+	fetch := func(cursor string) ([]slack.Message, string, error) {
 		msgs, hasMore, nextCursor, err := client.Bot().GetConversationRepliesContext(ctx, &slack.GetConversationRepliesParameters{
 			ChannelID: channelID,
 			Timestamp: ref.ts,
@@ -65,18 +69,27 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 			Cursor:    cursor,
 		})
 		if err != nil {
-			return cli.ClassifyError(err)
+			return nil, "", err
 		}
 
-		if len(msgs) == 0 {
-			return output.ThreadNotFoundNoMessage(ref.channel, ref.ts)
+		if firstPage {
+			firstPage = false
+			if len(msgs) == 0 {
+				return nil, "", output.ThreadNotFoundNoMessage(ref.channel, ref.ts)
+			}
+			// Slack returns the parent as the sole message when there are no replies.
+			if len(msgs) == 1 && msgs[0].ReplyCount == 0 {
+				return nil, "", output.ThreadNotFoundNoReplies(ref.ts)
+			}
 		}
 
-		// Slack returns the parent as the sole message when there are no replies.
-		if len(msgs) == 1 && msgs[0].ReplyCount == 0 {
-			return output.ThreadNotFoundNoReplies(ref.ts)
+		if !hasMore {
+			nextCursor = ""
 		}
+		return msgs, nextCursor, nil
+	}
 
+	return streamPages(ctx, cli, p, "conversations.replies", c.Cursor, c.All, fetch, func(msgs []slack.Message) error {
 		for _, msg := range msgs {
 			m := messageToMap(msg)
 			m["channel_id"] = channelID
@@ -84,13 +97,6 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 				return err
 			}
 		}
-
-		if !c.All || !hasMore || nextCursor == "" {
-			return p.PrintMeta(output.Meta{
-				HasMore:    hasMore && nextCursor != "",
-				NextCursor: nextCursor,
-			})
-		}
-		cursor = nextCursor
-	}
+		return nil
+	})
 }

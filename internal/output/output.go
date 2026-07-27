@@ -42,10 +42,18 @@ func (e *ExitError) Error() string {
 }
 
 // Meta is the _meta trailer emitted after all data lines.
+//
+// Error marks a stream that ended early: the data lines above it are a
+// partial result, not the whole set. It carries the same error code the
+// command writes to stderr, so a consumer reading only stdout can still
+// tell a truncated listing from a complete one. When Error is set,
+// HasMore is true and NextCursor is the page to resume from (empty if
+// the very first page failed).
 type Meta struct {
 	HasMore    bool   `json:"has_more"`
 	NextCursor string `json:"next_cursor,omitempty"`
 	ErrorCount int    `json:"error_count,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type metaWrapper struct {
