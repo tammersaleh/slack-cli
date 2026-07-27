@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/tammersaleh/slack-cli/compare/v3.5.3...v4.0.0) (2026-07-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* the default `channel list` output changes in four ways.
+
+### Features
+
+* list your own channels via users.conversations ([2dd9967](https://github.com/tammersaleh/slack-cli/commit/2dd9967581a30c0fe3ea7d030ad8b2c4631ebc60))
+
 ## [3.5.3](https://github.com/tammersaleh/slack-cli/compare/v3.5.2...v3.5.3) (2026-07-27)
 
 
