@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.1](https://github.com/tammersaleh/slack-cli/compare/v4.0.0...v4.0.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* stop shipping a real channel name in command help ([6981463](https://github.com/tammersaleh/slack-cli/commit/69814632bb98e376f8f0ee8a056a7826a5953e12))
+
 ## [4.0.0](https://github.com/tammersaleh/slack-cli/compare/v3.5.3...v4.0.0) (2026-07-27)
 
 
