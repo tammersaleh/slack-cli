@@ -55,8 +55,8 @@ Common errors and their recovery:
 | `error` | What to run next |
 |---|---|
 | `not_authed` | `slack auth login --desktop` (or `slack auth login` for OAuth) |
-| `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `query_exhaustive` |
-| `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `query_exhaustive`) or `slack user info <id-or-email>` |
+| `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `filter_exhaustive` |
+| `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `filter_exhaustive`) or `slack user info <id-or-email>` |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
@@ -178,15 +178,17 @@ Two fields behave differently on the default path: `is_member` is always `true`
 no membership at all, and `num_members` is absent - use `channel info` for a
 member count. Both are reported verbatim under `--include-non-member`.
 
-`--has-unread` currently matches nothing: no list endpoint returns unread counts
-on a session token. Don't reach for it.
+`--has-unread` reads unread state from the internal `client.counts` endpoint, so
+it needs a session token (and `SLACK_WORKSPACE_ORG` on Enterprise Grid); with a
+bot token it fails `session_token_required`. Matching rows carry `has_unreads`,
+`mention_count`, and `last_read`.
 
-`--query` is a client-side name filter. On the default path it searches every
-page, so a match is never missed. Under `--include-non-member` or `--cursor` it
-searches only one page. The trailer's `query_exhaustive` says which happened -
-**zero matches with `query_exhaustive:false` does not mean the channel does not
-exist**, it means the search was partial. `user list --query` never widens on its
-own; pass `--all` there.
+`--query` and `--has-unread` are client-side filters. On the default path they
+search every page, so a match is never missed. Under `--include-non-member` or
+`--cursor` they filter only one page. The trailer's `filter_exhaustive` says which
+happened - **an empty result with `filter_exhaustive:false` does not mean nothing
+matches**, it means the filtering was partial. `user list --query` never widens on
+its own; pass `--all` there.
 
 Examples:
 

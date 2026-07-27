@@ -128,8 +128,8 @@ func TestUserList_QueryMarksExhaustiveness(t *testing.T) {
 				t.Fatal(err)
 			}
 			meta := metaTrailer(t, out)
-			if meta["query_exhaustive"] != tc.want {
-				t.Errorf("query_exhaustive = %v, want %v", meta["query_exhaustive"], tc.want)
+			if meta["filter_exhaustive"] != tc.want {
+				t.Errorf("filter_exhaustive = %v, want %v", meta["filter_exhaustive"], tc.want)
 			}
 			if got := calls.Load(); got != tc.wantCalls {
 				t.Errorf("made %d requests, want %d", got, tc.wantCalls)

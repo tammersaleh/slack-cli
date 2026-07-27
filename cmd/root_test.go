@@ -1,10 +1,13 @@
 package cmd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -221,6 +224,85 @@ func TestUnknownCommand(t *testing.T) {
 	}
 }
 
+// --timeout is documented as the overall command timeout, so a command that
+// makes a preliminary call before listing must share one deadline across both.
+// cli.Context() derives a fresh deadline from context.Background() on every
+// call, so calling it twice hands --has-unread a second full budget.
+//
+// Detecting that requires each call to fit the timeout on its own while the two
+// together do not: a preliminary call that simply outlasts the deadline fails
+// under either scheme, which is why the obvious version of this test passes
+// even with the bug present. So client.counts spends part of the budget and
+// succeeds, then the listing needs more than what a shared deadline has left.
+// With one context the command must fail; with two it would sail through on a
+// fresh budget.
+//
+// The margins are deliberately loose in both directions - 1s of a 3s budget for
+// the first call, then a 2.5s listing that cannot fit the ~2s remainder but fits
+// a fresh 3s easily. Tighter numbers work locally but can flake under -race or
+// parallel load, where request overhead alone could push the first call past the
+// deadline and fail the test for the wrong reason.
+func TestTimeout_SharedAcrossPreliminaryCall(t *testing.T) {
+	var listCalls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/client.counts", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(1 * time.Second):
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":       true,
+			"channels": []map[string]any{{"id": "C01", "has_unreads": true}},
+		})
+	})
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
+		listCalls.Add(1)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(2500 * time.Millisecond):
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C01", "name": "general"}},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	isolateTestEnv(t)
+	t.Setenv("SLACK_TOKEN", "xoxc-test")
+	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
+
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kctx, err := parser.Parse([]string{"--timeout", "3s", "channel", "list", "--has-unread"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetOutput(&outBuf, &errBuf)
+	runErr := kctx.Run(&cli)
+
+	// The counts call consumed 1s of a 3s budget, so the 2.5s listing cannot
+	// finish inside what remains - unless it was handed a fresh deadline.
+	if runErr == nil {
+		t.Fatalf("expected the shared deadline to fail the command; --timeout is not bounding the whole run (stdout %q)", outBuf.String())
+	}
+	if !strings.Contains(runErr.Error(), "deadline exceeded") &&
+		!strings.Contains(errBuf.String(), "deadline exceeded") {
+		t.Errorf("expected a deadline-exceeded failure, got err=%v stderr=%s", runErr, errBuf.String())
+	}
+	if got := listCalls.Load(); got != 1 {
+		t.Errorf("listing attempted %d times, want 1", got)
+	}
+}
+
 // TestTimeout_EndToEnd wires --timeout through a real command and confirms
 // the deadline cancels the in-flight API call. The handler blocks for 2s
 // so the 100ms timeout has to propagate for the client to give up early.
@@ -246,7 +328,6 @@ func TestTimeout_EndToEnd(t *testing.T) {
 		t.Errorf("expected deadline-exceeded error, got err=%v stderr=%s", r.err, r.stderr)
 	}
 }
-
 
 func TestTrace_EmitsPageEvents(t *testing.T) {
 	calls := 0

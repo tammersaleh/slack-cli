@@ -122,8 +122,8 @@ func TestChannelList_QueryNotExhaustiveWhenTruncated(t *testing.T) {
 	}
 
 	meta := metaTrailer(t, r.stdout)
-	if meta["query_exhaustive"] != false {
-		t.Errorf("expected query_exhaustive=false on a truncated search, got %v", meta["query_exhaustive"])
+	if meta["filter_exhaustive"] != false {
+		t.Errorf("expected filter_exhaustive=false on a truncated search, got %v", meta["filter_exhaustive"])
 	}
 	if meta["error"] != "internal_error" {
 		t.Errorf("expected the failure in the trailer, got %v", meta["error"])

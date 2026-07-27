@@ -24,8 +24,8 @@ type ChannelListCmd struct {
 	Type             string `help:"Channel type: public, private, mpim, im, all." default:"all" enum:"public,private,mpim,im,all"`
 	ExcludeArchived  bool   `help:"Exclude archived channels." default:"true" negatable:""`
 	IncludeNonMember bool   `help:"Include channels the user hasn't joined."`
-	HasUnread        bool   `help:"Only channels with unread messages."`
-	Query            string `help:"Filter by name substring (client-side). Searches every page by default; with --include-non-member or --cursor it searches only the page fetched. The trailer's query_exhaustive reports which happened."`
+	HasUnread        bool   `help:"Only conversations with unread messages. Reads unread state from the internal client.counts endpoint, so it needs a session token."`
+	Query            string `help:"Filter by name substring (client-side). Searches every page by default; with --include-non-member or --cursor it searches only the page fetched. The trailer's filter_exhaustive reports which happened."`
 }
 
 func (ChannelListCmd) Help() string {
@@ -49,8 +49,8 @@ Channel types:
 --query is a client-side name filter. On the default path it searches
 every page, so a match is never missed. Under --include-non-member or
 --cursor it searches only the page fetched. Either way the _meta trailer's
-query_exhaustive says whether the search covered everything - treat zero
-matches with query_exhaustive:false as "unknown", not "absent".
+filter_exhaustive says whether the search covered everything - treat zero
+matches with filter_exhaustive:false as "unknown", not "absent".
 
 Examples:
 
@@ -64,14 +64,37 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--all and --cursor are mutually exclusive", Code: output.ExitGeneral}
 	}
 
+	// One context for the whole command: cli.Context() derives a fresh deadline
+	// from context.Background() on every call, so calling it twice would give
+	// --has-unread twice the timeout the caller asked for.
+	ctx, cancel := cli.Context()
+	defer cancel()
+
+	// Unread state comes from an internal endpoint that only accepts a session
+	// token, so fetch it first: --has-unread must fail before any listing
+	// rather than stream rows it cannot filter.
+	var unread map[string]unreadState
+	if c.HasUnread {
+		sessionClient, err := cli.NewSessionClient()
+		if err != nil {
+			return err
+		}
+		// NewClient below overwrites the auth method this captured, and the
+		// re-auth hint on a counts failure has to describe the session token.
+		sessionAuthMethod := cli.authMethod
+		unread, err = fetchUnreadState(ctx, sessionClient)
+		if err != nil {
+			cli.authMethod = sessionAuthMethod
+			return cli.ClassifyError(err)
+		}
+	}
+
 	client, err := cli.NewClient()
 	if err != nil {
 		return err
 	}
 
 	p := cli.NewPrinter()
-	ctx, cancel := cli.Context()
-	defer cancel()
 
 	types := channelTypes(c.Type)
 	cursor := c.Cursor
@@ -82,27 +105,31 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 
 	src := c.source(ctx, client, types, limit)
 
+	// --query and --has-unread both filter client-side, so a single page turns
+	// "exists on a later page" into "does not exist" - and the
+	// channel_not_found hint points callers straight at --query. Both search
+	// every page by default now that the member-only path costs ~19 requests
+	// and a few seconds.
+	//
+	// Two paths can't be widened silently: --include-non-member walks the whole
+	// workspace (minutes), and --cursor is a resume point that --all is not
+	// allowed to combine with. Those report the truth in the trailer instead.
 	all := c.All
 	var opts []streamOption
-	if c.Query != "" {
-		// --query is a client-side filter, so a single page turns "exists on a
-		// later page" into "does not exist" - and the channel_not_found hint
-		// points callers straight at this command. Search every page by default
-		// now that the member-only path costs ~19 requests and a few seconds.
-		//
-		// Two paths can't be widened silently: --include-non-member walks the
-		// whole workspace (minutes), and --cursor is a resume point that --all
-		// is not allowed to combine with. Those report the truth in the trailer
-		// instead.
+	if c.Query != "" || c.HasUnread {
 		if !c.IncludeNonMember && cursor == "" {
 			all = true
 		}
-		opts = append(opts, withQueryFilter())
+		opts = append(opts, withClientSideFilter())
 	}
 
 	return streamPages(ctx, cli, p, src.endpoint, cursor, all, src.fetch, func(channels []slack.Channel) error {
 		for _, ch := range channels {
-			if c.HasUnread && ch.UnreadCount == 0 {
+			// A conversation absent from client.counts has no unread badge:
+			// Slack only reports DMs the user has open, and a closed DM is not
+			// unread. Absent means excluded, same as has_unreads=false.
+			state, counted := unread[ch.ID]
+			if c.HasUnread && !(counted && state.HasUnreads) {
 				continue
 			}
 			if c.Query != "" && !strings.Contains(strings.ToLower(ch.Name), strings.ToLower(c.Query)) {
@@ -110,12 +137,99 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 			}
 			m := channelToMap(ch)
 			src.normalize(ch, m)
+			if counted {
+				state.addTo(m)
+			}
 			if err := p.PrintItem(m); err != nil {
 				return err
 			}
 		}
 		return nil
 	}, opts...)
+}
+
+// unreadState is one conversation's unread state as client.counts reports it.
+type unreadState struct {
+	HasUnreads   bool   `json:"has_unreads"`
+	MentionCount int    `json:"mention_count"`
+	LastRead     string `json:"last_read"`
+}
+
+// addTo copies the unread fields onto an output row, so a caller filtering on
+// unread state can see the state it filtered on rather than infer it.
+func (u unreadState) addTo(m map[string]any) {
+	m["has_unreads"] = u.HasUnreads
+	m["mention_count"] = u.MentionCount
+	if u.LastRead != "" {
+		m["last_read"] = u.LastRead
+	}
+}
+
+// clientCountsResponse is the parsed client.counts response. Slack splits
+// conversations across buckets by kind; all three carry the same row shape.
+type clientCountsResponse struct {
+	Channels []struct {
+		ID string `json:"id"`
+		unreadState
+	} `json:"channels"`
+	MPIMs []struct {
+		ID string `json:"id"`
+		unreadState
+	} `json:"mpims"`
+	IMs []struct {
+		ID string `json:"id"`
+		unreadState
+	} `json:"ims"`
+}
+
+// fetchUnreadState reads every conversation's unread state in one request.
+//
+// No list endpoint returns unread information - `conversations.list` and
+// `users.conversations` both omit `unread_count` entirely (raw-JSON checked),
+// which is why the old `--has-unread` filtered on a field that was always the
+// zero value and silently matched nothing. The undocumented internal
+// `client.counts` endpoint is what Slack's own clients read for unread badges.
+//
+// Measured against an Enterprise Grid org: every public and private channel the
+// user is in appears in `channels` (1168 of 1168), and `has_unreads` agreed with
+// `latest > last_read` on all 1194 rows checked. DMs appear only when open - 22
+// of 271 group DMs and 64 of 350 direct DMs - so an absent DM means no unread
+// badge rather than unknown, which matches what the Slack sidebar shows.
+//
+// The endpoint needs a session token, and on Enterprise Grid the org (E-prefix)
+// context: the workspace token returns team_is_restricted. NewSessionClient
+// already prefers SLACK_WORKSPACE_ORG for exactly this reason.
+func fetchUnreadState(ctx context.Context, client *api.Client) (map[string]unreadState, error) {
+	data, err := client.PostInternal(ctx, "client.counts", map[string]any{
+		"thread_counts_by_channel": true,
+		"org_wide_aware":           true,
+		"include_file_channels":    true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var resp clientCountsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, &output.Error{
+			Err:      "parse_error",
+			Detail:   "Failed to parse client.counts response",
+			Endpoint: "client.counts",
+			Code:     output.ExitGeneral,
+		}
+	}
+
+	state := make(map[string]unreadState, len(resp.Channels)+len(resp.MPIMs)+len(resp.IMs))
+	for _, row := range resp.Channels {
+		state[row.ID] = row.unreadState
+	}
+	for _, row := range resp.MPIMs {
+		state[row.ID] = row.unreadState
+	}
+	for _, row := range resp.IMs {
+		state[row.ID] = row.unreadState
+	}
+	return state, nil
 }
 
 // channelSource is where a listing is read from. It binds the endpoint name

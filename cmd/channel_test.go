@@ -384,8 +384,8 @@ func TestChannelList_QuerySearchesEveryPageOnDefaultPath(t *testing.T) {
 	}
 
 	meta := parseJSON(t, lines[1])["_meta"].(map[string]any)
-	if meta["query_exhaustive"] != true {
-		t.Errorf("expected query_exhaustive=true after searching every page, got %v", meta["query_exhaustive"])
+	if meta["filter_exhaustive"] != true {
+		t.Errorf("expected filter_exhaustive=true after searching every page, got %v", meta["filter_exhaustive"])
 	}
 	if meta["has_more"] != false {
 		t.Errorf("expected has_more=false, got %v", meta["has_more"])
@@ -407,15 +407,15 @@ func TestChannelList_QueryDoesNotImplyAllForNonMemberScan(t *testing.T) {
 		t.Errorf("made %d requests, want 1 - the org-wide scan must stay opt-in", got)
 	}
 	meta := metaTrailer(t, out)
-	if meta["query_exhaustive"] != false {
-		t.Errorf("expected query_exhaustive=false on a partial search, got %v", meta["query_exhaustive"])
+	if meta["filter_exhaustive"] != false {
+		t.Errorf("expected filter_exhaustive=false on a partial search, got %v", meta["filter_exhaustive"])
 	}
 	if meta["has_more"] != true {
 		t.Errorf("expected has_more=true, got %v", meta["has_more"])
 	}
 }
 
-func TestChannelList_QueryExhaustiveAbsentWithoutQuery(t *testing.T) {
+func TestChannelList_FilterExhaustiveAbsentWithoutQuery(t *testing.T) {
 	// The marker describes a --query filter. With no query there is no filter
 	// to describe, so the key must not appear at all.
 	mux, _ := pagedListMux(t, "users.conversations")
@@ -425,8 +425,8 @@ func TestChannelList_QueryExhaustiveAbsentWithoutQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 	meta := metaTrailer(t, out)
-	if _, ok := meta["query_exhaustive"]; ok {
-		t.Errorf("expected no query_exhaustive key without --query, got %v", meta["query_exhaustive"])
+	if _, ok := meta["filter_exhaustive"]; ok {
+		t.Errorf("expected no filter_exhaustive key without --query, got %v", meta["filter_exhaustive"])
 	}
 }
 
@@ -445,28 +445,205 @@ func TestChannelList_QueryNotExhaustiveWhenCursorGiven(t *testing.T) {
 		t.Errorf("made %d requests, want 1 - a resume must not widen into a full walk", got)
 	}
 	meta := metaTrailer(t, out)
-	if meta["query_exhaustive"] != false {
-		t.Errorf("expected query_exhaustive=false with a page left unfetched, got %v", meta["query_exhaustive"])
+	if meta["filter_exhaustive"] != false {
+		t.Errorf("expected filter_exhaustive=false with a page left unfetched, got %v", meta["filter_exhaustive"])
 	}
 	if meta["has_more"] != true {
 		t.Errorf("expected has_more=true with a page left unfetched, got %v", meta["has_more"])
 	}
 }
 
-func TestChannelList_HasUnread(t *testing.T) {
-	mux := listMux(t, "users.conversations", []map[string]any{
-		{"id": "C01", "name": "general", "is_channel": true, "unread_count": 5},
-		{"id": "C02", "name": "random", "is_channel": true, "unread_count": 0},
+// unreadMux serves a member-only channel list plus a client.counts response,
+// and counts calls to each. countRows maps a conversation id to its
+// has_unreads/mention_count state; ids absent from it are absent from
+// client.counts entirely, which is how Slack reports a DM you don't have open.
+func unreadMux(t *testing.T, channels []map[string]any, counts map[string]any) (*http.ServeMux, *atomic.Int32) {
+	t.Helper()
+	var countsCalls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          channels,
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/client.counts", func(w http.ResponseWriter, _ *http.Request) {
+		countsCalls.Add(1)
+		payload := map[string]any{"ok": true}
+		for k, v := range counts {
+			payload[k] = v
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+	})
+	return mux, &countsCalls
+}
+
+func TestChannelList_HasUnreadFiltersOnClientCounts(t *testing.T) {
+	// --has-unread used to filter on slack.Channel.UnreadCount, which no list
+	// endpoint populates, so it silently matched nothing and read as "you have
+	// no unread channels". Unread state comes from the internal client.counts
+	// endpoint instead - one request for the whole workspace.
+	mux, countsCalls := unreadMux(t,
+		[]map[string]any{
+			{"id": "C01", "name": "unread-channel", "is_channel": true},
+			{"id": "C02", "name": "read-channel", "is_channel": true},
+			{"id": "D03", "is_im": true, "user": "U01"},
+			{"id": "D04", "is_im": true, "user": "U02"},
+		},
+		map[string]any{
+			"channels": []map[string]any{
+				{"id": "C01", "has_unreads": true, "mention_count": 2, "last_read": "1709251200.000100"},
+				{"id": "C02", "has_unreads": false, "mention_count": 0, "last_read": "1709251300.000200"},
+			},
+			// D04 is deliberately absent: a DM with no entry has no unread
+			// badge, so it must not match.
+			"ims": []map[string]any{
+				{"id": "D03", "has_unreads": true, "mention_count": 0, "last_read": "1709251400.000300"},
+			},
+		})
+
+	out, err := runWithMockSession(t, mux, "channel", "list", "--has-unread")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected the 2 unread conversations + meta, got %d lines:\n%s", len(lines), out)
+	}
+	for i, wantID := range []string{"C01", "D03"} {
+		if got := parseJSON(t, lines[i])["id"]; got != wantID {
+			t.Errorf("row %d id = %q, want %q", i, got, wantID)
+		}
+	}
+	if got := countsCalls.Load(); got != 1 {
+		t.Errorf("called client.counts %d times, want 1 for the whole listing", got)
+	}
+}
+
+func TestChannelList_HasUnreadSearchesEveryPage(t *testing.T) {
+	// --has-unread is a client-side filter like --query, so stopping at page one
+	// would report a handful of unread channels when the workspace has many -
+	// wrong in the same way, and just as quiet about it.
+	var listCalls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
+		listCalls.Add(1)
+		_ = r.ParseForm()
+		if r.FormValue("cursor") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":                true,
+				"channels":          []map[string]any{{"id": "C01", "name": "read-channel", "is_channel": true}},
+				"response_metadata": map[string]string{"next_cursor": "page2cursor"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C02", "name": "unread-on-page-two", "is_channel": true}},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/client.counts", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"channels": []map[string]any{
+				{"id": "C01", "has_unreads": false},
+				{"id": "C02", "has_unreads": true},
+			},
+		})
 	})
 
-	out, err := runWithMock(t, mux, "channel", "list", "--has-unread")
+	out, err := runWithMockSession(t, mux, "channel", "list", "--has-unread")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	lines := nonEmptyLines(out)
 	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines (1 channel + meta), got %d:\n%s", len(lines), out)
+		t.Fatalf("expected the page-two unread channel + meta, got %d lines:\n%s", len(lines), out)
+	}
+	if got := parseJSON(t, lines[0])["name"]; got != "unread-on-page-two" {
+		t.Errorf("expected the match from page two, got %q", got)
+	}
+	if got := listCalls.Load(); got != 2 {
+		t.Errorf("fetched %d pages, want 2 - --has-unread must not stop at page one", got)
+	}
+	meta := metaTrailer(t, out)
+	if meta["filter_exhaustive"] != true {
+		t.Errorf("expected filter_exhaustive=true after searching every page, got %v", meta["filter_exhaustive"])
+	}
+}
+
+func TestChannelList_HasUnreadReportsUnreadState(t *testing.T) {
+	// A caller that filtered on unread state should be able to see it. The rows
+	// carry the fields the filter used rather than making the caller guess why
+	// a channel matched.
+	mux, _ := unreadMux(t,
+		[]map[string]any{{"id": "C01", "name": "unread-channel", "is_channel": true}},
+		map[string]any{"channels": []map[string]any{
+			{"id": "C01", "has_unreads": true, "mention_count": 3, "last_read": "1709251200.000100"},
+		}})
+
+	out, err := runWithMockSession(t, mux, "channel", "list", "--has-unread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := parseJSON(t, nonEmptyLines(out)[0])
+	if row["has_unreads"] != true {
+		t.Errorf("has_unreads = %v, want true", row["has_unreads"])
+	}
+	if row["mention_count"] != float64(3) {
+		t.Errorf("mention_count = %v, want 3", row["mention_count"])
+	}
+	if row["last_read"] != "1709251200.000100" {
+		t.Errorf("last_read = %v, want the value from client.counts", row["last_read"])
+	}
+}
+
+func TestChannelList_WithoutHasUnreadSkipsClientCounts(t *testing.T) {
+	// client.counts is an extra request and needs a session token. A plain
+	// listing must not pay for it.
+	mux, countsCalls := unreadMux(t,
+		[]map[string]any{{"id": "C01", "name": "general", "is_channel": true}},
+		map[string]any{"channels": []map[string]any{}})
+
+	if _, err := runWithMockSession(t, mux, "channel", "list"); err != nil {
+		t.Fatal(err)
+	}
+	if got := countsCalls.Load(); got != 0 {
+		t.Errorf("called client.counts %d times without --has-unread, want 0", got)
+	}
+}
+
+func TestChannelList_HasUnreadRequiresSessionToken(t *testing.T) {
+	// client.counts is an internal endpoint that only accepts a session
+	// (xoxc-) token. With a bot token the command must say so rather than
+	// filter on nothing and report an empty workspace.
+	mux, countsCalls := unreadMux(t,
+		[]map[string]any{{"id": "C01", "name": "general", "is_channel": true}},
+		map[string]any{"channels": []map[string]any{}})
+
+	r := runWithMockFull(t, mux, "channel", "list", "--has-unread")
+	if r.err == nil {
+		t.Fatal("expected --has-unread with a bot token to fail loudly")
+	}
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected an *output.Error, got %#v", r.err)
+	}
+	if oErr.Err != "session_token_required" {
+		t.Errorf("error = %q, want session_token_required", oErr.Err)
+	}
+	if oErr.Code != output.ExitAuth {
+		t.Errorf("exit code = %d, want %d", oErr.Code, output.ExitAuth)
+	}
+	if got := countsCalls.Load(); got != 0 {
+		t.Errorf("called client.counts %d times with an unusable token, want 0", got)
+	}
+	if strings.TrimSpace(r.stdout) != "" {
+		t.Errorf("expected no stdout rows when the filter cannot run, got %q", r.stdout)
 	}
 }
 

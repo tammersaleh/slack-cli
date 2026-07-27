@@ -21,7 +21,7 @@ type UserListCmd struct {
 	Limit    int    `help:"Page size." default:"100"`
 	Cursor   string `help:"Continue from previous page."`
 	All      bool   `help:"Fetch all pages."`
-	Query    string `help:"Filter by name or email substring (client-side; searches one page - pair with --all to search every page, and check query_exhaustive in the trailer)."`
+	Query    string `help:"Filter by name or email substring (client-side; searches one page - pair with --all to search every page, and check filter_exhaustive in the trailer)."`
 	Presence bool   `help:"Include presence information."`
 }
 
@@ -70,7 +70,7 @@ func (c *UserListCmd) Run(cli *CLI) error {
 	// behind the caller's back. --all remains theirs to pass.
 	var opts []streamOption
 	if c.Query != "" {
-		opts = append(opts, withQueryFilter())
+		opts = append(opts, withClientSideFilter())
 	}
 
 	return streamPages(ctx, cli, p, "users.list", c.Cursor, c.All, fetch, func(users []slack.User) error {

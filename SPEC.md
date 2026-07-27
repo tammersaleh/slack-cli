@@ -20,8 +20,8 @@ One JSON object per item, followed by a `_meta` trailer:
 
 ```
 $ slack channel list --limit=2
-{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
-{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"is_member":true,"unread_count":0,"last_read":"1709251300.000200"}
+{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"is_member":true}
+{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"is_member":true}
 {"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
 ```
 
@@ -29,7 +29,7 @@ The `_meta` line is always present, even when there are no results:
 
 ```
 $ slack channel list --query=nonexistent
-{"_meta":{"has_more":false,"query_exhaustive":true}}
+{"_meta":{"has_more":false,"filter_exhaustive":true}}
 ```
 
 ### Info commands
@@ -68,9 +68,9 @@ Fields named `ts` or ending in `_ts` get an `_iso` sibling with RFC 3339 format:
 `--fields` limits output to specified top-level fields. Applies to data lines only, not `_meta`:
 
 ```
-$ slack channel list --limit=2 --fields=id,name,unread_count
-{"id":"C01ABC","name":"general","unread_count":5}
-{"id":"C02DEF","name":"random","unread_count":0}
+$ slack channel list --limit=2 --fields=id,name,is_private
+{"id":"C01ABC","name":"general","is_private":false}
+{"id":"C02DEF","name":"random","is_private":false}
 {"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
 ```
 
@@ -425,48 +425,55 @@ Four consequences of the default endpoint, all specific to it:
   they still appear under `--include-non-member`.
 
 ```
-$ slack channel list --has-unread --fields=id,name,unread_count
-{"id":"C01ABC","name":"general","unread_count":5}
-{"id":"C03GHI","name":"engineering","unread_count":12}
-{"_meta":{"has_more":false}}
+$ slack channel list --has-unread --fields=id,name,has_unreads,mention_count
+{"id":"C01ABC","name":"general","has_unreads":true,"mention_count":2}
+{"id":"C03GHI","name":"engineering","has_unreads":true,"mention_count":0}
+{"_meta":{"has_more":false,"filter_exhaustive":true}}
 ```
 
 `--query` and `--has-unread` are client-side filters applied after the API page is fetched. The returned page may contain fewer items than `--limit`.
 
-Because `--query` filters client-side, a search that only looks at one page can
-report zero matches for a channel that exists. On the member-only default the
-command therefore searches every page - affordable now that it reads
-`users.conversations`. Under `--include-non-member` (a whole-workspace walk) or
-`--cursor` (a resume point, which cannot combine with `--all`) it searches only
-the page fetched.
+Because `--query` and `--has-unread` filter client-side, a run that only looks
+at one page can report zero matches for a channel that exists, or five unread
+channels when there are thirty. On the member-only default the command therefore
+searches every page - affordable now that it reads `users.conversations`. Under
+`--include-non-member` (a whole-workspace walk) or `--cursor` (a resume point,
+which cannot combine with `--all`) it filters only the page fetched.
 
 Either way the trailer says which happened:
 
 ```
 $ slack channel list --query approvals
 {"id":"C01ABC","name":"team-approvals"}
-{"_meta":{"has_more":false,"query_exhaustive":true}}
+{"_meta":{"has_more":false,"filter_exhaustive":true}}
 
 $ slack channel list --query approvals --include-non-member
-{"_meta":{"has_more":true,"next_cursor":"dGVhbTpD","query_exhaustive":false}}
+{"_meta":{"has_more":true,"next_cursor":"dGVhbTpD","filter_exhaustive":false}}
 ```
 
-`query_exhaustive` is present only when `--query` is set. It is `true` only when
-the filter saw every page: the stream finished without error and Slack reported
-no further pages. **A zero-match result with `query_exhaustive:false` does not
-mean the item does not exist** - it means the search was partial. `user list`
-never widens on its own (a full directory is dozens of rate-limited requests),
-so pass `--all` there.
+`filter_exhaustive` is present whenever a client-side filter is active
+(`--query`, `--has-unread`). It is `true` only when the filter saw every page:
+the stream finished without error and Slack reported no further pages. **An empty
+result with `filter_exhaustive:false` does not mean nothing matches** - it means
+the filtering was partial. `user list` never widens on its own (a full directory
+is dozens of rate-limited requests), so pass `--all` there.
 
-`--has-unread` filters on `unread_count`, which neither list endpoint actually
-returns on a session token, so it currently matches nothing. Tracked in
-`todo/has-unread-filters-a-field-no-list-endpoint-returns.md`.
+`--has-unread` reads unread state from the internal `client.counts` endpoint -
+one request for the whole workspace - because no list endpoint returns unread
+information. It therefore needs a session token, and on Enterprise Grid the org
+context (`SLACK_WORKSPACE_ORG`); with a bot token the command fails
+`session_token_required` rather than filtering on nothing. Matching rows carry
+`has_unreads`, `mention_count`, and `last_read` from that response.
+
+A conversation Slack omits from `client.counts` is treated as having no unreads.
+Every channel you are in is present; DMs appear only while open, and a closed DM
+carries no unread badge in Slack's own sidebar either.
 
 Errors:
 
 - `not_authed` (exit 2): No token.
 
-Slack API: `users.conversations`, or `conversations.list` with `--include-non-member`
+Slack API: `users.conversations`, or `conversations.list` with `--include-non-member`; plus internal `client.counts` with `--has-unread`
 
 #### slack channel info
 
@@ -712,7 +719,7 @@ $ slack user list --limit=2
 ```
 $ slack user list --query=tammer --fields=id,name,profile
 {"id":"U01XYZ","name":"tammer","profile":{"email":"tammer@example.com","display_name":"tammer","real_name":"Tammer Saleh","status_text":"","status_emoji":"","image_48":"https://avatars.slack-edge.com/U01XYZ_48.jpg"}}
-{"_meta":{"has_more":false,"query_exhaustive":true}}
+{"_meta":{"has_more":false,"filter_exhaustive":true}}
 ```
 
 Errors:
@@ -1270,7 +1277,7 @@ $ slack section find ext-
 {"_meta":{"has_more":false}}
 ```
 
-Slack API: `client.counts` + `conversations.info` + `users.channelSections.list`
+Slack API: `users.channelSections.list` + `conversations.info`
 
 #### slack section move
 

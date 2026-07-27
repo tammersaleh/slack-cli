@@ -15,15 +15,15 @@ import (
 // reported on a clean run and forgotten on a truncated one.
 type streamOption func(*output.Meta)
 
-// withQueryFilter records that a client-side --query filter is active, so the
-// trailer states whether that filter saw every page. A search is exhaustive
-// only when the stream finished without error and Slack had no further pages:
-// anything else means a zero-match result could be hiding matches the command
-// never looked at.
-func withQueryFilter() streamOption {
+// withClientSideFilter records that a client-side filter (--query,
+// --has-unread) is active, so the trailer states whether that filter saw every
+// page. Filtering is exhaustive only when the stream finished without error and
+// Slack had no further pages: anything else means an empty result could be
+// hiding matches the command never looked at.
+func withClientSideFilter() streamOption {
 	return func(m *output.Meta) {
 		exhaustive := m.Error == "" && !m.HasMore
-		m.QueryExhaustive = &exhaustive
+		m.FilterExhaustive = &exhaustive
 	}
 }
 
