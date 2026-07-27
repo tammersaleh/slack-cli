@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.5.3](https://github.com/tammersaleh/slack-cli/compare/v3.5.2...v3.5.3) (2026-07-27)
+
+
+### Bug Fixes
+
+* mark truncated list output in the _meta trailer ([ba92e4f](https://github.com/tammersaleh/slack-cli/commit/ba92e4f1aed18437a571c59d0ef3ca6f5fcd3657))
+
 ## [3.5.2](https://github.com/tammersaleh/slack-cli/compare/v3.5.1...v3.5.2) (2026-07-09)
 
 
