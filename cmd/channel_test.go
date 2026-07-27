@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/alecthomas/kong"
@@ -107,6 +108,38 @@ func parseJSON(t *testing.T, line string) map[string]any {
 	return m
 }
 
+// channelListEndpoints are the two endpoints `channel list` can source from:
+// users.conversations for the member-only default, conversations.list when
+// --include-non-member asks for the org-wide list.
+var channelListEndpoints = []string{"users.conversations", "conversations.list"}
+
+// listMux serves one page of channels at endpoint and fails the test if the
+// command calls the other channel-list endpoint instead. Which endpoint a
+// command hits is the behavior under test here, not an implementation detail:
+// sourcing the member-only default from conversations.list means paginating
+// every channel in the org to emit the user's own.
+func listMux(t *testing.T, endpoint string, channels []map[string]any) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/"+endpoint, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          channels,
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	for _, other := range channelListEndpoints {
+		if other == endpoint {
+			continue
+		}
+		mux.HandleFunc("/api/"+other, func(w http.ResponseWriter, _ *http.Request) {
+			t.Errorf("command called %s, want %s", other, endpoint)
+			w.WriteHeader(http.StatusInternalServerError)
+		})
+	}
+	return mux
+}
+
 func TestChannelList_PaginationFlags(t *testing.T) {
 	tests := []struct {
 		name string
@@ -138,41 +171,49 @@ func TestChannelList_PaginationFlags(t *testing.T) {
 }
 
 func TestChannelList_DefaultTypeIsAll(t *testing.T) {
-	// Default --type should request all four channel kinds from
-	// conversations.list, not just public_channel.
-	var gotTypes string
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		gotTypes = r.FormValue("types")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":                true,
-			"channels":          []map[string]any{},
-			"response_metadata": map[string]string{"next_cursor": ""},
+	// Default --type should request all four channel kinds, not just
+	// public_channel, on either endpoint.
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		args     []string
+	}{
+		{"member-only default", "users.conversations", []string{"channel", "list"}},
+		{"include non-member", "conversations.list", []string{"channel", "list", "--include-non-member"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotTypes string
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/"+tc.endpoint, func(w http.ResponseWriter, r *http.Request) {
+				gotTypes = r.FormValue("types")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok":                true,
+					"channels":          []map[string]any{},
+					"response_metadata": map[string]string{"next_cursor": ""},
+				})
+			})
+
+			if _, err := runWithMock(t, mux, tc.args...); err != nil {
+				t.Fatal(err)
+			}
+
+			want := "public_channel,private_channel,mpim,im"
+			if gotTypes != want {
+				t.Errorf("default types = %q, want %q", gotTypes, want)
+			}
 		})
-	})
-
-	if _, err := runWithMock(t, mux, "channel", "list"); err != nil {
-		t.Fatal(err)
-	}
-
-	want := "public_channel,private_channel,mpim,im"
-	if gotTypes != want {
-		t.Errorf("default types = %q, want %q", gotTypes, want)
 	}
 }
 
-func TestChannelList_MockAPI(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channels": []map[string]any{
-				{"id": "C01", "name": "general", "is_channel": true, "is_member": true, "num_members": 10},
-				{"id": "C02", "name": "random", "is_channel": true, "is_member": true, "num_members": 5},
-				{"id": "C03", "name": "external", "is_channel": true, "is_member": false, "num_members": 2},
-			},
-			"response_metadata": map[string]string{"next_cursor": ""},
-		})
+func TestChannelList_MemberOnlyDefaultUsesUsersConversations(t *testing.T) {
+	// The member-only default must source from users.conversations, which
+	// returns only the user's own conversations. conversations.list returns
+	// every channel in the org, so filtering it client-side costs one request
+	// per org page to emit the user's handful - ~35 minutes on a large
+	// Enterprise Grid org.
+	mux := listMux(t, "users.conversations", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true},
+		{"id": "C02", "name": "random", "is_channel": true},
 	})
 
 	out, err := runWithMock(t, mux, "channel", "list")
@@ -181,7 +222,70 @@ func TestChannelList_MockAPI(t *testing.T) {
 	}
 
 	lines := nonEmptyLines(out)
-	// 2 member channels + _meta
+	if len(lines) != 3 {
+		t.Fatalf("expected 2 channels + meta, got %d lines:\n%s", len(lines), out)
+	}
+}
+
+func TestChannelList_IncludeNonMemberUsesConversationsList(t *testing.T) {
+	// --include-non-member genuinely needs the org-wide list, which
+	// users.conversations cannot provide.
+	mux := listMux(t, "conversations.list", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
+		{"id": "C02", "name": "external", "is_channel": true, "is_member": false},
+	})
+
+	out, err := runWithMock(t, mux, "channel", "list", "--include-non-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 2 channels + meta, got %d lines:\n%s", len(lines), out)
+	}
+}
+
+func TestChannelList_UsersConversationsRowsSurviveFalseIsMember(t *testing.T) {
+	// users.conversations reports is_member=false on every conversation it
+	// returns, including public channels the user is plainly in (verified live
+	// against a Grid workspace). Everything it returns is a conversation the
+	// user is in by definition, so no client-side member filter may run on
+	// this path - one would drop the entire result set.
+	mux := listMux(t, "users.conversations", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true, "is_member": false},
+		{"id": "G02", "name": "secret", "is_group": true, "is_private": true, "is_member": false},
+		{"id": "D03", "is_im": true, "is_member": false, "user": "U01"},
+	})
+
+	out, err := runWithMock(t, mux, "channel", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 4 {
+		t.Fatalf("expected 3 channels + meta, got %d lines:\n%s", len(lines), out)
+	}
+	for i, wantID := range []string{"C01", "G02", "D03"} {
+		if got := parseJSON(t, lines[i])["id"]; got != wantID {
+			t.Errorf("row %d id = %q, want %q", i, got, wantID)
+		}
+	}
+}
+
+func TestChannelList_MockAPI(t *testing.T) {
+	mux := listMux(t, "users.conversations", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true, "num_members": 10},
+		{"id": "C02", "name": "random", "is_channel": true, "num_members": 5},
+	})
+
+	out, err := runWithMock(t, mux, "channel", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines (2 channels + meta), got %d:\n%s", len(lines), out)
 	}
@@ -198,42 +302,11 @@ func TestChannelList_MockAPI(t *testing.T) {
 	}
 }
 
-func TestChannelList_IncludeNonMember(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channels": []map[string]any{
-				{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
-				{"id": "C02", "name": "external", "is_channel": true, "is_member": false},
-			},
-			"response_metadata": map[string]string{"next_cursor": ""},
-		})
-	})
-
-	out, err := runWithMock(t, mux, "channel", "list", "--include-non-member")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	lines := nonEmptyLines(out)
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 lines (2 channels + meta), got %d:\n%s", len(lines), out)
-	}
-}
-
 func TestChannelList_QueryFilter(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channels": []map[string]any{
-				{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
-				{"id": "C02", "name": "engineering", "is_channel": true, "is_member": true},
-				{"id": "C03", "name": "random", "is_channel": true, "is_member": true},
-			},
-			"response_metadata": map[string]string{"next_cursor": ""},
-		})
+	mux := listMux(t, "users.conversations", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true},
+		{"id": "C02", "name": "engineering", "is_channel": true},
+		{"id": "C03", "name": "random", "is_channel": true},
 	})
 
 	out, err := runWithMock(t, mux, "channel", "list", "--query", "eng")
@@ -249,16 +322,9 @@ func TestChannelList_QueryFilter(t *testing.T) {
 }
 
 func TestChannelList_HasUnread(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channels": []map[string]any{
-				{"id": "C01", "name": "general", "is_channel": true, "is_member": true, "unread_count": 5},
-				{"id": "C02", "name": "random", "is_channel": true, "is_member": true, "unread_count": 0},
-			},
-			"response_metadata": map[string]string{"next_cursor": ""},
-		})
+	mux := listMux(t, "users.conversations", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true, "unread_count": 5},
+		{"id": "C02", "name": "random", "is_channel": true, "unread_count": 0},
 	})
 
 	out, err := runWithMock(t, mux, "channel", "list", "--has-unread")
@@ -272,28 +338,35 @@ func TestChannelList_HasUnread(t *testing.T) {
 	}
 }
 
-func TestChannelList_Pagination(t *testing.T) {
-	callCount := 0
+// pagedListMux serves two cursor-linked pages at endpoint and counts the
+// requests, so a test can assert both the page walk and that no extra request
+// was made.
+func pagedListMux(t *testing.T, endpoint string) (*http.ServeMux, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+	mux.HandleFunc("/api/"+endpoint, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		_ = r.ParseForm()
-		cursor := r.FormValue("cursor")
-
-		if cursor == "" {
+		if r.FormValue("cursor") == "" {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":       true,
-				"channels": []map[string]any{{"id": "C01", "name": "page1", "is_member": true}},
+				"ok":                true,
+				"channels":          []map[string]any{{"id": "C01", "name": "page1"}},
 				"response_metadata": map[string]string{"next_cursor": "page2cursor"},
 			})
-		} else {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":       true,
-				"channels": []map[string]any{{"id": "C02", "name": "page2", "is_member": true}},
-				"response_metadata": map[string]string{"next_cursor": ""},
-			})
+			return
 		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C02", "name": "page2"}},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
 	})
+	return mux, &calls
+}
+
+func TestChannelList_Pagination(t *testing.T) {
+	mux, calls := pagedListMux(t, "users.conversations")
 
 	// Without --all, should return first page only with has_more=true.
 	out, err := runWithMock(t, mux, "channel", "list")
@@ -313,59 +386,134 @@ func TestChannelList_Pagination(t *testing.T) {
 	if m["next_cursor"] != "page2cursor" {
 		t.Errorf("expected next_cursor='page2cursor', got %q", m["next_cursor"])
 	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("made %d requests without --all, want 1", got)
+	}
 }
 
 func TestChannelList_AllPages(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		cursor := r.FormValue("cursor")
-		if cursor == "" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":       true,
-				"channels": []map[string]any{{"id": "C01", "name": "page1", "is_member": true}},
-				"response_metadata": map[string]string{"next_cursor": "page2cursor"},
-			})
-		} else {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":       true,
-				"channels": []map[string]any{{"id": "C02", "name": "page2", "is_member": true}},
-				"response_metadata": map[string]string{"next_cursor": ""},
-			})
-		}
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		args     []string
+	}{
+		{"member-only default", "users.conversations", []string{"channel", "list", "--all"}},
+		{"include non-member", "conversations.list", []string{"channel", "list", "--all", "--include-non-member"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, calls := pagedListMux(t, tc.endpoint)
+
+			out, err := runWithMock(t, mux, tc.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			lines := nonEmptyLines(out)
+			// 2 channels from 2 pages + _meta
+			if len(lines) != 3 {
+				t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), out)
+			}
+			meta := parseJSON(t, lines[2])
+			m := meta["_meta"].(map[string]any)
+			if m["has_more"] != false {
+				t.Error("expected has_more=false after all pages")
+			}
+			if got := calls.Load(); got != 2 {
+				t.Errorf("made %d requests, want 2", got)
+			}
+		})
+	}
+}
+
+func TestChannelList_UsersConversationsNormalizesMissingFields(t *testing.T) {
+	// users.conversations omits is_member and num_members from the wire
+	// entirely (verified against a live Grid workspace). slack-go decodes both
+	// to zero values, so without repair every default row would claim
+	// is_member=false and num_members=0.
+	//
+	// Membership is what put a conversation in this result set, so it is
+	// reported as true - group DMs included. Member counts cannot be inferred,
+	// so the key is dropped rather than reported as zero.
+	mux := listMux(t, "users.conversations", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true},
+		{"id": "G02", "name": "secret", "is_group": true, "is_private": true},
+		{"id": "C03", "name": "mpdm-a--b--c-1", "is_mpim": true, "is_private": true},
+		{"id": "D04", "is_im": true, "user": "U01"},
 	})
 
-	out, err := runWithMock(t, mux, "channel", "list", "--all")
+	out, err := runWithMock(t, mux, "channel", "list")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	lines := nonEmptyLines(out)
-	// 2 channels from 2 pages + _meta
-	if len(lines) != 3 {
-		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), out)
+	if len(lines) != 5 {
+		t.Fatalf("expected 4 rows + meta, got %d lines:\n%s", len(lines), out)
 	}
-	meta := parseJSON(t, lines[2])
-	m := meta["_meta"].(map[string]any)
-	if m["has_more"] != false {
-		t.Error("expected has_more=false after all pages")
+	for i, want := range []struct {
+		id       string
+		isMember any
+	}{
+		{"C01", true},  // public channel
+		{"G02", true},  // private channel
+		{"C03", true},  // mpim - being in a group DM is a real membership
+		{"D04", false}, // im - Slack reports no membership for 1:1 DMs
+	} {
+		row := parseJSON(t, lines[i])
+		if row["id"] != want.id {
+			t.Fatalf("row %d id = %q, want %q", i, row["id"], want.id)
+		}
+		if row["is_member"] != want.isMember {
+			t.Errorf("%s is_member = %v, want %v", want.id, row["is_member"], want.isMember)
+		}
+		if got, ok := row["num_members"]; ok {
+			t.Errorf("%s reported num_members=%v; the endpoint does not return it, so the key must be absent", want.id, got)
+		}
 	}
 }
 
-func TestChannelList_IMsIgnoreMemberFilter(t *testing.T) {
-	// Slack returns IMs with is_member=false - IMs don't have a "member"
-	// concept. The default member-only filter would hide every DM; we must
-	// include IMs unconditionally so `--type im` actually returns DMs.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channels": []map[string]any{
-				{"id": "D01", "is_im": true, "is_member": false, "user": "U01"},
-				{"id": "D02", "is_im": true, "is_member": false, "user": "U02"},
-			},
-			"response_metadata": map[string]string{"next_cursor": ""},
-		})
+func TestChannelList_ConversationsListReportsFieldsVerbatim(t *testing.T) {
+	// The --include-non-member path reads conversations.list, which does send
+	// is_member and num_members. Those must pass through untouched - the
+	// normalization above is specific to what users.conversations omits.
+	mux := listMux(t, "conversations.list", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true, "is_member": true, "num_members": 42},
+		{"id": "C02", "name": "external", "is_channel": true, "is_member": false, "num_members": 7},
+	})
+
+	out, err := runWithMock(t, mux, "channel", "list", "--include-non-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 2 rows + meta, got %d lines:\n%s", len(lines), out)
+	}
+	for i, want := range []struct {
+		id         string
+		isMember   bool
+		numMembers float64
+	}{
+		{"C01", true, 42},
+		{"C02", false, 7},
+	} {
+		row := parseJSON(t, lines[i])
+		if row["is_member"] != want.isMember {
+			t.Errorf("%s is_member = %v, want %v", want.id, row["is_member"], want.isMember)
+		}
+		if row["num_members"] != want.numMembers {
+			t.Errorf("%s num_members = %v, want %v", want.id, row["num_members"], want.numMembers)
+		}
+	}
+}
+
+func TestChannelList_IMsAreReturnedByType(t *testing.T) {
+	// IMs have no "member" concept - Slack reports is_member=false for them on
+	// every endpoint. `--type im` must still return DMs.
+	mux := listMux(t, "users.conversations", []map[string]any{
+		{"id": "D01", "is_im": true, "is_member": false, "user": "U01"},
+		{"id": "D02", "is_im": true, "is_member": false, "user": "U02"},
 	})
 
 	out, err := runWithMock(t, mux, "channel", "list", "--type", "im")
@@ -382,33 +530,24 @@ func TestChannelList_IMsIgnoreMemberFilter(t *testing.T) {
 	}
 }
 
-func TestChannelList_NonIMChannelsStillFilteredByMember(t *testing.T) {
-	// The IM carve-out must not leak into regular channels. A
-	// public_channel with is_member=false should still be hidden by
-	// default.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok": true,
-			"channels": []map[string]any{
-				{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
-				{"id": "C02", "name": "external", "is_channel": true, "is_member": false},
-			},
-			"response_metadata": map[string]string{"next_cursor": ""},
-		})
+func TestChannelList_IncludeNonMemberEmitsEveryRow(t *testing.T) {
+	// --include-non-member asks for the org-wide list, so nothing about
+	// membership is filtered out of what conversations.list returns.
+	mux := listMux(t, "conversations.list", []map[string]any{
+		{"id": "C01", "name": "general", "is_channel": true, "is_member": true},
+		{"id": "C02", "name": "external", "is_channel": true, "is_member": false},
 	})
 
-	out, err := runWithMock(t, mux, "channel", "list")
+	out, err := runWithMock(t, mux, "channel", "list", "--include-non-member")
 	if err != nil {
 		t.Fatal(err)
 	}
 	lines := nonEmptyLines(out)
-	if len(lines) != 2 {
-		t.Fatalf("expected 1 channel + meta, got %d lines:\n%s", len(lines), out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 2 channels + meta, got %d lines:\n%s", len(lines), out)
 	}
-	first := parseJSON(t, lines[0])
-	if first["name"] != "general" {
-		t.Errorf("expected non-member channel filtered, got first=%q", first["name"])
+	if got := parseJSON(t, lines[1])["name"]; got != "external" {
+		t.Errorf("expected non-member channel emitted, got second row name=%q", got)
 	}
 }
 

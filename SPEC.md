@@ -20,8 +20,8 @@ One JSON object per item, followed by a `_meta` trailer:
 
 ```
 $ slack channel list --limit=2
-{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"num_members":142,"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
-{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"num_members":89,"is_member":true,"unread_count":0,"last_read":"1709251300.000200"}
+{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
+{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"is_member":true,"unread_count":0,"last_read":"1709251300.000200"}
 {"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
 ```
 
@@ -329,6 +329,13 @@ Slack cursors can expire, and page-number result sets shift between runs, so a
 resumed run can duplicate or miss items if the underlying data changed. Work
 that needs consistency should rerun from the start and deduplicate by ID.
 
+A cursor is only valid for the same command, the same flags, and the same
+workspace that produced it. Slack mints it against one endpoint and one set of
+server-side filters, so reusing it after changing `--type`, the archive setting,
+`--include-non-member`, the workspace, or the CLI version is undefined - Slack
+may reject it or answer from a different result set. Discard it and rerun from
+the start instead.
+
 The trailer is not guaranteed in every circumstance: if stdout itself fails
 (broken pipe) nothing further can be written, and a fatal error raised before
 any data line - bad input, an unresolvable channel, auth failure - is reported
@@ -378,14 +385,44 @@ slack channel list [flags]
   --query              Filter by name substring (client-side)
 ```
 
-Default behavior returns only channels the authenticated user is a member of.
+Default behavior returns only conversations the authenticated user is in.
 
 ```
 $ slack channel list --limit=2
-{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"num_members":142,"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
-{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"num_members":89,"is_member":true,"unread_count":0,"last_read":"1709251300.000200"}
+{"id":"C01ABC","name":"general","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Company-wide announcements","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"General discussion","creator":"U01XYZ","last_set":1609459200},"is_member":true,"unread_count":5,"last_read":"1709251200.000100"}
+{"id":"C02DEF","name":"random","is_channel":true,"is_private":false,"is_archived":false,"created":1609459200,"creator":"U01XYZ","topic":{"value":"Water cooler","creator":"U01XYZ","last_set":1609459200},"purpose":{"value":"Non-work chatter","creator":"U01XYZ","last_set":1609459200},"is_member":true,"unread_count":0,"last_read":"1709251300.000200"}
 {"_meta":{"has_more":true,"next_cursor":"dXNlcjpVMDYx"}}
 ```
+
+##### Which endpoint each mode reads
+
+The two modes read different Slack endpoints, and that choice is the whole of
+the member filter:
+
+| Mode | Endpoint | Returns |
+|---|---|---|
+| default | `users.conversations` | only the conversations you are in |
+| `--include-non-member` | `conversations.list` | every channel in the workspace |
+
+`--include-non-member` is far more expensive, because the workspace is far
+larger than your own membership. Measured on an Enterprise Grid org with 1787
+member conversations out of 5699 workspace channels: 19 requests and about 5
+seconds for the default, against 178 rate-limited requests and about 8 minutes
+with `--include-non-member`.
+
+Four consequences of the default endpoint, all specific to it:
+
+- `is_member` is reported as `true` for channels and group DMs. Slack omits the
+  field from this endpoint's rows entirely, and membership is what put a
+  conversation in the result set. Only `im` rows keep `is_member:false`: Slack
+  sends no membership for a 1:1 DM on either endpoint.
+- `num_members` is absent. Slack does not send it on this endpoint and there is
+  nothing to infer it from. Use `channel info` for a member count.
+- Group DMs (`mpim`) are included. `conversations.list` does not return them at
+  all on a session token, so `--include-non-member` omits every group DM even
+  under `--type mpim`.
+- DMs with deactivated users are omitted. `users.conversations` leaves them out;
+  they still appear under `--include-non-member`.
 
 ```
 $ slack channel list --has-unread --fields=id,name,unread_count
@@ -396,11 +433,15 @@ $ slack channel list --has-unread --fields=id,name,unread_count
 
 `--query` and `--has-unread` are client-side filters applied after the API page is fetched. The returned page may contain fewer items than `--limit`.
 
+`--has-unread` filters on `unread_count`, which neither list endpoint actually
+returns on a session token, so it currently matches nothing. Tracked in
+`todo/has-unread-filters-a-field-no-list-endpoint-returns.md`.
+
 Errors:
 
 - `not_authed` (exit 2): No token.
 
-Slack API: `conversations.list`
+Slack API: `users.conversations`, or `conversations.list` with `--include-non-member`
 
 #### slack channel info
 

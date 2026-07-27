@@ -164,15 +164,29 @@ slack channel members <channel> [--limit N]
 slack channel managers <channel>                       # "Managed by" users (session token)
 ```
 
-Defaults to channels you're a member of, all types. Add `--include-non-member`
-to expand to channels you haven't joined; narrow with `--type`.
+Defaults to conversations you're in, all types (including group DMs and DMs).
+Add `--include-non-member` to expand to channels you haven't joined; narrow
+with `--type`.
+
+`--include-non-member` reads the whole workspace and is much slower - hundreds
+of rate-limited requests and minutes of wall clock on a large org, against a few
+seconds for the default. Use it only when the channel you want is one you
+haven't joined.
+
+Two fields behave differently on the default path: `is_member` is always `true`
+(that's what makes a conversation yours) except on `im` rows, where Slack reports
+no membership at all, and `num_members` is absent - use `channel info` for a
+member count. Both are reported verbatim under `--include-non-member`.
+
+`--has-unread` currently matches nothing: no list endpoint returns unread counts
+on a session token. Don't reach for it.
 
 Examples:
 
 ```
 slack channel list --query ext-                        # find customer channels
-slack channel list --type private --has-unread         # private + unread
-slack channel list --include-non-member --all          # workspace-wide
+slack channel list --type private                      # private channels only
+slack channel list --include-non-member --query ext-   # slow; channels you haven't joined
 slack channel info https://acme.slack.com/archives/C01ABC --fields id,name,topic
 ```
 

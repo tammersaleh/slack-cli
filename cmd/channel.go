@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 
 	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
@@ -31,6 +33,11 @@ func (ChannelListCmd) Help() string {
 (public, private, mpim, im); narrow with --type. Add --include-non-member
 to expand to channels you haven't joined.
 
+--include-non-member is much slower: it lists every channel in the
+workspace, which on a large Enterprise Grid org is thousands of channels
+across hundreds of rate-limited requests. The default reads only your own
+conversations.
+
 Channel types:
   public    regular #channels everyone can see
   private   invitation-only channels
@@ -46,8 +53,7 @@ Examples:
 
   slack channel list --all --query ext-            # filter by name substring
   slack channel list --type public                 # only public channels
-  slack channel list --include-non-member --limit 200
-  slack channel list --type private --has-unread   # only unread private channels`
+  slack channel list --include-non-member --limit 200`
 }
 
 func (c *ChannelListCmd) Run(cli *CLI) error {
@@ -71,35 +77,107 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 		limit = 100
 	}
 
-	fetch := func(cursor string) ([]slack.Channel, string, error) {
-		return client.Bot().GetConversationsContext(ctx, &slack.GetConversationsParameters{
-			Types:           types,
-			Limit:           limit,
-			ExcludeArchived: c.ExcludeArchived,
-			Cursor:          cursor,
-		})
-	}
+	src := c.source(ctx, client, types, limit)
 
-	return streamPages(ctx, cli, p, "conversations.list", cursor, c.All, fetch, func(channels []slack.Channel) error {
+	return streamPages(ctx, cli, p, src.endpoint, cursor, c.All, src.fetch, func(channels []slack.Channel) error {
 		for _, ch := range channels {
-			// IMs don't have a "member" concept - is_member is always
-			// false, so the member-only default would hide every DM.
-			// Include them unconditionally.
-			if !ch.IsIM && !c.IncludeNonMember && !ch.IsMember {
-				continue
-			}
 			if c.HasUnread && ch.UnreadCount == 0 {
 				continue
 			}
 			if c.Query != "" && !strings.Contains(strings.ToLower(ch.Name), strings.ToLower(c.Query)) {
 				continue
 			}
-			if err := p.PrintItem(channelToMap(ch)); err != nil {
+			m := channelToMap(ch)
+			src.normalize(ch, m)
+			if err := p.PrintItem(m); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// channelSource is where a listing is read from. It binds the endpoint name
+// (which feeds --trace and the endpoint field on rate-limit errors) to the
+// fetch that produces the rows and to the normalization those particular rows
+// need, so the three can't drift apart.
+type channelSource struct {
+	endpoint string
+	fetch    api.PageFunc[slack.Channel]
+	// normalize adjusts one output row for facts about its source. It is pure:
+	// the emit callback that calls it may not make network calls or fail.
+	normalize func(ch slack.Channel, m map[string]any)
+}
+
+// source picks which endpoint the listing is read from, and that choice is the
+// whole of the member-only filter: users.conversations returns just the
+// conversations the authed user is in, while conversations.list returns every
+// channel in the workspace and is only what --include-non-member asks for.
+//
+// The default used to read conversations.list and drop non-member channels in
+// the emit callback, which meant paginating every channel in the workspace to
+// print the user's own. Measured on CoreWeave's Enterprise Grid org: 5699
+// channels over 178 Tier-2 requests and 8 minutes, against 1788 conversations
+// over 10 Tier-3 requests and 3 seconds here.
+//
+// No client-side membership check remains on either path. users.conversations
+// is already member-scoped, and it omits is_member from every row it returns -
+// including public channels the user is plainly in - so a filter on that field
+// would drop the entire result set.
+func (c *ChannelListCmd) source(ctx context.Context, client *api.Client, types []string, limit int) channelSource {
+	if c.IncludeNonMember {
+		return channelSource{
+			endpoint: "conversations.list",
+			fetch: func(cursor string) ([]slack.Channel, string, error) {
+				return client.Bot().GetConversationsContext(ctx, &slack.GetConversationsParameters{
+					Types:           types,
+					Limit:           limit,
+					ExcludeArchived: c.ExcludeArchived,
+					Cursor:          cursor,
+				})
+			},
+			// Slack sends membership and member counts on this endpoint;
+			// report them as they arrive.
+			normalize: func(slack.Channel, map[string]any) {},
+		}
+	}
+	return channelSource{
+		endpoint: "users.conversations",
+		fetch: func(cursor string) ([]slack.Channel, string, error) {
+			// An empty UserID means the authed user.
+			return client.Bot().GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
+				Types:           types,
+				Limit:           limit,
+				ExcludeArchived: c.ExcludeArchived,
+				Cursor:          cursor,
+			})
+		},
+		normalize: normalizeUsersConversations,
+	}
+}
+
+// normalizeUsersConversations repairs the two fields users.conversations leaves
+// out of every row, which slack-go would otherwise decode to a zero value and
+// the printer would emit as fact.
+//
+// is_member: absent on the wire for every type here, so it marshals as false
+// even for channels the user is plainly in. Membership is the property that put
+// a conversation in this result set, so report it as true rather than emit a
+// false negative. That covers group DMs too - being in one is a real membership,
+// and conversations.list is documented to report it as such.
+//
+// 1:1 DMs are the exception and keep false. Slack sends no is_member for an im
+// on either endpoint, so there is no membership value to report and false is
+// what this command has always emitted for them.
+//
+// num_members: absent on the wire, and unlike membership there is nothing to
+// infer it from. Drop the key rather than claim every channel has zero members.
+// `channel info` still reports it.
+func normalizeUsersConversations(ch slack.Channel, m map[string]any) {
+	if !ch.IsIM {
+		m["is_member"] = true
+	}
+	delete(m, "num_members")
 }
 
 type ChannelInfoCmd struct {

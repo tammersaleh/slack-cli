@@ -49,7 +49,7 @@ func rateLimitAfterFirstPage(calls *int, itemsKey string, items any) http.Handle
 }
 
 func onePageOfChannels() []map[string]any {
-	return []map[string]any{{"id": "C01", "name": "page1", "is_member": true}}
+	return []map[string]any{{"id": "C01", "name": "page1"}}
 }
 
 // metaTrailer returns the _meta object from the last stdout line, failing the
@@ -72,7 +72,7 @@ func metaTrailer(t *testing.T, stdout string) map[string]any {
 // indistinguishable from a complete one to anything reading stdout alone.
 func TestChannelList_TruncationIsVisibleOnStdout(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", failAfterFirstPage("channels", onePageOfChannels()))
+	mux.HandleFunc("/api/users.conversations", failAfterFirstPage("channels", onePageOfChannels()))
 
 	r := runWithMockFull(t, mux, "channel", "list", "--all")
 
@@ -113,7 +113,7 @@ func TestChannelList_TruncationIsVisibleOnStdout(t *testing.T) {
 // still mark the stream truncated rather than reporting a complete empty set.
 func TestChannelList_TruncationOnFirstPage(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "internal_error"})
 	})
 
@@ -140,7 +140,7 @@ func TestChannelList_TruncationOnFirstPage(t *testing.T) {
 func TestChannelList_RetriesRateLimitedPage(t *testing.T) {
 	calls := 0
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", rateLimitAfterFirstPage(&calls, "channels", onePageOfChannels()))
+	mux.HandleFunc("/api/users.conversations", rateLimitAfterFirstPage(&calls, "channels", onePageOfChannels()))
 
 	r := runWithMockFull(t, mux, "channel", "list", "--all")
 
@@ -173,7 +173,7 @@ func TestChannelList_RetriesRateLimitedPage(t *testing.T) {
 func TestChannelList_RecoversFromTransientRateLimit(t *testing.T) {
 	calls := 0
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		_ = r.ParseForm()
 		switch {
@@ -189,7 +189,7 @@ func TestChannelList_RecoversFromTransientRateLimit(t *testing.T) {
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":                true,
-				"channels":          []map[string]any{{"id": "C02", "name": "page2", "is_member": true}},
+				"channels":          []map[string]any{{"id": "C02", "name": "page2"}},
 				"response_metadata": map[string]string{"next_cursor": ""},
 			})
 		}
@@ -351,7 +351,7 @@ func TestPageNumberCommands_MarkTruncation(t *testing.T) {
 // only signal, as documented.
 func TestTruncation_QuietSuppressesTrailer(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", failAfterFirstPage("channels", onePageOfChannels()))
+	mux.HandleFunc("/api/users.conversations", failAfterFirstPage("channels", onePageOfChannels()))
 
 	r := runWithMockFull(t, mux, "--quiet", "channel", "list", "--all")
 	if strings.TrimSpace(r.stdout) != "" {

@@ -230,7 +230,7 @@ func TestUnknownCommand(t *testing.T) {
 // "context deadline exceeded" from slack-go.
 func TestTimeout_EndToEnd(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 		case <-time.After(2 * time.Second):
