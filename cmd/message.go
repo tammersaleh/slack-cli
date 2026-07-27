@@ -100,21 +100,32 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 		latest = ts
 	}
 
-	cursor := c.Cursor
+	// Time bounds apply to the first page only; after that the cursor
+	// carries the position. The flag flips on success, not on request, so
+	// a retried first page still sends its bounds.
+	boundsSent := false
 
-	for {
+	fetch := func(cursor string) ([]slack.Message, string, error) {
+		oldestArg, latestArg := oldest, latest
+		if boundsSent {
+			oldestArg, latestArg = "", ""
+		}
 		resp, err := client.Bot().GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 			ChannelID: channelID,
 			Limit:     limit,
 			Cursor:    cursor,
-			Oldest:    oldest,
-			Latest:    latest,
+			Oldest:    oldestArg,
+			Latest:    latestArg,
 		})
 		if err != nil {
-			return cli.ClassifyError(err)
+			return nil, "", err
 		}
+		boundsSent = true
+		return resp.Messages, resp.ResponseMetaData.NextCursor, nil
+	}
 
-		for _, msg := range resp.Messages {
+	return streamPages(ctx, cli, p, "conversations.history", c.Cursor, c.All, fetch, func(msgs []slack.Message) error {
+		for _, msg := range msgs {
 			if c.HasReplies && msg.ReplyCount == 0 {
 				continue
 			}
@@ -127,19 +138,8 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 				return err
 			}
 		}
-
-		nextCursor := resp.ResponseMetaData.NextCursor
-		if !c.All || nextCursor == "" {
-			return p.PrintMeta(output.Meta{
-				HasMore:    resp.HasMore,
-				NextCursor: nextCursor,
-			})
-		}
-		cursor = nextCursor
-		// Clear oldest/latest for subsequent pages - cursor handles position.
-		oldest = ""
-		latest = ""
-	}
+		return nil
+	})
 }
 
 type MessageGetCmd struct {

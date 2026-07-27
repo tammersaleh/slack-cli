@@ -116,6 +116,26 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    CLAUDE.md with anything you learned that would help future sessions.
 10. Move on to the next feature.
 
+Never ask permission to run this workflow. Committing, pushing to main, and
+waiting out the release are the documented process, not a decision point -
+asking "should I push?" wastes a round trip. The Autonomy section below is
+the general rule; this is the specific one people trip over.
+
+## Bug reports
+
+A bug report dropped in `bugs/` is a work order, not an artifact. Verify it,
+fix it, then **delete the file** - don't archive it or append a resolution
+section. The findings belong in CLAUDE.md, SPEC.md, and the commit body,
+where they'll actually be read. `bugs/` is untracked scratch space.
+
+Verify before fixing, and verify the whole report: a report can be right
+about the symptom and wrong about the cause, or bundle a real bug with a
+non-bug. Say which claims held. The 2026-07-27 truncation report is the
+model - two real defects, one misdiagnosis (`--all` was said to omit the
+trailer on success; it never did - those runs were rate-limited with stderr
+discarded), and a third defect the report never named (zero rate-limit retry
+in the streaming loops).
+
 ## Release versioning
 
 Releases are fully automated via release-please + GoReleaser.
@@ -230,7 +250,9 @@ JSONL to stdout. Every command emits one JSON object per line, ending with a `_m
 - Channel resolution: first match wins on name collision. No ambiguity errors.
 - Channel list defaults to member-only. `--include-non-member` to expand.
 - Single-page pagination by default. `--cursor` to continue, `--all` to fetch everything.
-- `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). `api.PaginateEach[T]` adds per-page callback with early exit. Both accept an endpoint name for diagnostics.
+- `api.Paginate[T]` handles cursor-based pagination with rate-limit retry (5 attempts, respects Retry-After). `api.PaginateEach[T]` adds per-page callback with early exit. `api.FetchPage[T]` is the single-page primitive all three share - use it for streaming pagination, where pages print as they arrive. `maxAttempts = 5` means 1 initial call + 4 retries, no wait after the last failure; `RateLimitExhaustedError.Attempts` counts calls, not retries. All accept an endpoint name for diagnostics.
+- Every streaming list command goes through `streamPages` (cmd/paginate.go) - `channel list`/`members`, `message list`, `thread list`, `file list`, `search messages`/`files`, `user list`, `saved list`. It owns the fetch/emit/trailer loop so stdout always ends with exactly one `_meta`, including on mid-stream failure (`{"has_more":true,"next_cursor":"<failed page>","error":"rate_limited"}`). Before this, a rate-limited `--all` wrote partial JSONL with no trailer and a truncated run was indistinguishable from a complete one - it corrupted a real analysis (285 of ~700 channels read as the full set). The commands' hand-rolled loops also had zero rate-limit retry; routing them through `FetchPage` fixed that too. Contract details that matter: `emit` is **output-only** - no network calls, no fallible domain checks - because an error from it is treated as broken stdout and returns with no trailer; domain checks belong in the fetch closure, which runs before the page's first `PrintItem` (see `thread list`'s not-found checks and `saved list`'s parse + `--enrich`). `streamError` splits failures two ways: an error the closure already built as `*output.Error` is a verdict on the request, so the trailer gets `has_more:false` and no cursor; anything else is transport and gets `has_more:true` + the failed page's cursor. The resume cursor is `cursor`, not `next` - the failed page is the first one missing. `pageCursorFetch` adapts the page-number APIs (files.list, search.*), deriving the next page from the response's paging block, never an incremented counter, so a retry can't skip. `user list` builds a fresh `slack.UserPagination` per attempt with every option reapplied - the paginator carries cursor state and a shared one would rewind to page 1 on retry. There's a repeated-cursor guard because `--timeout` defaults to off. `has_more` is now uniformly `next_cursor != ""`; `message list` previously reported Slack's `has_more` separately, which could contradict the cursor.
+- Internal-API pagination (`saved list`) gets the trailer fix but **not** retry: `PostInternal` ignores HTTP status, so a 429 surfaces as `SlackErrorResponse{"ratelimited"}` (exit 1), never `*slack.RateLimitedError`. Making internal APIs retry means teaching `PostInternal`/`PostInternalForm` to read status + Retry-After. Not done.
 - Channel resolver uses `PaginateEach` for early exit (stops paginating once target is found). File cache at `~/.config/slack-cli/cache/channels-{teamID}.json` (24h TTL, configurable via `SLACK_CACHE_TTL`). In-memory cache (5min TTL) for session reuse. Reverse index (ID->name) for output enrichment.
 - User cache: file at `~/.config/slack-cli/cache/users-{teamID}.json` (24h TTL). Bulk-loads all users on first miss. Indexes by ID, email, and display name.
 - Output enrichment: all output automatically resolves user/channel IDs to names from cache. Best-effort, adds `user_name`/`channel_name` fields.

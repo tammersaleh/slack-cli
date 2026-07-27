@@ -35,7 +35,7 @@ func ChannelNotFound(input string) *Error {
 	return &Error{
 		Err:    "channel_not_found",
 		Detail: fmt.Sprintf("No channel matching '%s'", input),
-		Hint:   fmt.Sprintf("Run 'slack channel list --query %s' to find public/private channels by name, or add '--include-non-member' to see channels you haven't joined. For DMs, list with '--type im' and match on 'user'/'user_name'.", input),
+		Hint:   fmt.Sprintf("Run 'slack channel list --all --query %s' to find public/private channels by name, or add '--include-non-member' to see channels you haven't joined. --query filters client-side, so without --all it only searches the first page. For DMs, list with '--type im' and match on 'user'/'user_name'.", input),
 		Input:  input,
 		Code:   ExitGeneral,
 	}
@@ -47,7 +47,7 @@ func UserNotFound(input string) *Error {
 	return &Error{
 		Err:    "user_not_found",
 		Detail: fmt.Sprintf("No user matching '%s'", input),
-		Hint:   fmt.Sprintf("Run 'slack user list --query %s' to find users by display or real name, or 'slack user info <id-or-email>' if you have one. Note: users.lookupByEmail can fail on Enterprise Grid with a session token; use @name instead.", input),
+		Hint:   fmt.Sprintf("Run 'slack user list --all --query %s' to find users by display or real name, or 'slack user info <id-or-email>' if you have one. --query filters client-side, so without --all it only searches the first page. Note: users.lookupByEmail can fail on Enterprise Grid with a session token; use @name instead.", input),
 		Input:  input,
 		Code:   ExitGeneral,
 	}

@@ -19,7 +19,7 @@ func TestClassifyError_RateLimit(t *testing.T) {
 
 func TestClassifyError_RateLimitWithEndpoint(t *testing.T) {
 	inner := &slack.RateLimitedError{}
-	err := &RateLimitExhaustedError{Err: inner, Endpoint: "conversations.list", Retries: 5}
+	err := &RateLimitExhaustedError{Err: inner, Endpoint: "conversations.list", Attempts: 5}
 	cliErr := ClassifyError(err)
 	if cliErr.Code != output.ExitRateLimit {
 		t.Errorf("got code=%d, want %d", cliErr.Code, output.ExitRateLimit)
@@ -27,7 +27,7 @@ func TestClassifyError_RateLimitWithEndpoint(t *testing.T) {
 	if cliErr.Endpoint != "conversations.list" {
 		t.Errorf("got endpoint=%q, want %q", cliErr.Endpoint, "conversations.list")
 	}
-	if cliErr.Detail != "Rate limited after 5 retries on conversations.list" {
+	if cliErr.Detail != "Rate limited after 5 attempts on conversations.list" {
 		t.Errorf("got detail=%q", cliErr.Detail)
 	}
 }

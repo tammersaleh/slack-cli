@@ -155,8 +155,8 @@ func TestPaginate_RateLimitExhausted(t *testing.T) {
 	if err == nil {
 		t.Error("expected error after exhausting retries")
 	}
-	if calls != maxRetries {
-		t.Errorf("got %d calls, want %d", calls, maxRetries)
+	if calls != maxAttempts {
+		t.Errorf("got %d calls, want %d", calls, maxAttempts)
 	}
 	var rlErr *RateLimitExhaustedError
 	if !errors.As(err, &rlErr) {
@@ -165,8 +165,8 @@ func TestPaginate_RateLimitExhausted(t *testing.T) {
 	if rlErr.Endpoint != "test.endpoint" {
 		t.Errorf("got endpoint=%q, want %q", rlErr.Endpoint, "test.endpoint")
 	}
-	if rlErr.Retries != maxRetries {
-		t.Errorf("got retries=%d, want %d", rlErr.Retries, maxRetries)
+	if rlErr.Attempts != maxAttempts {
+		t.Errorf("got attempts=%d, want %d", rlErr.Attempts, maxAttempts)
 	}
 }
 

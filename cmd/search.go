@@ -78,39 +78,27 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	for {
-		params := slack.SearchParameters{
+	fetch := pageCursorFetch(func(page int) ([]slack.SearchMessage, *slack.Paging, error) {
+		msgs, err := client.User().SearchMessagesContext(ctx, c.Query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,
 			Count:         limit,
 			Page:          page,
-		}
-
-		msgs, err := client.User().SearchMessagesContext(ctx, c.Query, params)
+		})
 		if err != nil {
-			return cli.ClassifyError(err)
+			return nil, nil, err
 		}
+		return msgs.Matches, &msgs.Paging, nil
+	})
 
-		for _, match := range msgs.Matches {
+	return streamPages(ctx, cli, p, "search.messages", strconv.Itoa(page), c.All, fetch, func(matches []slack.SearchMessage) error {
+		for _, match := range matches {
 			if err := p.PrintItem(searchMessageToMap(match)); err != nil {
 				return err
 			}
 		}
-
-		hasMore := msgs.Paging.Page < msgs.Paging.Pages
-		if !c.All || !hasMore {
-			nextCursor := ""
-			if hasMore {
-				nextCursor = strconv.Itoa(msgs.Paging.Page + 1)
-			}
-			return p.PrintMeta(output.Meta{
-				HasMore:    hasMore,
-				NextCursor: nextCursor,
-			})
-		}
-
-		page++
-	}
+		return nil
+	})
 }
 
 type SearchFilesCmd struct {
@@ -159,39 +147,27 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	for {
-		params := slack.SearchParameters{
+	fetch := pageCursorFetch(func(page int) ([]slack.File, *slack.Paging, error) {
+		files, err := client.User().SearchFilesContext(ctx, c.Query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,
 			Count:         limit,
 			Page:          page,
-		}
-
-		files, err := client.User().SearchFilesContext(ctx, c.Query, params)
+		})
 		if err != nil {
-			return cli.ClassifyError(err)
+			return nil, nil, err
 		}
+		return files.Matches, &files.Paging, nil
+	})
 
-		for _, f := range files.Matches {
+	return streamPages(ctx, cli, p, "search.files", strconv.Itoa(page), c.All, fetch, func(matches []slack.File) error {
+		for _, f := range matches {
 			if err := p.PrintItem(fileToMap(f)); err != nil {
 				return err
 			}
 		}
-
-		hasMore := files.Paging.Page < files.Paging.Pages
-		if !c.All || !hasMore {
-			nextCursor := ""
-			if hasMore {
-				nextCursor = strconv.Itoa(files.Paging.Page + 1)
-			}
-			return p.PrintMeta(output.Meta{
-				HasMore:    hasMore,
-				NextCursor: nextCursor,
-			})
-		}
-
-		page++
-	}
+		return nil
+	})
 }
 
 func fileToMap(f slack.File) map[string]any          { return toMap(f) }

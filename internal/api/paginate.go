@@ -8,7 +8,10 @@ import (
 	"github.com/slack-go/slack"
 )
 
-const maxRetries = 5
+// maxAttempts is the number of requests made for a single page before giving
+// up: one initial call plus maxAttempts-1 retries, with no wait after the
+// last failure.
+const maxAttempts = 5
 
 // PageFunc fetches a single page of results given a cursor.
 // Return an empty nextCursor to signal the last page.
@@ -16,7 +19,7 @@ type PageFunc[T any] func(cursor string) (items []T, nextCursor string, err erro
 
 // Paginate collects pages of results until the cursor is exhausted or limit
 // items have been collected. A limit of 0 means no limit. Rate-limited
-// requests are retried up to maxRetries times. The endpoint name is included
+// requests are retried up to maxAttempts times. The endpoint name is included
 // in rate limit errors for diagnostics.
 func Paginate[T any](ctx context.Context, endpoint string, limit uint, fetch PageFunc[T]) ([]T, error) {
 	var all []T
@@ -47,7 +50,7 @@ func Paginate[T any](ctx context.Context, endpoint string, limit uint, fetch Pag
 
 // PaginateEach fetches pages one at a time, calling fn for each batch.
 // If fn returns true, pagination stops early (no error). Rate-limited
-// requests are retried up to maxRetries times.
+// requests are retried up to maxAttempts times.
 func PaginateEach[T any](ctx context.Context, endpoint string, fetch PageFunc[T], fn func(items []T) (stop bool)) error {
 	cursor := ""
 	for {
@@ -71,9 +74,20 @@ func PaginateEach[T any](ctx context.Context, endpoint string, fetch PageFunc[T]
 	}
 }
 
+// FetchPage fetches one page, retrying rate-limited requests up to maxAttempts
+// times and honoring Retry-After. Use it for streaming pagination, where the
+// caller emits each page as it arrives instead of collecting them; Paginate
+// and PaginateEach are built on the same retry behavior.
+func FetchPage[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T]) ([]T, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+	return fetchWithRetry(ctx, endpoint, cursor, fetch)
+}
+
 func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T]) ([]T, string, error) {
 	tracer := TracerFrom(ctx)
-	for attempt := range maxRetries {
+	for attempt := range maxAttempts {
 		start := time.Now()
 		items, next, err := fetch(cursor)
 		tracer.Event("page", map[string]any{
@@ -94,8 +108,8 @@ func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch P
 		}
 
 		// Last attempt exhausted.
-		if attempt == maxRetries-1 {
-			return nil, "", &RateLimitExhaustedError{Err: err, Endpoint: endpoint, Retries: maxRetries}
+		if attempt == maxAttempts-1 {
+			return nil, "", &RateLimitExhaustedError{Err: err, Endpoint: endpoint, Attempts: maxAttempts}
 		}
 
 		wait := rlErr.RetryAfter

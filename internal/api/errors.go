@@ -18,15 +18,17 @@ var authErrors = map[string]bool{
 	"token_expired":   true,
 }
 
-// RateLimitExhaustedError is returned when Paginate exhausts all retries.
+// RateLimitExhaustedError is returned when a page exhausts its retry budget.
+// Attempts counts every request made for that page, including the first, so
+// the number of waits is Attempts-1.
 type RateLimitExhaustedError struct {
 	Err      error
 	Endpoint string
-	Retries  int
+	Attempts int
 }
 
 func (e *RateLimitExhaustedError) Error() string {
-	return fmt.Sprintf("rate limited after %d retries on %s", e.Retries, e.Endpoint)
+	return fmt.Sprintf("rate limited after %d attempts on %s", e.Attempts, e.Endpoint)
 }
 
 func (e *RateLimitExhaustedError) Unwrap() error { return e.Err }
@@ -38,17 +40,19 @@ func ClassifyError(err error) *output.Error {
 	if errors.As(err, &rlExhausted) {
 		return &output.Error{
 			Err:      "rate_limited",
-			Detail:   fmt.Sprintf("Rate limited after %d retries on %s", rlExhausted.Retries, rlExhausted.Endpoint),
+			Detail:   fmt.Sprintf("Rate limited after %d attempts on %s", rlExhausted.Attempts, rlExhausted.Endpoint),
 			Endpoint: rlExhausted.Endpoint,
 			Code:     output.ExitRateLimit,
 		}
 	}
 
+	// A bare rate-limit error comes from a single un-retried call, not from
+	// an exhausted retry budget - don't claim retries that never happened.
 	var rateLimitErr *slack.RateLimitedError
 	if errors.As(err, &rateLimitErr) {
 		return &output.Error{
 			Err:    "rate_limited",
-			Detail: "Rate limited after maximum retries",
+			Detail: fmt.Sprintf("Rate limited; Slack asked to retry after %s", rateLimitErr.RetryAfter),
 			Code:   output.ExitRateLimit,
 		}
 	}

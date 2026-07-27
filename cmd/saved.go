@@ -67,9 +67,10 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 		limit = 20
 	}
 
-	cursor := c.Cursor
-
-	for {
+	// Parsing and --enrich lookups happen here rather than while printing:
+	// a page is built completely before its first line reaches stdout, so a
+	// failure can't leave half a page written.
+	fetch := func(cursor string) ([]map[string]any, string, error) {
 		body := map[string]any{
 			"count": limit,
 		}
@@ -82,12 +83,12 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 
 		data, err := client.PostInternal(ctx, "saved.list", body)
 		if err != nil {
-			return cli.ClassifyError(err)
+			return nil, "", err
 		}
 
 		var resp savedListResponse
 		if err := json.Unmarshal(data, &resp); err != nil {
-			return &output.Error{Err: "parse_error", Detail: "Failed to parse saved.list response", Code: output.ExitGeneral}
+			return nil, "", &output.Error{Err: "parse_error", Detail: "Failed to parse saved.list response", Code: output.ExitGeneral}
 		}
 
 		var enrichment map[string]enrichedData
@@ -95,6 +96,7 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 			enrichment = enrichItems(ctx, client, resp.SavedItems)
 		}
 
+		rows := make([]map[string]any, 0, len(resp.SavedItems))
 		for _, item := range resp.SavedItems {
 			m := formatSavedItem(item)
 			if enrichment != nil {
@@ -111,20 +113,19 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 					}
 				}
 			}
+			rows = append(rows, m)
+		}
+		return rows, resp.ResponseMetadata.NextCursor, nil
+	}
+
+	return streamPages(ctx, cli, p, "saved.list", c.Cursor, c.All, fetch, func(rows []map[string]any) error {
+		for _, m := range rows {
 			if err := p.PrintItem(m); err != nil {
 				return err
 			}
 		}
-
-		nextCursor := resp.ResponseMetadata.NextCursor
-		if !c.All || nextCursor == "" {
-			return p.PrintMeta(output.Meta{
-				HasMore:    nextCursor != "",
-				NextCursor: nextCursor,
-			})
-		}
-		cursor = nextCursor
-	}
+		return nil
+	})
 }
 
 func (c *SavedCountsCmd) Run(cli *CLI) error {
