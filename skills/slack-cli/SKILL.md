@@ -55,8 +55,8 @@ Common errors and their recovery:
 | `error` | What to run next |
 |---|---|
 | `not_authed` | `slack auth login --desktop` (or `slack auth login` for OAuth) |
-| `channel_not_found` | `slack channel list --all --query <partial>`; add `--include-non-member` for channels you haven't joined |
-| `user_not_found` | `slack user list --all --query <partial>` or `slack user info <id-or-email>` |
+| `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `query_exhaustive` |
+| `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `query_exhaustive`) or `slack user info <id-or-email>` |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
@@ -181,6 +181,13 @@ member count. Both are reported verbatim under `--include-non-member`.
 `--has-unread` currently matches nothing: no list endpoint returns unread counts
 on a session token. Don't reach for it.
 
+`--query` is a client-side name filter. On the default path it searches every
+page, so a match is never missed. Under `--include-non-member` or `--cursor` it
+searches only one page. The trailer's `query_exhaustive` says which happened -
+**zero matches with `query_exhaustive:false` does not mean the channel does not
+exist**, it means the search was partial. `user list --query` never widens on its
+own; pass `--all` there.
+
 Examples:
 
 ```
@@ -223,7 +230,7 @@ slack user info --full @alice                         # title, manager, dept, et
 slack user info --full @alice | jq '.custom_fields.manager.value_name'
 slack user manager-chain @alice                       # full reporting line up
 slack user info https://acme.slack.com/team/U01ABC    # by profile link
-slack user list --query tamm                          # find by partial name
+slack user list --all --query alic                    # find by partial name (--all searches every page)
 slack user info @alice U01XYZ alice@example.com   # or name / ID / email (incl. bulk)
 ```
 

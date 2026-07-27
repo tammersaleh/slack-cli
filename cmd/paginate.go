@@ -10,6 +10,23 @@ import (
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
+// streamOption adjusts the trailer streamPages emits. Options are applied to
+// every trailer, including the ones written on failure, so a marker can't be
+// reported on a clean run and forgotten on a truncated one.
+type streamOption func(*output.Meta)
+
+// withQueryFilter records that a client-side --query filter is active, so the
+// trailer states whether that filter saw every page. A search is exhaustive
+// only when the stream finished without error and Slack had no further pages:
+// anything else means a zero-match result could be hiding matches the command
+// never looked at.
+func withQueryFilter() streamOption {
+	return func(m *output.Meta) {
+		exhaustive := m.Error == "" && !m.HasMore
+		m.QueryExhaustive = &exhaustive
+	}
+}
+
 // streamPages drives the pagination loop shared by every list command: fetch
 // a page, hand it to emit, and repeat while --all is set and Slack keeps
 // returning a cursor.
@@ -42,6 +59,7 @@ func streamPages[T any](
 	all bool,
 	fetch api.PageFunc[T],
 	emit func(items []T) error,
+	opts ...streamOption,
 ) error {
 	// Seeded with the starting cursor so a cycle back to it is caught on the
 	// first lap rather than the second. Today that only engages for the
@@ -51,6 +69,15 @@ func streamPages[T any](
 	seen := map[string]bool{}
 	if cursor != "" {
 		seen[cursor] = true
+	}
+
+	// printMeta applies every option before writing, so options see the final
+	// has_more and error and can key off them.
+	printMeta := func(meta output.Meta) error {
+		for _, opt := range opts {
+			opt(&meta)
+		}
+		return p.PrintMeta(meta)
 	}
 
 	for {
@@ -66,7 +93,7 @@ func streamPages[T any](
 			}
 			// A trailer write that fails is dropped - the fetch failure
 			// is the more useful error to report.
-			_ = p.PrintMeta(meta)
+			_ = printMeta(meta)
 			return oErr
 		}
 
@@ -75,7 +102,7 @@ func streamPages[T any](
 		}
 
 		if !all || next == "" {
-			return p.PrintMeta(output.Meta{HasMore: next != "", NextCursor: next})
+			return printMeta(output.Meta{HasMore: next != "", NextCursor: next})
 		}
 
 		// A cursor that repeats would loop forever, and --timeout defaults
@@ -88,7 +115,7 @@ func streamPages[T any](
 				Endpoint: endpoint,
 				Code:     output.ExitGeneral,
 			}
-			_ = p.PrintMeta(output.Meta{HasMore: true, Error: oErr.Err})
+			_ = printMeta(output.Meta{HasMore: true, Error: oErr.Err})
 			return oErr
 		}
 		seen[next] = true

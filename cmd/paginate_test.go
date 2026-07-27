@@ -109,6 +109,27 @@ func TestChannelList_TruncationIsVisibleOnStdout(t *testing.T) {
 	}
 }
 
+// A --query walk cut short by a failure has not searched every page, so it must
+// not claim it did. Zero matches from a truncated search is the false negative
+// the marker exists to expose.
+func TestChannelList_QueryNotExhaustiveWhenTruncated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", failAfterFirstPage("channels", onePageOfChannels()))
+
+	r := runWithMockFull(t, mux, "channel", "list", "--query", "needle")
+	if r.err == nil {
+		t.Fatal("expected the page-2 failure to be reported")
+	}
+
+	meta := metaTrailer(t, r.stdout)
+	if meta["query_exhaustive"] != false {
+		t.Errorf("expected query_exhaustive=false on a truncated search, got %v", meta["query_exhaustive"])
+	}
+	if meta["error"] != "internal_error" {
+		t.Errorf("expected the failure in the trailer, got %v", meta["error"])
+	}
+}
+
 // A failure on the very first page has no cursor to resume from, but must
 // still mark the stream truncated rather than reporting a complete empty set.
 func TestChannelList_TruncationOnFirstPage(t *testing.T) {

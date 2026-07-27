@@ -54,6 +54,11 @@ type Meta struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 	ErrorCount int    `json:"error_count,omitempty"`
 	Error      string `json:"error,omitempty"`
+	// QueryExhaustive reports whether a client-side --query filter saw every
+	// page. False means the command searched a subset, so zero matches does not
+	// mean no such item exists. Nil (key absent) when no --query was given.
+	// A pointer because false is meaningful and must still be emitted.
+	QueryExhaustive *bool `json:"query_exhaustive,omitempty"`
 }
 
 type metaWrapper struct {

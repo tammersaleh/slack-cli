@@ -25,7 +25,7 @@ type ChannelListCmd struct {
 	ExcludeArchived  bool   `help:"Exclude archived channels." default:"true" negatable:""`
 	IncludeNonMember bool   `help:"Include channels the user hasn't joined."`
 	HasUnread        bool   `help:"Only channels with unread messages."`
-	Query            string `help:"Filter by name substring (client-side; pair with --all to search every page)."`
+	Query            string `help:"Filter by name substring (client-side). Searches every page by default; with --include-non-member or --cursor it searches only the page fetched. The trailer's query_exhaustive reports which happened."`
 }
 
 func (ChannelListCmd) Help() string {
@@ -46,12 +46,15 @@ Channel types:
             IMs don't have a member concept on the Slack API)
   all       all of the above (default)
 
---query filters client-side over the pages actually fetched, so pair it
-with --all to search the whole workspace rather than just the first page.
+--query is a client-side name filter. On the default path it searches
+every page, so a match is never missed. Under --include-non-member or
+--cursor it searches only the page fetched. Either way the _meta trailer's
+query_exhaustive says whether the search covered everything - treat zero
+matches with query_exhaustive:false as "unknown", not "absent".
 
 Examples:
 
-  slack channel list --all --query ext-            # filter by name substring
+  slack channel list --query ext-                  # searches every page you're in
   slack channel list --type public                 # only public channels
   slack channel list --include-non-member --limit 200`
 }
@@ -79,7 +82,25 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 
 	src := c.source(ctx, client, types, limit)
 
-	return streamPages(ctx, cli, p, src.endpoint, cursor, c.All, src.fetch, func(channels []slack.Channel) error {
+	all := c.All
+	var opts []streamOption
+	if c.Query != "" {
+		// --query is a client-side filter, so a single page turns "exists on a
+		// later page" into "does not exist" - and the channel_not_found hint
+		// points callers straight at this command. Search every page by default
+		// now that the member-only path costs ~19 requests and a few seconds.
+		//
+		// Two paths can't be widened silently: --include-non-member walks the
+		// whole workspace (minutes), and --cursor is a resume point that --all
+		// is not allowed to combine with. Those report the truth in the trailer
+		// instead.
+		if !c.IncludeNonMember && cursor == "" {
+			all = true
+		}
+		opts = append(opts, withQueryFilter())
+	}
+
+	return streamPages(ctx, cli, p, src.endpoint, cursor, all, src.fetch, func(channels []slack.Channel) error {
 		for _, ch := range channels {
 			if c.HasUnread && ch.UnreadCount == 0 {
 				continue
@@ -94,7 +115,7 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 			}
 		}
 		return nil
-	})
+	}, opts...)
 }
 
 // channelSource is where a listing is read from. It binds the endpoint name
@@ -116,9 +137,10 @@ type channelSource struct {
 //
 // The default used to read conversations.list and drop non-member channels in
 // the emit callback, which meant paginating every channel in the workspace to
-// print the user's own. Measured on CoreWeave's Enterprise Grid org: 5699
-// channels over 178 Tier-2 requests and 8 minutes, against 1788 conversations
-// over 10 Tier-3 requests and 3 seconds here.
+// print the user's own. Measured on a large Enterprise Grid org: the whole
+// workspace took 178 Tier-2 requests and 8 minutes to yield the roughly third
+// of it the user was in, which this endpoint returns in 10 Tier-3 requests and
+// 3 seconds.
 //
 // No client-side membership check remains on either path. users.conversations
 // is already member-scoped, and it omits is_member from every row it returns -

@@ -21,7 +21,7 @@ type UserListCmd struct {
 	Limit    int    `help:"Page size." default:"100"`
 	Cursor   string `help:"Continue from previous page."`
 	All      bool   `help:"Fetch all pages."`
-	Query    string `help:"Filter by name or email substring (client-side; pair with --all to search every page)."`
+	Query    string `help:"Filter by name or email substring (client-side; searches one page - pair with --all to search every page, and check query_exhaustive in the trailer)."`
 	Presence bool   `help:"Include presence information."`
 }
 
@@ -63,6 +63,16 @@ func (c *UserListCmd) Run(cli *CLI) error {
 		return pag.Users, pag.Cursor, nil
 	}
 
+	// --query filters client-side, so the trailer has to say whether it saw
+	// every page. Unlike `channel list`, this command does not widen to a full
+	// walk on its own: users.list has no member-scoped equivalent, and a whole
+	// directory is 72 Tier-2 requests on a large org - too slow to trigger
+	// behind the caller's back. --all remains theirs to pass.
+	var opts []streamOption
+	if c.Query != "" {
+		opts = append(opts, withQueryFilter())
+	}
+
 	return streamPages(ctx, cli, p, "users.list", c.Cursor, c.All, fetch, func(users []slack.User) error {
 		for _, user := range users {
 			if c.Query != "" && !matchesUserQuery(user, c.Query) {
@@ -73,7 +83,7 @@ func (c *UserListCmd) Run(cli *CLI) error {
 			}
 		}
 		return nil
-	})
+	}, opts...)
 }
 
 type UserInfoCmd struct {

@@ -6,7 +6,7 @@ A read-only, non-interactive CLI for Slack, built in Go. Designed for agents and
 
 - **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only, no channel mutations).
 - **Agent-first**: JSONL output. No interactive prompts. Deterministic, scriptable.
-- **Thin wrapper**: One API page per call by default. No hidden pagination loops. The caller controls data volume.
+- **Thin wrapper**: One API page per call by default. The caller controls data volume. The single exception is `channel list --query`, which searches every page of your own conversations because a partial client-side search reports "not found" for something that exists; it is bounded and cheap, and every other path still requires `--all`.
 - **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, `aws`.
 - **Composable**: Pipes, `jq`, shell scripts. Stdout for data, stderr for diagnostics.
 
@@ -29,7 +29,7 @@ The `_meta` line is always present, even when there are no results:
 
 ```
 $ slack channel list --query=nonexistent
-{"_meta":{"has_more":false}}
+{"_meta":{"has_more":false,"query_exhaustive":true}}
 ```
 
 ### Info commands
@@ -433,6 +433,31 @@ $ slack channel list --has-unread --fields=id,name,unread_count
 
 `--query` and `--has-unread` are client-side filters applied after the API page is fetched. The returned page may contain fewer items than `--limit`.
 
+Because `--query` filters client-side, a search that only looks at one page can
+report zero matches for a channel that exists. On the member-only default the
+command therefore searches every page - affordable now that it reads
+`users.conversations`. Under `--include-non-member` (a whole-workspace walk) or
+`--cursor` (a resume point, which cannot combine with `--all`) it searches only
+the page fetched.
+
+Either way the trailer says which happened:
+
+```
+$ slack channel list --query approvals
+{"id":"C01ABC","name":"team-approvals"}
+{"_meta":{"has_more":false,"query_exhaustive":true}}
+
+$ slack channel list --query approvals --include-non-member
+{"_meta":{"has_more":true,"next_cursor":"dGVhbTpD","query_exhaustive":false}}
+```
+
+`query_exhaustive` is present only when `--query` is set. It is `true` only when
+the filter saw every page: the stream finished without error and Slack reported
+no further pages. **A zero-match result with `query_exhaustive:false` does not
+mean the item does not exist** - it means the search was partial. `user list`
+never widens on its own (a full directory is dozens of rate-limited requests),
+so pass `--all` there.
+
 `--has-unread` filters on `unread_count`, which neither list endpoint actually
 returns on a session token, so it currently matches nothing. Tracked in
 `todo/has-unread-filters-a-field-no-list-endpoint-returns.md`.
@@ -687,7 +712,7 @@ $ slack user list --limit=2
 ```
 $ slack user list --query=tammer --fields=id,name,profile
 {"id":"U01XYZ","name":"tammer","profile":{"email":"tammer@example.com","display_name":"tammer","real_name":"Tammer Saleh","status_text":"","status_emoji":"","image_48":"https://avatars.slack-edge.com/U01XYZ_48.jpg"}}
-{"_meta":{"has_more":false}}
+{"_meta":{"has_more":false,"query_exhaustive":true}}
 ```
 
 Errors:

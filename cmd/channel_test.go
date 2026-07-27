@@ -321,6 +321,138 @@ func TestChannelList_QueryFilter(t *testing.T) {
 	}
 }
 
+// pagedQueryMux serves three pages where the only match for "needle" is on page
+// two, and counts requests. A client-side --query that stops after page one
+// reports zero matches for a channel that exists.
+//
+// The third page matters: it means a walk that should have stopped at one page
+// is detectable by request count. With only two pages, resuming from page two
+// makes exactly one request whether or not the command widened the walk, so a
+// test asserting "one request" would pass with the guard removed.
+func pagedQueryMux(t *testing.T, endpoint string) (*http.ServeMux, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	pages := map[string]struct {
+		channels []map[string]any
+		next     string
+	}{
+		"":            {[]map[string]any{{"id": "C01", "name": "general"}}, "page2cursor"},
+		"page2cursor": {[]map[string]any{{"id": "C02", "name": "needle-channel"}}, "page3cursor"},
+		"page3cursor": {[]map[string]any{{"id": "C03", "name": "random"}}, ""},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/"+endpoint, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = r.ParseForm()
+		page, ok := pages[r.FormValue("cursor")]
+		if !ok {
+			t.Errorf("unexpected cursor %q", r.FormValue("cursor"))
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          page.channels,
+			"response_metadata": map[string]string{"next_cursor": page.next},
+		})
+	})
+	return mux, &calls
+}
+
+func TestChannelList_QuerySearchesEveryPageOnDefaultPath(t *testing.T) {
+	// A client-side --query over page one only turns "exists on page 2" into
+	// "does not exist" - a silent false negative on the most common lookup
+	// path, and the channel_not_found hint recommends this very command.
+	// Walking every page is affordable on the member-only default now that it
+	// reads users.conversations, so --query does that rather than lie.
+	mux, calls := pagedQueryMux(t, "users.conversations")
+
+	out, err := runWithMock(t, mux, "channel", "list", "--query", "needle")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected the page-2 match + meta, got %d lines:\n%s", len(lines), out)
+	}
+	if got := parseJSON(t, lines[0])["name"]; got != "needle-channel" {
+		t.Errorf("expected the match from page 2, got %q", got)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Errorf("made %d requests, want 3 - --query must not stop at page one", got)
+	}
+
+	meta := parseJSON(t, lines[1])["_meta"].(map[string]any)
+	if meta["query_exhaustive"] != true {
+		t.Errorf("expected query_exhaustive=true after searching every page, got %v", meta["query_exhaustive"])
+	}
+	if meta["has_more"] != false {
+		t.Errorf("expected has_more=false, got %v", meta["has_more"])
+	}
+}
+
+func TestChannelList_QueryDoesNotImplyAllForNonMemberScan(t *testing.T) {
+	// --include-non-member reads conversations.list, a whole-workspace walk
+	// that costs minutes. Searching every page there is not something to do
+	// behind the caller's back, so that path stays one page and says so.
+	mux, calls := pagedQueryMux(t, "conversations.list")
+
+	out, err := runWithMock(t, mux, "channel", "list", "--query", "needle", "--include-non-member")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := calls.Load(); got != 1 {
+		t.Errorf("made %d requests, want 1 - the org-wide scan must stay opt-in", got)
+	}
+	meta := metaTrailer(t, out)
+	if meta["query_exhaustive"] != false {
+		t.Errorf("expected query_exhaustive=false on a partial search, got %v", meta["query_exhaustive"])
+	}
+	if meta["has_more"] != true {
+		t.Errorf("expected has_more=true, got %v", meta["has_more"])
+	}
+}
+
+func TestChannelList_QueryExhaustiveAbsentWithoutQuery(t *testing.T) {
+	// The marker describes a --query filter. With no query there is no filter
+	// to describe, so the key must not appear at all.
+	mux, _ := pagedListMux(t, "users.conversations")
+
+	out, err := runWithMock(t, mux, "channel", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := metaTrailer(t, out)
+	if _, ok := meta["query_exhaustive"]; ok {
+		t.Errorf("expected no query_exhaustive key without --query, got %v", meta["query_exhaustive"])
+	}
+}
+
+func TestChannelList_QueryNotExhaustiveWhenCursorGiven(t *testing.T) {
+	// --cursor is a resume point and is mutually exclusive with --all, so
+	// --query cannot widen it to a full walk. Resuming at page two leaves a
+	// third page unfetched: one request proves the walk stayed narrow, and the
+	// trailer must admit the search was partial.
+	mux, calls := pagedQueryMux(t, "users.conversations")
+
+	out, err := runWithMock(t, mux, "channel", "list", "--query", "needle", "--cursor", "page2cursor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("made %d requests, want 1 - a resume must not widen into a full walk", got)
+	}
+	meta := metaTrailer(t, out)
+	if meta["query_exhaustive"] != false {
+		t.Errorf("expected query_exhaustive=false with a page left unfetched, got %v", meta["query_exhaustive"])
+	}
+	if meta["has_more"] != true {
+		t.Errorf("expected has_more=true with a page left unfetched, got %v", meta["has_more"])
+	}
+}
+
 func TestChannelList_HasUnread(t *testing.T) {
 	mux := listMux(t, "users.conversations", []map[string]any{
 		{"id": "C01", "name": "general", "is_channel": true, "unread_count": 5},

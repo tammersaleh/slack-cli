@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -75,6 +76,72 @@ func TestUserList_QueryFilter(t *testing.T) {
 			u := parseJSON(t, lines[0])
 			if u["name"] != "tammer" {
 				t.Errorf("expected name='tammer', got %q", u["name"])
+			}
+		})
+	}
+}
+
+func TestUserList_QueryMarksExhaustiveness(t *testing.T) {
+	// user list has no cheap member-scoped endpoint - a full walk is 72 Tier-2
+	// requests on a large org - so --query stays one page here and reports
+	// whether it actually searched everything.
+	for _, tc := range []struct {
+		name       string
+		nextCursor string
+		args       []string
+		wantCalls  int32
+		want       bool
+	}{
+		// Two pages, no --all: stops at one and admits the search was partial.
+		{"more pages left", "page2", []string{"user", "list", "--query", "alice"}, 1, false},
+		// One page is the whole directory, so a single fetch saw everything.
+		{"single page workspace", "", []string{"user", "list", "--query", "alice"}, 1, true},
+		// Two pages with --all: walks both, so the search is exhaustive. The
+		// second page has to exist for this case to mean anything - a mock
+		// that is already terminal on page one would report true with or
+		// without --all.
+		{"explicit all", "page2", []string{"user", "list", "--query", "alice", "--all"}, 2, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				_ = r.ParseForm()
+				next := tc.nextCursor
+				name := "bob"
+				if r.FormValue("cursor") != "" {
+					next = ""
+					name = "alice-on-page-two"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok": true,
+					"members": []map[string]any{
+						{"id": "U01", "name": name, "real_name": "Bob Brown"},
+					},
+					"response_metadata": map[string]string{"next_cursor": next},
+				})
+			})
+
+			out, err := runWithMock(t, mux, tc.args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meta := metaTrailer(t, out)
+			if meta["query_exhaustive"] != tc.want {
+				t.Errorf("query_exhaustive = %v, want %v", meta["query_exhaustive"], tc.want)
+			}
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Errorf("made %d requests, want %d", got, tc.wantCalls)
+			}
+			// The --all case must actually surface the page-two match; that is
+			// the whole point of paying for the extra request.
+			if tc.wantCalls == 2 {
+				if lines := nonEmptyLines(out); len(lines) != 2 {
+					t.Fatalf("expected the page-two match + meta, got %d lines:\n%s", len(lines), out)
+				} else if got := parseJSON(t, lines[0])["name"]; got != "alice-on-page-two" {
+					t.Errorf("expected the match from page two, got %q", got)
+				}
 			}
 		})
 	}
