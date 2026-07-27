@@ -63,7 +63,7 @@ func TestResolveChannel_NonChannelIDFastFails(t *testing.T) {
 	}))
 	r := NewResolver(client, "", "")
 
-	tests := []string{"U09T3DUS6P9", "T01ABC123", "B012345678", "W98765432"}
+	tests := []string{"U01XYZ789", "T01ABC123", "B012345678", "W98765432"}
 	for _, input := range tests {
 		t.Run(input, func(t *testing.T) {
 			_, err := r.ResolveChannel(context.Background(), input)

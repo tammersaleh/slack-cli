@@ -36,14 +36,14 @@ func profileWithFields(fields map[string]slack.UserProfileCustomField) *slack.Us
 
 func TestBuildCustomFields_Basic(t *testing.T) {
 	p := profileWithFields(map[string]slack.UserProfileCustomField{
-		"Xf01": {Label: "Manager", Value: "U09KU7J7TA5"},
+		"Xf01": {Label: "Manager", Value: "U02MGR"},
 		"Xf02": {Label: "Division", Value: "Technology"},
-		"Xf03": {Label: "Employee ID", Value: "445"},
+		"Xf03": {Label: "Employee ID", Value: "1234"},
 	})
 
 	resolve := func(id string) (string, bool) {
-		if id == "U09KU7J7TA5" {
-			return "Jon Jones", true
+		if id == "U02MGR" {
+			return "Bob Brown", true
 		}
 		return "", false
 	}
@@ -54,11 +54,11 @@ func TestBuildCustomFields_Basic(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected manager key, got keys %v", keysOf(cf))
 	}
-	if mgr.Value != "U09KU7J7TA5" || mgr.ID != "Xf01" || mgr.Label != "Manager" {
+	if mgr.Value != "U02MGR" || mgr.ID != "Xf01" || mgr.Label != "Manager" {
 		t.Errorf("manager field wrong: %+v", mgr)
 	}
-	if mgr.ValueName != "Jon Jones" {
-		t.Errorf("expected value_name resolved to Jon Jones, got %q", mgr.ValueName)
+	if mgr.ValueName != "Bob Brown" {
+		t.Errorf("expected value_name resolved to Bob Brown, got %q", mgr.ValueName)
 	}
 	if cf["division"].Value != "Technology" {
 		t.Errorf("division wrong: %+v", cf["division"])

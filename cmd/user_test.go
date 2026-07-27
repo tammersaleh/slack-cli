@@ -195,7 +195,7 @@ func TestUserInfo_Full(t *testing.T) {
 	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		uid := r.FormValue("user")
-		names := map[string]string{"U01": "tammer", "U02": "jjones"}
+		names := map[string]string{"U01": "alice", "U02": "bbrown"}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"user": map[string]any{
@@ -214,11 +214,11 @@ func TestUserInfo_Full(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"profile": map[string]any{
-				"real_name": "Tammer Saleh", "title": "Engineer",
+				"real_name": "Alice Adams", "title": "Engineer",
 				"fields": map[string]any{
 					"Xf01": profileField("Manager", "U02"),
 					"Xf02": profileField("Division", "Technology"),
-					"Xf03": profileField("Employee ID", "445"),
+					"Xf03": profileField("Employee ID", "1234"),
 				},
 			},
 		})
@@ -236,8 +236,8 @@ func TestUserInfo_Full(t *testing.T) {
 	user := parseJSON(t, lines[0])
 
 	// Base user fields stay intact.
-	if user["name"] != "tammer" {
-		t.Errorf("expected base name='tammer', got %q", user["name"])
+	if user["name"] != "alice" {
+		t.Errorf("expected base name='alice', got %q", user["name"])
 	}
 
 	cf, ok := user["custom_fields"].(map[string]any)
@@ -251,8 +251,8 @@ func TestUserInfo_Full(t *testing.T) {
 	if mgr["value"] != "U02" {
 		t.Errorf("expected manager value U02, got %q", mgr["value"])
 	}
-	if mgr["value_name"] != "jjones" {
-		t.Errorf("expected manager value_name resolved to jjones, got %q", mgr["value_name"])
+	if mgr["value_name"] != "bbrown" {
+		t.Errorf("expected manager value_name resolved to bbrown, got %q", mgr["value_name"])
 	}
 	if cf["division"].(map[string]any)["value"] != "Technology" {
 		t.Errorf("expected division Technology, got %v", cf["division"])
@@ -289,8 +289,8 @@ func TestManagerChain_WalksUp(t *testing.T) {
 		_ = r.ParseForm()
 		chain := map[string]struct{ real, title, mgr string }{
 			"U01": {"Alice", "AE", "U02"},
-			"U02": {"Jon Jones", "CRO", "U03"},
-			"U03": {"Michael Intrator", "CEO", ""},
+			"U02": {"Bob Brown", "CRO", "U03"},
+			"U03": {"Carol Chen", "CEO", ""},
 		}
 		c := chain[r.FormValue("user")]
 		fields := map[string]any{}
@@ -316,7 +316,7 @@ func TestManagerChain_WalksUp(t *testing.T) {
 	if l0["level"].(float64) != 0 || l0["id"] != "U01" || l0["title"] != "AE" {
 		t.Errorf("level 0 wrong: %v", l0)
 	}
-	if l0["manager_id"] != "U02" || l0["manager_name"] != "Jon Jones" {
+	if l0["manager_id"] != "U02" || l0["manager_name"] != "Bob Brown" {
 		t.Errorf("level 0 manager wrong: %v", l0)
 	}
 	if _, hasUserID := l0["user_id"]; hasUserID {
@@ -326,7 +326,7 @@ func TestManagerChain_WalksUp(t *testing.T) {
 	if l1["level"].(float64) != 1 || l1["id"] != "U02" || l1["manager_id"] != "U03" {
 		t.Errorf("level 1 wrong: %v", l1)
 	}
-	if l1["manager_name"] != "Michael Intrator" {
+	if l1["manager_name"] != "Carol Chen" {
 		t.Errorf("level 1 manager_name should come from the terminal hop's profile, got %v", l1["manager_name"])
 	}
 	l2 := parseJSON(t, lines[2])

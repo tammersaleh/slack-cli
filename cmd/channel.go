@@ -308,8 +308,8 @@ while channel-name resolution uses the workspace token.
 
 Examples:
 
-  slack channel managers C0A065FTV4H
-  slack channel managers #sa-approvals`
+  slack channel managers C01ABC
+  slack channel managers #approvals`
 }
 
 // roleEntityAssignmentsResponse is the parsed admin.roles.entity.listAssignments

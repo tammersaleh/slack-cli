@@ -14,6 +14,28 @@ direct send is not. `message post` was removed for this reason.
 When manually testing draft creation, stage drafts in a self-DM. Never
 target other users or shared channels during verification.
 
+## This repo is public - never commit real workspace data
+
+No real channel names, channel IDs, user IDs, team/org IDs, custom-profile
+field IDs (`Xf…`), people's names, job titles, reporting lines, employee IDs, or
+workspace subdomains. This applies to tests, docs, SPEC examples, command help
+text (it ships inside the binary), and CLAUDE.md itself.
+
+Use the synthetic conventions already in the repo: `C01ABC`/`C02DEF` channels,
+`U01XYZ`/`U02MGR` users, `T01ABC` teams, `Xf01AAA` profile fields, `@alice` /
+Alice Adams / Bob Brown / Carol Chen people, `acme.slack.com`, `@example.com`
+emails. Tammer's own name and `@example.com` address are fine - it's his repo.
+
+Live verification against a real workspace is still the rule; only the *findings*
+get written down. Record shapes, counts, and behavior, never identifiers - "a
+channel the user manages" not `#sa-approvals`, "an Enterprise Grid org" not the
+employer name plus its exact channel count. When a measurement's value depends on
+a literal ID, say the ID is workspace-specific and omit it.
+
+A scrub landed 2026-07-27 after real IDs, an org chart naming employees up to the
+CEO, and an employee ID were found in the public tree. Grep before committing:
+`git grep -nE '\b[CDGU]0[A-Z0-9]{8,}\b'` should only match synthetic IDs.
+
 ## Internal Slack APIs
 
 The saved items and sidebar sections features use undocumented Slack

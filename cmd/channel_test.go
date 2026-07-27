@@ -658,18 +658,18 @@ func TestChannelManagers_Basic(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"role_assignments": []map[string]any{
-				{"role_id": "Rl0A", "users": []string{"U018Z62JVG8", "U02ABC"}},
+				{"role_id": "Rl0A", "users": []string{"U01XYZ", "U02ABC"}},
 			},
 		})
 	})
 
-	out, err := runWithMockSession(t, mux, "channel", "managers", "C0A065FTV4H")
+	out, err := runWithMockSession(t, mux, "channel", "managers", "C01ABC")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if gotEntityID != "C0A065FTV4H" {
-		t.Errorf("expected entity_id='C0A065FTV4H' in request, got %q", gotEntityID)
+	if gotEntityID != "C01ABC" {
+		t.Errorf("expected entity_id='C01ABC' in request, got %q", gotEntityID)
 	}
 
 	lines := nonEmptyLines(out)
@@ -678,8 +678,8 @@ func TestChannelManagers_Basic(t *testing.T) {
 	}
 
 	first := parseJSON(t, lines[0])
-	if first["user_id"] != "U018Z62JVG8" {
-		t.Errorf("expected first user_id='U018Z62JVG8', got %q", first["user_id"])
+	if first["user_id"] != "U01XYZ" {
+		t.Errorf("expected first user_id='U01XYZ', got %q", first["user_id"])
 	}
 	if first["role_id"] != "Rl0A" {
 		t.Errorf("expected role_id='Rl0A', got %q", first["role_id"])
@@ -760,7 +760,7 @@ func TestChannelManagers_ByName(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"channels": []map[string]any{
-				{"id": "C0A065FTV4H", "name": "sa-approvals", "is_channel": true},
+				{"id": "C01ABC", "name": "approvals", "is_channel": true},
 			},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
@@ -771,12 +771,12 @@ func TestChannelManagers_ByName(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"role_assignments": []map[string]any{
-				{"role_id": "Rl0A", "users": []string{"U018Z62JVG8"}},
+				{"role_id": "Rl0A", "users": []string{"U01XYZ"}},
 			},
 		})
 	})
 
-	out, err := runWithMockSession(t, mux, "channel", "managers", "#sa-approvals")
+	out, err := runWithMockSession(t, mux, "channel", "managers", "#approvals")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -784,11 +784,11 @@ func TestChannelManagers_ByName(t *testing.T) {
 	if !listCalled {
 		t.Error("expected conversations.list to be called to resolve the channel name")
 	}
-	if gotEntityID != "C0A065FTV4H" {
-		t.Errorf("expected resolved entity_id='C0A065FTV4H', got %q", gotEntityID)
+	if gotEntityID != "C01ABC" {
+		t.Errorf("expected resolved entity_id='C01ABC', got %q", gotEntityID)
 	}
-	if first := parseJSON(t, nonEmptyLines(out)[0]); first["user_id"] != "U018Z62JVG8" {
-		t.Errorf("expected manager 'U018Z62JVG8', got %q", first["user_id"])
+	if first := parseJSON(t, nonEmptyLines(out)[0]); first["user_id"] != "U01XYZ" {
+		t.Errorf("expected manager 'U01XYZ', got %q", first["user_id"])
 	}
 }
 

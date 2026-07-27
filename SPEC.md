@@ -513,8 +513,8 @@ slack channel managers <channel>
 ```
 
 ```
-$ slack channel managers #sa-approvals
-{"user_id":"U018Z62JVG8","role_id":"Rl0A"}
+$ slack channel managers #approvals
+{"user_id":"U01XYZ","role_id":"Rl0A"}
 {"_meta":{"has_more":false}}
 ```
 
@@ -717,8 +717,8 @@ normalized snake_case label. The base `slack.User` shape is unchanged
 resolved `value_name`.
 
 ```
-$ slack user info --full @jmancuso
-{"input":"@jmancuso","id":"U06...","name":"jmancuso","real_name":"John Mancuso","profile":{...},"custom_fields":{"manager":{"id":"Xf06EJKXRBAA","label":"Manager","value":"U09KU7J7TA5","value_name":"Jon Jones"},"title":{"id":"Xf06EJKXRUBG","label":"Title","value":"VP, Customer Experience"},"division":{"id":"Xf06FE2VS908","label":"Division","value":"Technology"},"employee_id":{"id":"Xf06ENBH703X","label":"Employee ID","value":"445"}}}
+$ slack user info --full @alice
+{"input":"@alice","id":"U01XYZ","name":"alice","real_name":"Alice Adams","profile":{...},"custom_fields":{"manager":{"id":"Xf01AAA","label":"Manager","value":"U02MGR","value_name":"Bob Brown"},"title":{"id":"Xf01BBB","label":"Title","value":"VP, Engineering"},"division":{"id":"Xf01CCC","label":"Division","value":"Technology"},"employee_id":{"id":"Xf01DDD","label":"Employee ID","value":"1234"}}}
 {"_meta":{"has_more":false}}
 ```
 
@@ -746,10 +746,10 @@ Walks the management chain upward, one JSONL row per level. Slack stores no
 reliable downward (direct-reports) data, so traversal is upward-only.
 
 ```
-$ slack user manager-chain @jmancuso
-{"input":"@jmancuso","root_user_id":"U06...","level":0,"id":"U06...","display_name":"John Mancuso","real_name":"John Mancuso","title":"VP, Customer Experience","manager_id":"U09KU7J7TA5","manager_name":"Jon Jones"}
-{"input":"@jmancuso","root_user_id":"U06...","level":1,"id":"U09KU7J7TA5","display_name":"Jon Jones","real_name":"Jon Jones","title":"Chief Revenue Officer","manager_id":"U013...","manager_name":"Michael Intrator"}
-{"input":"@jmancuso","root_user_id":"U06...","level":2,"id":"U013...","display_name":"Michael Intrator","real_name":"Michael Intrator","title":"CEO","stop_reason":"no_manager"}
+$ slack user manager-chain @alice
+{"input":"@alice","root_user_id":"U01XYZ","level":0,"id":"U01XYZ","display_name":"alice","real_name":"Alice Adams","title":"VP, Engineering","manager_id":"U02MGR","manager_name":"Bob Brown"}
+{"input":"@alice","root_user_id":"U01XYZ","level":1,"id":"U02MGR","display_name":"bbrown","real_name":"Bob Brown","title":"Chief Revenue Officer","manager_id":"U03CEO","manager_name":"Carol Chen"}
+{"input":"@alice","root_user_id":"U01XYZ","level":2,"id":"U03CEO","display_name":"cchen","real_name":"Carol Chen","title":"CEO","stop_reason":"no_manager"}
 {"_meta":{"has_more":false,"error_count":0}}
 ```
 
