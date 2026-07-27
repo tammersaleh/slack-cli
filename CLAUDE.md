@@ -27,10 +27,23 @@ Alice Adams / Bob Brown / Carol Chen people, `acme.slack.com`, `@example.com`
 emails. Tammer's own name and `@example.com` address are fine - it's his repo.
 
 Live verification against a real workspace is still the rule; only the *findings*
-get written down. Record shapes, counts, and behavior, never identifiers - "a
-channel the user manages" not `#approvals`, "an Enterprise Grid org" not the
-employer name plus its exact channel count. When a measurement's value depends on
-a literal ID, say the ID is workspace-specific and omit it.
+get written down. Record shapes, counts, and behavior, never identifiers: write
+"a channel the user manages" rather than the channel's real name, and "an
+Enterprise Grid org" rather than the employer name paired with its exact channel
+count. When a measurement's value depends on a literal ID, say the ID is
+workspace-specific and omit it.
+
+Do not quote a real identifier even as an example of what not to write - that
+still commits it. Writing an earlier draft of this very rule is how the real
+channel name got reintroduced into CLAUDE.md hours after being scrubbed from
+everywhere else, and it took a history rewrite to remove again.
+
+History was rewritten 2026-07-27 (`git filter-repo`, all branches and tags
+force-pushed). Note `--replace-text` only rewrites file contents: commit
+*messages* need `--replace-message`, and the first pass missed them because a
+scrub commit body had helpfully listed every real ID. GitHub still serves the
+pre-rewrite commits through `refs/pull/*` and by SHA; only GitHub Support can
+purge those.
 
 A scrub landed 2026-07-27 after real IDs, an org chart naming employees up to the
 CEO, and an employee ID were found in the public tree. Grep before committing:
