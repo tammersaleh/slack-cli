@@ -121,12 +121,21 @@ waiting out the release are the documented process, not a decision point -
 asking "should I push?" wastes a round trip. The Autonomy section below is
 the general rule; this is the specific one people trip over.
 
-## Bug reports
+## Bug reports and todos
 
-A bug report dropped in `bugs/` is a work order, not an artifact. Verify it,
-fix it, then **delete the file** - don't archive it or append a resolution
-section. The findings belong in CLAUDE.md, SPEC.md, and the commit body,
-where they'll actually be read. `bugs/` is untracked scratch space.
+Both directories are untracked scratch space holding work orders, not
+artifacts. Delete the file when the work is done - don't archive it or append
+a resolution section. Findings belong in CLAUDE.md, SPEC.md, and the commit
+body, where they'll actually be read.
+
+- `bugs/` - something is broken now. Verify, fix, delete.
+- `todo/` - work deferred out of the current change, usually because it's a
+  separate design decision. Write it for a session starting cold: what was
+  measured and how, the proposed approach, and what to verify rather than
+  assume. See the 2026-07-27 `channel list` entry for the shape.
+
+Deferring is the right call when a finding is real but orthogonal to the fix
+in hand - resist widening scope mid-change, and resist dropping the finding.
 
 Verify before fixing, and verify the whole report: a report can be right
 about the symptom and wrong about the cause, or bundle a real bug with a
