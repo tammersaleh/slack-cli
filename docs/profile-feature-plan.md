@@ -14,10 +14,10 @@ Two deliverables:
 1. `slack user info --full <user>...` - adds custom profile fields (additive).
 2. `slack user manager-chain <user>...` - walks the Manager field upward.
 
-## Verified API findings (live, Enterprise Grid CoreWeave workspace)
+## Verified API findings (live, against an Enterprise Grid workspace)
 
 - `users.profile.get` with `include_labels=true` returns `profile.fields` as a
-  map keyed by opaque field ID (`Xf01AAA`), each `{value, alt, label}`.
+  map keyed by opaque field ID (`Xf…`), each `{value, alt, label}`.
   One call per user; no separate `team.profile.get` needed.
 - slack-go wraps it: `client.GetUserProfileContext(ctx,
   &slack.GetUserProfileParameters{UserID, IncludeLabels:true})` →
@@ -26,19 +26,21 @@ Two deliverables:
 - Public documented method. Works on the existing client (desktop xoxc session
   token + cookie; OAuth bot token needs `users.profile:read` - NOT currently
   requested in internal/auth/oauth.go, must add + document re-auth).
-- Manager field: label "Manager", value is a user ID (`U02MGR`). alt empty.
+- Manager field: label "Manager", value is a user ID. alt empty.
 - "Direct Reports" field exists (type user) but is EMPTY for everyone - SCIM
   doesn't populate it. So downward traversal is impossible. Manager chain walks
-  UP only. Verified: Alice Adams → Bob Brown (CRO) → Carol Chen (CEO) →
-  (no manager, terminates).
+  UP only. Verified live on a three-level chain: an IC's manager, that
+  manager's manager, then a row with no manager set, which terminates the walk.
 - NO dedicated org-chart endpoint (users.profile.getOrgChart / atlas.* etc all
   return `unknown_method`).
 
-## Field ID reference (CoreWeave, may differ per workspace - do not hardcode)
+## Field IDs are per-workspace - do not hardcode
 
-Manager=Xf01AAA, Division=Xf01CCC, Department=Xf01EEE,
-Cost Center=Xf01FFF, Employee ID=Xf01DDD, GitHub Handle=Xf01GGG.
-Detect by label, never by ID.
+Every custom field is keyed by an opaque `Xf…` ID that differs between
+workspaces. The workspace measured here exposed Manager, Division, Department,
+Cost Center, Employee ID, and GitHub Handle. The literal IDs are deliberately
+not recorded: they identify a specific workspace's profile schema, and the code
+must detect fields by label anyway.
 
 ## Decisions (owner + Codex review, thread 019e88b4)
 

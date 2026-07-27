@@ -219,12 +219,12 @@ desktop auth has it, older OAuth tokens must re-auth.
 Examples:
 
 ```
-slack user info --full @alice                      # title, manager, dept, etc.
+slack user info --full @alice                         # title, manager, dept, etc.
 slack user info --full @alice | jq '.custom_fields.manager.value_name'
-slack user manager-chain @alice                    # full reporting line up
+slack user manager-chain @alice                       # full reporting line up
 slack user info https://acme.slack.com/team/U01ABC    # by profile link
 slack user list --query tamm                          # find by partial name
-slack user info @alice U01XYZ789 alice@example.com   # or name / ID / email (incl. bulk)
+slack user info @alice U01XYZ alice@example.com   # or name / ID / email (incl. bulk)
 ```
 
 ### Files

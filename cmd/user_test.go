@@ -195,7 +195,7 @@ func TestUserInfo_Full(t *testing.T) {
 	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		uid := r.FormValue("user")
-		names := map[string]string{"U01": "tammer", "U02": "bbrown"}
+		names := map[string]string{"U01": "alice", "U02": "bbrown"}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"user": map[string]any{
@@ -214,7 +214,7 @@ func TestUserInfo_Full(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"profile": map[string]any{
-				"real_name": "Tammer Saleh", "title": "Engineer",
+				"real_name": "Alice Adams", "title": "Engineer",
 				"fields": map[string]any{
 					"Xf01": profileField("Manager", "U02"),
 					"Xf02": profileField("Division", "Technology"),
@@ -236,8 +236,8 @@ func TestUserInfo_Full(t *testing.T) {
 	user := parseJSON(t, lines[0])
 
 	// Base user fields stay intact.
-	if user["name"] != "tammer" {
-		t.Errorf("expected base name='tammer', got %q", user["name"])
+	if user["name"] != "alice" {
+		t.Errorf("expected base name='alice', got %q", user["name"])
 	}
 
 	cf, ok := user["custom_fields"].(map[string]any)
