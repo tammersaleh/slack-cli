@@ -22,3 +22,11 @@
 # Local Claude Code config (user-specific, not shared)
 CLAUDE.local.md
 .claude/CLAUDE.local.md
+
+# Untracked scratch space for work orders. Not just untracked but ignored:
+# these files quote real workspace data - channel and DM ids, sometimes names -
+# straight out of live verification, and this repo is public. Ignoring them
+# means a stray `git add -A` cannot republish what a history rewrite already
+# had to remove once.
+/bugs/
+/todo/
