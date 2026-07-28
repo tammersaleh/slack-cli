@@ -2,7 +2,12 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
+	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -319,9 +324,9 @@ func TestMessageList_Pagination(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"has_more": true,
-			"messages": []map[string]any{{"type": "message", "text": "msg1", "ts": "1709251200.000100"}},
+			"ok":                true,
+			"has_more":          true,
+			"messages":          []map[string]any{{"type": "message", "text": "msg1", "ts": "1709251200.000100"}},
 			"response_metadata": map[string]string{"next_cursor": "nextpage"},
 		})
 	})
@@ -390,5 +395,266 @@ func TestMessageList_EnrichesUserName(t *testing.T) {
 	}
 	if msg["user_name"] == nil || msg["user_name"] == "" {
 		t.Error("expected user_name to be enriched via users.info")
+	}
+}
+
+// historyWindowMux emulates the paging behavior of conversations.history that
+// `message list --after/--before` depends on. Verified live against Slack on
+// 2026-07-27 (see CLAUDE.md, "Time bounds are paging state"):
+//
+//   - oldest/latest filter the returned messages.
+//   - With latest set, or with no bounds at all, the walk runs newest-first.
+//   - With only oldest set, the walk runs oldest-first.
+//   - A cursor replaces the anchor bound; the opposite bound still filters.
+//
+// The last two rules are why the bounds have to ride along on every request:
+// drop them on page two and the window stops being applied, so the walk runs
+// straight past the requested range into the rest of the channel.
+//
+// Simplifications against real Slack: bounds are inclusive on both ends, and
+// the cursor is the ts of the next message rather than an opaque token. Both
+// are self-consistent within the mock, which is all the assertions rest on.
+func historyWindowMux(t *testing.T, all []string, seen *[]url.Values) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		oldest, latest := r.FormValue("oldest"), r.FormValue("latest")
+		anchor := r.FormValue("cursor")
+		if seen != nil {
+			*seen = append(*seen, r.PostForm)
+		}
+
+		ordered := append([]string(nil), all...)
+		sort.Sort(sort.Reverse(sort.StringSlice(ordered)))
+		ascending := oldest != "" && latest == ""
+		if ascending {
+			sort.Strings(ordered)
+		}
+
+		var match []string
+		for _, ts := range ordered {
+			switch {
+			case ascending && anchor != "" && ts < anchor:
+				continue
+			case ascending && anchor == "" && ts < oldest:
+				continue
+			case !ascending && anchor != "" && ts > anchor:
+				continue
+			case !ascending && anchor == "" && latest != "" && ts > latest:
+				continue
+			case !ascending && oldest != "" && ts < oldest:
+				continue
+			case ascending && latest != "" && ts > latest:
+				continue
+			}
+			match = append(match, ts)
+		}
+
+		limit := 2
+		if n, err := strconv.Atoi(r.FormValue("limit")); err == nil && n > 0 {
+			limit = n
+		}
+		next := ""
+		if len(match) > limit {
+			next = match[limit]
+			match = match[:limit]
+		}
+
+		// Slack serializes every page newest-first, even when the walk
+		// itself is ascending - which is what makes an oldest-only --all run
+		// a sawtooth rather than one sorted stream.
+		if ascending {
+			sort.Sort(sort.Reverse(sort.StringSlice(match)))
+		}
+		msgs := make([]map[string]any, 0, len(match))
+		for _, ts := range match {
+			msgs = append(msgs, map[string]any{"type": "message", "text": "m" + ts, "ts": ts})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"has_more":          next != "",
+			"messages":          msgs,
+			"response_metadata": map[string]string{"next_cursor": next},
+		})
+	})
+	return mux
+}
+
+// windowTimestamps returns 1700000001.000000 .. 1700000011.000000.
+func windowTimestamps() []string {
+	var out []string
+	for i := 1; i <= 11; i++ {
+		out = append(out, fmt.Sprintf("17000000%02d.000000", i))
+	}
+	return out
+}
+
+func emittedTimestamps(t *testing.T, out string) []string {
+	t.Helper()
+	var got []string
+	for _, line := range nonEmptyLines(out) {
+		m := parseJSON(t, line)
+		if ts, ok := m["ts"].(string); ok {
+			got = append(got, ts)
+		}
+	}
+	return got
+}
+
+// TestMessageList_AllKeepsTimeBounds pins the whole point of --after/--before:
+// an --all walk must stay inside the window. Sending the bounds only on the
+// first page makes Slack forget the window and stream the rest of the channel.
+func TestMessageList_AllKeepsTimeBounds(t *testing.T) {
+	var reqs []url.Values
+	mux := historyWindowMux(t, windowTimestamps(), &reqs)
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC",
+		"--after", "1700000004", "--before", "1700000008", "--all", "--limit", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"1700000008.000000", "1700000007.000000", "1700000006.000000",
+		"1700000005.000000", "1700000004.000000",
+	}
+	got := emittedTimestamps(t, out)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("walk left the requested window\n got: %v\nwant: %v", got, want)
+	}
+
+	if len(reqs) < 2 {
+		t.Fatalf("expected the walk to span at least 2 requests, got %d", len(reqs))
+	}
+	for i, req := range reqs {
+		if req.Get("oldest") != "1700000004.000000" || req.Get("latest") != "1700000008.000000" {
+			t.Errorf("request %d dropped its time bounds: oldest=%q latest=%q",
+				i, req.Get("oldest"), req.Get("latest"))
+		}
+	}
+
+	lines := nonEmptyLines(out)
+	meta := parseJSON(t, lines[len(lines)-1])["_meta"].(map[string]any)
+	if meta["has_more"] != false {
+		t.Errorf("expected the window to be exhausted, got has_more=%v", meta["has_more"])
+	}
+}
+
+// TestMessageList_CursorResumeKeepsTimeBounds guards the fix that was
+// *proposed* for this and rejected: dropping oldest/latest whenever --cursor
+// is set, on the theory that the cursor already encodes the filtered position.
+// It does not. The cursor names a position; only the bounds say where to stop
+// and which way to walk, so a resume has to repeat the bounds its cursor was
+// produced under. This test fails if that suppression is ever added; the
+// window is exhausted at the resume point, so dropping the bounds turns a
+// terminal page into an open-ended walk.
+func TestMessageList_CursorResumeKeepsTimeBounds(t *testing.T) {
+	var reqs []url.Values
+	mux := historyWindowMux(t, windowTimestamps(), &reqs)
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC",
+		"--after", "1700000004", "--before", "1700000008",
+		"--cursor", "1700000005.000000", "--limit", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"1700000005.000000", "1700000004.000000"}
+	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("resumed page left the requested window\n got: %v\nwant: %v", got, want)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(reqs))
+	}
+	if reqs[0].Get("oldest") != "1700000004.000000" || reqs[0].Get("latest") != "1700000008.000000" {
+		t.Errorf("resume request dropped its bounds: oldest=%q latest=%q",
+			reqs[0].Get("oldest"), reqs[0].Get("latest"))
+	}
+
+	lines := nonEmptyLines(out)
+	meta := parseJSON(t, lines[len(lines)-1])["_meta"].(map[string]any)
+	if meta["has_more"] != false {
+		t.Errorf("expected the window to be exhausted, got has_more=%v", meta["has_more"])
+	}
+}
+
+// TestMessageList_AllKeepsTimeBoundsOldestOnly covers the other paging
+// direction. With oldest set and latest absent, conversations.history walks
+// forward in time instead of backward, and it was the worse of the two
+// failures live: dropping the bounds on page two resumed the same cursor
+// *backwards*, re-emitting messages page one had already printed and never
+// terminating. The expected order is the documented sawtooth - newest-first
+// within a page, pages ascending.
+func TestMessageList_AllKeepsTimeBoundsOldestOnly(t *testing.T) {
+	var reqs []url.Values
+	mux := historyWindowMux(t, windowTimestamps(), &reqs)
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC",
+		"--after", "1700000008", "--all", "--limit", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"1700000009.000000", "1700000008.000000",
+		"1700000011.000000", "1700000010.000000",
+	}
+	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("forward walk left the requested window\n got: %v\nwant: %v", got, want)
+	}
+
+	if len(reqs) < 2 {
+		t.Fatalf("expected the walk to span at least 2 requests, got %d", len(reqs))
+	}
+	for i, req := range reqs {
+		if req.Get("oldest") != "1700000008.000000" {
+			t.Errorf("request %d dropped its lower bound: oldest=%q", i, req.Get("oldest"))
+		}
+		if req.Get("latest") != "" {
+			t.Errorf("request %d invented an upper bound: latest=%q", i, req.Get("latest"))
+		}
+	}
+
+	lines := nonEmptyLines(out)
+	meta := parseJSON(t, lines[len(lines)-1])["_meta"].(map[string]any)
+	if meta["has_more"] != false {
+		t.Errorf("expected the window to be exhausted, got has_more=%v", meta["has_more"])
+	}
+}
+
+// TestMessageList_AllKeepsUnreadBound is the same forward walk reached the way
+// users actually reach it. --unread reads oldest from the channel's last_read
+// marker and never sets latest, so every --unread --all run takes the
+// oldest-only path.
+func TestMessageList_AllKeepsUnreadBound(t *testing.T) {
+	var reqs []url.Values
+	mux := historyWindowMux(t, windowTimestamps(), &reqs)
+	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"channel": map[string]any{"id": "C01ABC", "name": "general", "last_read": "1700000008.000000"},
+		})
+	})
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC", "--unread", "--all", "--limit", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"1700000009.000000", "1700000008.000000",
+		"1700000011.000000", "1700000010.000000",
+	}
+	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("unread walk left the last_read window\n got: %v\nwant: %v", got, want)
+	}
+	for i, req := range reqs {
+		if req.Get("oldest") != "1700000008.000000" {
+			t.Errorf("request %d dropped the last_read bound: oldest=%q", i, req.Get("oldest"))
+		}
 	}
 }

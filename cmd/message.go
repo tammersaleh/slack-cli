@@ -100,27 +100,24 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 		latest = ts
 	}
 
-	// Time bounds apply to the first page only; after that the cursor
-	// carries the position. The flag flips on success, not on request, so
-	// a retried first page still sends its bounds.
-	boundsSent := false
-
+	// Every page carries the time bounds, not just the first. In
+	// conversations.history the cursor is only a position - it is the bounds
+	// that define the window and the direction of the walk. Send oldest and
+	// latest once and Slack pages the window; omit them on the next request
+	// and the same cursor resumes an unbounded newest-first walk through the
+	// rest of the channel. Verified live 2026-07-27: a 6-message window
+	// walked with --all emitted 1300+ messages and was still going.
 	fetch := func(cursor string) ([]slack.Message, string, error) {
-		oldestArg, latestArg := oldest, latest
-		if boundsSent {
-			oldestArg, latestArg = "", ""
-		}
 		resp, err := client.Bot().GetConversationHistoryContext(ctx, &slack.GetConversationHistoryParameters{
 			ChannelID: channelID,
 			Limit:     limit,
 			Cursor:    cursor,
-			Oldest:    oldestArg,
-			Latest:    latestArg,
+			Oldest:    oldest,
+			Latest:    latest,
 		})
 		if err != nil {
 			return nil, "", err
 		}
-		boundsSent = true
 		return resp.Messages, resp.ResponseMetaData.NextCursor, nil
 	}
 

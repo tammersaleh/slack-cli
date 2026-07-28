@@ -634,6 +634,17 @@ slack message list <channel> [flags]
 
 `--has-replies` and `--has-reactions` are client-side filters applied after the API page is fetched. The returned page may contain fewer items than `--limit`.
 
+`--after` and `--before` are sent on every request of a walk, not just the
+first. In `conversations.history` the cursor carries only a position; the
+bounds are what define the window and the direction of paging. A `--cursor`
+resume therefore has to repeat the bounds the cursor was produced under.
+
+Result ordering depends on which bounds are set. With `--before` (or with no
+bounds at all) messages come back newest first across the whole walk. With
+`--after` alone, each page is newest first but successive pages move forward
+in time, so an `--all` run is not globally sorted. Pass `--before` as well if
+you need one descending stream.
+
 ```
 $ slack message list #general --limit=2
 {"client_msg_id":"abc-123","type":"message","user":"U01XYZ","text":"Hey team, the deploy is done.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z","thread_ts":"1709251200.000100","reply_count":3,"reply_users":["U02ABC","U03DEF"],"latest_reply":"1709251500.000200","latest_reply_iso":"2024-03-01T00:05:00Z","reactions":[{"name":"thumbsup","count":2,"users":["U02ABC","U03DEF"]}]}
