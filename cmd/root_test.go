@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/tammersaleh/slack-cli/cmd"
+	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
 func mustParse(t *testing.T, args ...string) (*cmd.CLI, *kong.Context) {
@@ -294,10 +296,7 @@ func TestTimeout_SharedAcrossPreliminaryCall(t *testing.T) {
 	if runErr == nil {
 		t.Fatalf("expected the shared deadline to fail the command; --timeout is not bounding the whole run (stdout %q)", outBuf.String())
 	}
-	if !strings.Contains(runErr.Error(), "deadline exceeded") &&
-		!strings.Contains(errBuf.String(), "deadline exceeded") {
-		t.Errorf("expected a deadline-exceeded failure, got err=%v stderr=%s", runErr, errBuf.String())
-	}
+	assertTimeoutError(t, runErr)
 	if got := listCalls.Load(); got != 1 {
 		t.Errorf("listing attempted %d times, want 1", got)
 	}
@@ -308,8 +307,8 @@ func TestTimeout_SharedAcrossPreliminaryCall(t *testing.T) {
 // so the 100ms timeout has to propagate for the client to give up early.
 // We can't just time the test: runWithMockFull defers srv.Close which
 // waits for the handler to drain, masking fast client returns. Assert on
-// the error string instead - a propagated deadline surfaces as
-// "context deadline exceeded" from slack-go.
+// the classified error instead - a propagated deadline surfaces as the
+// "timeout" code, with the stdlib wording kept in the detail.
 func TestTimeout_EndToEnd(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
@@ -323,9 +322,25 @@ func TestTimeout_EndToEnd(t *testing.T) {
 	if r.err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-	if !strings.Contains(r.err.Error(), "deadline exceeded") &&
-		!strings.Contains(r.stderr, "deadline exceeded") {
-		t.Errorf("expected deadline-exceeded error, got err=%v stderr=%s", r.err, r.stderr)
+	assertTimeoutError(t, r.err)
+}
+
+// assertTimeoutError pins both halves of a classified timeout: the stable code
+// a consumer branches on, and the stdlib wording that has to survive in the
+// detail so replacing the raw text does not lose what it said. Checking only
+// the code would pass against a classifier that dropped the detail; checking
+// only the text would pass against one that never assigned a code.
+func assertTimeoutError(t *testing.T, err error) {
+	t.Helper()
+	var oErr *output.Error
+	if !errors.As(err, &oErr) {
+		t.Fatalf("expected an *output.Error, got %#v", err)
+	}
+	if oErr.Err != "timeout" {
+		t.Errorf("expected error code 'timeout', got %q", oErr.Err)
+	}
+	if !strings.Contains(oErr.Detail, "deadline exceeded") {
+		t.Errorf("expected the detail to keep the deadline wording, got %q", oErr.Detail)
 	}
 }
 

@@ -142,6 +142,14 @@ func TestSkill_DiscoverabilityContent(t *testing.T) {
 		"`channel_not_found`",
 		"`draft_not_found`",
 		"`invalid_timestamp`",
+		// The codes a paginated run can put in _meta.error. The trailer is
+		// the only signal an agent gets that a listing was truncated, so a
+		// code it cannot look up in the table is a dead end.
+		"`invalid_cursor`",
+		"`timeout`",
+		"`http_error`",
+		"`parse_error`",
+		"`unknown_error`",
 		// Exit codes documented so agents know what each non-zero code means.
 		"### Exit codes",
 		"2 - authentication",

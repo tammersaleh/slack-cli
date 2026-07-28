@@ -90,6 +90,27 @@ A failure that cuts a paginated command short also sets `error` in the `_meta`
 trailer, so the truncation is visible on stdout. See "Truncated results" under
 Pagination.
 
+`error` is always a snake_case machine code, never raw Go or library error
+text - it is safe to switch on. When the code is a category rather than a
+specific cause, `detail` on stderr carries the specifics. Slack's own API error
+strings (`missing_scope`, `not_in_channel`, ...) pass through as the code
+unchanged. The codes the CLI raises for failures Slack did not name:
+
+- `rate_limited` - retries exhausted, or a 429 on an un-retried call (exit 3).
+- `network_error` - the request never reached Slack: DNS, connection refused,
+  connection reset, TLS (exit 4).
+- `timeout` - the `--timeout` budget expired (exit 1). Raise the budget, drop
+  it, or resume from `next_cursor`.
+- `http_error` - Slack answered with a non-200 that was not a 429; `detail`
+  names the status (exit 1).
+- `parse_error` - the response body was not the JSON the API returns. Usually a
+  proxy or captive portal intercepting the request (exit 1).
+- `invalid_cursor` - Slack rejected the token passed to `--cursor`; it is void,
+  so rerun without it (exit 1).
+- `pagination_error` - Slack returned a cursor that repeats a page already
+  fetched, which would loop forever (exit 1).
+- `unknown_error` - the CLI did not recognize the failure. Read `detail` (exit 1).
+
 Exit codes:
 
 - `0`: All items succeeded
@@ -327,8 +348,12 @@ When `_meta.error` is present:
 A retained `next_cursor` is a checkpoint, not permission to retry immediately or
 indefinitely. Read `_meta.error` first: `rate_limited` needs a wait, an auth
 error (exit code 2) needs credentials repaired, `missing_scope` needs a scope
-granted. Bound your retries either way - no error code makes an unchanged retry
-loop safe.
+granted, `timeout` needs a larger `--timeout`. Bound your retries either way -
+no error code makes an unchanged retry loop safe.
+
+`_meta.error` is a machine code in every case, so it is safe to switch on; see
+the code list under Errors. `_meta` carries no detail field, so when the code
+alone is not enough, read `detail` from the stderr error object.
 
 A failure that voids the request itself is reported as terminal, so it can never
 be mistaken for a resume point. A cursor Slack rejected is the case that matters

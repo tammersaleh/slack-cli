@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -120,6 +122,20 @@ func (e *RateLimitExhaustedError) Unwrap() error { return e.Err }
 
 // ClassifyError maps a Slack API error to an output.Error with the
 // appropriate exit code.
+//
+// Err is a machine code throughout, never raw Go error text. It is what a
+// paginated command copies into _meta.error, which SPEC documents as the field
+// a consumer branches on to tell a truncated stream from a complete one, and
+// _meta has no room for anything but the code. Go and slack-go wording is a
+// dependency detail that changes under a toolchain bump, and it leaks
+// implementation - request URLs and Go type names both showed up in that field
+// before this was enforced. The specifics still get reported: every code below
+// carries the original text in Detail, which the printer writes to stderr.
+//
+// The final fallback is a code too, so an error shape nothing here recognizes
+// cannot reintroduce free text. That is the point of the arrangement: the
+// recognizers exist to name failures worth branching on, not to keep the field
+// clean, so a shape added by a future dependency is already contained.
 func ClassifyError(err error) *output.Error {
 	var rlExhausted *RateLimitExhaustedError
 	if errors.As(err, &rlExhausted) {
@@ -164,6 +180,25 @@ func ClassifyError(err error) *output.Error {
 		}
 	}
 
+	// The caller's own --timeout expiring. Two wrappings reach here and both
+	// have to match, which is why this is errors.Is and not a string compare:
+	// the HTTP client returns a *url.Error around the deadline when it fires
+	// mid-request, and FetchPage's pre-flight ctx.Err() returns it bare when it
+	// fires between pages.
+	//
+	// Exit stays ExitGeneral. ExitNetwork reads like the network failed, and a
+	// self-imposed deadline says nothing about the network - the request may
+	// have been perfectly healthy and merely slower than the caller allowed.
+	// Moving it would also change a documented exit code for no gain.
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &output.Error{
+			Err:    "timeout",
+			Detail: err.Error(),
+			Hint:   "The --timeout budget expired. Raise it, drop it (no timeout is the default), or resume from the trailer's next_cursor.",
+			Code:   output.ExitGeneral,
+		}
+	}
+
 	var netErr *net.OpError
 	if errors.As(err, &netErr) {
 		return &output.Error{
@@ -173,8 +208,44 @@ func ClassifyError(err error) *output.Error {
 		}
 	}
 
+	// A non-200 that is not a 429; slack-go turns 429 into RateLimitedError
+	// above. Not split by status class and not carrying the number in its own
+	// field: Slack reports API-level failures as 200 with ok:false, so what
+	// reaches here in practice is edge-level 5xx, and Detail already names the
+	// status.
+	var statusErr slack.StatusCodeError
+	if errors.As(err, &statusErr) {
+		return &output.Error{
+			Err:    "http_error",
+			Detail: err.Error(),
+			Code:   output.ExitGeneral,
+		}
+	}
+
+	// A 200 whose body is not the JSON slack-go expected. Reachable without
+	// Slack changing anything: a captive portal or intercepting proxy answering
+	// 200 with HTML lands here. parse_error is the code the CLI already uses
+	// for an unparseable response body (cmd/saved.go), so this adds no new
+	// vocabulary.
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+		return &output.Error{
+			Err:    "parse_error",
+			Detail: err.Error(),
+			Hint:   "The response was not the JSON Slack's API returns. Check for a proxy or captive portal intercepting requests to slack.com.",
+			Code:   output.ExitGeneral,
+		}
+	}
+
+	// Unrecognized. The code says only that, and Detail carries the text, so a
+	// consumer sees a value it can switch on and an operator still sees what
+	// happened. Deliberately not "internal_error": that is a real Slack API
+	// error string which passes through above, and two different failures must
+	// not share one code.
 	return &output.Error{
-		Err:  err.Error(),
-		Code: output.ExitGeneral,
+		Err:    "unknown_error",
+		Detail: err.Error(),
+		Code:   output.ExitGeneral,
 	}
 }

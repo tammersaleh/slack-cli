@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
@@ -583,5 +584,145 @@ func TestThreadList_NotFoundTrailerIsTerminal(t *testing.T) {
 	}
 	if _, ok := meta["next_cursor"]; ok {
 		t.Errorf("expected no resume cursor, got %v", meta["next_cursor"])
+	}
+}
+
+// firstPageThen serves one good page, then hands every later page to next. It
+// exists for the failures that are not Slack API errors - a blocked request, a
+// non-200 status, a body that is not JSON - which failAfterFirstPage cannot
+// express.
+func firstPageThen(itemsKey string, items any, next http.HandlerFunc) http.HandlerFunc {
+	served := false
+	return func(w http.ResponseWriter, r *http.Request) {
+		if served {
+			next(w, r)
+			return
+		}
+		served = true
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			itemsKey:            items,
+			"response_metadata": map[string]string{"next_cursor": "page2cursor"},
+		})
+	}
+}
+
+// _meta.error is a machine code, so a --timeout that fires mid-stream reports
+// "timeout" rather than the Go runtime's wording. The raw text is a stdlib
+// implementation detail that can change with a toolchain bump, and the HTTP
+// client wraps it in a *url.Error that also embeds the request URL.
+func TestChannelList_TimeoutTrailerCarriesAStableCode(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", firstPageThen("channels", onePageOfChannels(),
+		// Bounded rather than blocking forever: httptest.Server.Close waits
+		// for in-flight handlers, and the server does not always notice the
+		// client abandoning a request it has not answered yet.
+		func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
+		}))
+
+	r := runWithMockFull(t, mux, "--timeout", "200ms", "channel", "list", "--all")
+	if r.err == nil {
+		t.Fatal("expected the deadline to fail the command")
+	}
+
+	lines := nonEmptyLines(r.stdout)
+	if len(lines) != 2 {
+		t.Fatalf("expected the page-1 channel plus a trailer, got %d lines:\n%s", len(lines), r.stdout)
+	}
+
+	meta := metaTrailer(t, r.stdout)
+	if meta["error"] != "timeout" {
+		t.Errorf("expected _meta.error='timeout', got %v", meta["error"])
+	}
+	// A deadline says nothing about the cursor, so the failed page stays the
+	// resume point: rerunning it with a larger --timeout can work.
+	if meta["has_more"] != true {
+		t.Errorf("expected has_more=true on a timeout, got %v", meta["has_more"])
+	}
+	if meta["next_cursor"] != "page2cursor" {
+		t.Errorf("expected the failed page as the resume cursor, got %v", meta["next_cursor"])
+	}
+
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected an *output.Error, got %#v", r.err)
+	}
+	if oErr.Code != output.ExitGeneral {
+		t.Errorf("expected exit code %d, got %d", output.ExitGeneral, oErr.Code)
+	}
+	// The code drops the wording, so stderr's detail has to keep it.
+	if !strings.Contains(oErr.Detail, "deadline exceeded") {
+		t.Errorf("detail must keep what the code omits, got %q", oErr.Detail)
+	}
+}
+
+// A non-200 that is not a 429 reports "http_error", not slack-go's
+// "slack server error: 500 Internal Server Error".
+func TestChannelList_HTTPStatusTrailerCarriesAStableCode(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", firstPageThen("channels", onePageOfChannels(),
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+
+	r := runWithMockFull(t, mux, "channel", "list", "--all")
+	if r.err == nil {
+		t.Fatal("expected the 500 to fail the command")
+	}
+
+	meta := metaTrailer(t, r.stdout)
+	if meta["error"] != "http_error" {
+		t.Errorf("expected _meta.error='http_error', got %v", meta["error"])
+	}
+	if meta["next_cursor"] != "page2cursor" {
+		t.Errorf("a 500 can clear, so the failed page stays the resume point; got %v", meta["next_cursor"])
+	}
+
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected an *output.Error, got %#v", r.err)
+	}
+	if !strings.Contains(oErr.Detail, "500") {
+		t.Errorf("detail must name the status the code omits, got %q", oErr.Detail)
+	}
+}
+
+// A 200 carrying something other than JSON - a captive portal or an
+// intercepting proxy - reports "parse_error" rather than the stdlib's
+// "invalid character '<' looking for beginning of value".
+func TestChannelList_UnparseableBodyTrailerCarriesAStableCode(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", firstPageThen("channels", onePageOfChannels(),
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("<html>captive portal</html>"))
+		}))
+
+	r := runWithMockFull(t, mux, "channel", "list", "--all")
+	if r.err == nil {
+		t.Fatal("expected the unparseable body to fail the command")
+	}
+
+	meta := metaTrailer(t, r.stdout)
+	if meta["error"] != "parse_error" {
+		t.Errorf("expected _meta.error='parse_error', got %v", meta["error"])
+	}
+	if meta["has_more"] != true {
+		t.Errorf("expected has_more=true, got %v", meta["has_more"])
+	}
+	if meta["next_cursor"] != "page2cursor" {
+		t.Errorf("an interception clears, so the failed page stays the resume point; got %v", meta["next_cursor"])
+	}
+
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected an *output.Error, got %#v", r.err)
+	}
+	if !strings.Contains(oErr.Detail, "invalid character") {
+		t.Errorf("detail must keep the parse failure the code omits, got %q", oErr.Detail)
 	}
 }

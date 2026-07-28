@@ -63,6 +63,11 @@ Common errors and their recovery:
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
 | `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. |
 | `rate_limited` | Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait |
+| `invalid_cursor` | The cursor is void. Rerun without `--cursor`; a cursor only works for the same command, flags, and workspace that produced it |
+| `timeout` | The `--timeout` budget expired. Raise it, drop it, or resume from `_meta.next_cursor` |
+| `http_error` | Slack answered with a non-200. Read `detail` for the status; usually transient, so wait and resume |
+| `parse_error` | The response was not JSON. Check for a proxy or captive portal intercepting `slack.com` |
+| `unknown_error` | The CLI did not recognize the failure. Read `detail` on stderr |
 
 Per-item errors in bulk commands (e.g. `slack channel info X Y Z`)
 go to stdout inline as `{"input":..., "error":..., "detail":..., "hint":...}`
@@ -724,6 +729,9 @@ still end early, and the rows already printed stay on stdout:
 
 That is a partial result, not a short list. When `_meta.error` is set, resume
 with `--cursor <next_cursor>`, or rerun the command if no cursor is given.
+`_meta.error` is always a snake_case code you can switch on - see the table
+above - and `has_more:false` there means the outcome is terminal, so there is
+nothing to resume.
 Treating a truncated `--all` run as the full set is the classic way to reach a
 wrong conclusion - for example "I'm only in 285 channels" when the run stopped
 a third of the way through.

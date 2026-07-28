@@ -162,7 +162,9 @@ func TestStreamPages_TransportFailureIsResumable(t *testing.T) {
 	if !strings.Contains(buf.String(), `{"v":"a"}`) {
 		t.Errorf("expected the fetched page to remain on stdout, got:\n%s", buf.String())
 	}
-	if !strings.HasSuffix(buf.String(), `{"_meta":{"has_more":true,"next_cursor":"c2","error":"connection reset"}}`+"\n") {
+	// unknown_error, not "connection reset": _meta.error is a machine code, and
+	// a bare error is exactly the shape ClassifyError has no recognizer for.
+	if !strings.HasSuffix(buf.String(), `{"_meta":{"has_more":true,"next_cursor":"c2","error":"unknown_error"}}`+"\n") {
 		t.Errorf("expected a resumable failure trailer, got:\n%s", buf.String())
 	}
 }
