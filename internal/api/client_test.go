@@ -93,9 +93,13 @@ func TestNew_WithCookie(t *testing.T) {
 }
 
 func TestNew_WithCookieOnUserClient(t *testing.T) {
-	var gotCookie string
+	var gotCookie, gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotCookie = r.Header.Get("Cookie")
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		gotToken = r.PostFormValue("token")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":      true,
 			"url":     "https://test.slack.com/",
@@ -108,14 +112,21 @@ func TestNew_WithCookieOnUserClient(t *testing.T) {
 	defer srv.Close()
 
 	c := New("xoxc-bot", WithUserToken("xoxc-user"), WithCookie("xoxd-cookie"), WithAPIURL(srv.URL+"/api/"))
-	// Call auth.test via the user client path - we'll use Bot() since User() doesn't
-	// have AuthTest, but both should have the cookie transport.
-	_, err := c.AuthTest(context.Background())
+
+	// Drive the request through User(), not AuthTest() - AuthTest() goes via the
+	// bot client, so asserting on it only re-tests TestNew_WithCookie and says
+	// nothing about how the user client was built.
+	_, err := c.User().AuthTestContext(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotCookie != "d=xoxd-cookie" {
 		t.Errorf("got Cookie header %q, want %q", gotCookie, "d=xoxd-cookie")
+	}
+	// Proves the request really came from the user client, and that the user
+	// client got WithAPIURL - without it this would have gone to slack.com.
+	if gotToken != "xoxc-user" {
+		t.Errorf("got token %q, want %q", gotToken, "xoxc-user")
 	}
 }
 

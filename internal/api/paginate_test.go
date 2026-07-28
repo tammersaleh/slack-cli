@@ -81,8 +81,14 @@ func TestPaginate_WithLimit(t *testing.T) {
 	}
 }
 
+// A page that lands exactly on the limit must end the walk. Asserting only the
+// item count cannot show this: with a `>` comparison the loop fetches one more
+// page and `all[:limit]` trims the result back to the same 2 items. The call
+// count is the only observable difference, so it carries the assertion.
 func TestPaginate_LimitExactPage(t *testing.T) {
+	calls := 0
 	items, err := Paginate(context.Background(), testEndpoint, 2, func(cursor string) ([]string, string, error) {
+		calls++
 		return []string{"a", "b"}, "more", nil
 	})
 	if err != nil {
@@ -90,6 +96,39 @@ func TestPaginate_LimitExactPage(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Errorf("got %d items, want 2", len(items))
+	}
+	if calls != 1 {
+		t.Errorf("got %d calls, want 1 (the first page already reached the limit)", calls)
+	}
+}
+
+// A rate-limit response carrying no Retry-After still has to back off. Slack
+// omits the header often enough that treating it as "wait zero" turns the retry
+// loop into a tight hammer on an endpoint that just asked us to slow down.
+func TestPaginate_RateLimitZeroRetryAfterStillWaits(t *testing.T) {
+	calls := 0
+	start := time.Now()
+	items, err := Paginate(context.Background(), testEndpoint, 0, func(cursor string) ([]string, string, error) {
+		calls++
+		if calls == 1 {
+			return nil, "", &slack.RateLimitedError{RetryAfter: 0}
+		}
+		return []string{"a"}, "", nil
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Errorf("got %d items, want 1", len(items))
+	}
+	if calls != 2 {
+		t.Errorf("got %d calls, want 2", calls)
+	}
+	// The floor is one second; allow generous slack for a loaded machine while
+	// still failing loudly if the wait was skipped entirely.
+	if elapsed < 500*time.Millisecond {
+		t.Errorf("retried after %v, want at least the 1s floor applied to Retry-After: 0", elapsed)
 	}
 }
 
@@ -167,6 +206,47 @@ func TestPaginate_RateLimitExhausted(t *testing.T) {
 	}
 	if rlErr.Attempts != maxAttempts {
 		t.Errorf("got attempts=%d, want %d", rlErr.Attempts, maxAttempts)
+	}
+}
+
+// FetchPage checks the context before spending a request. Every streaming list
+// command routes through it, so this is what makes --timeout stop a walk
+// promptly instead of at the next page boundary.
+func TestFetchPage_ContextCancelledBeforeFetch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	calls := 0
+	_, _, err := FetchPage(ctx, testEndpoint, "", func(cursor string) ([]string, string, error) {
+		calls++
+		return []string{"a"}, "", nil
+	})
+	if err == nil {
+		t.Fatal("expected an error from the cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("got %v, want context.Canceled", err)
+	}
+	if calls != 0 {
+		t.Errorf("fetch ran %d times, want 0 (the context was already done)", calls)
+	}
+}
+
+func TestFetchPage_ReturnsPageAndCursor(t *testing.T) {
+	items, next, err := FetchPage(context.Background(), testEndpoint, "page2", func(cursor string) ([]string, string, error) {
+		if cursor != "page2" {
+			t.Errorf("got cursor %q, want page2", cursor)
+		}
+		return []string{"a", "b"}, "page3", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Errorf("got %d items, want 2", len(items))
+	}
+	if next != "page3" {
+		t.Errorf("got next cursor %q, want page3", next)
 	}
 }
 
