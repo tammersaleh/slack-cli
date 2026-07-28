@@ -76,6 +76,11 @@ $ slack channel list --limit=2 --fields=id,name,is_private
 
 Nested objects are returned whole when their parent field is selected (`--fields=topic` returns the full topic object). No dot-notation for nested field access - use `jq` for that.
 
+Three fields survive filtering regardless of what was asked for: `input`, and
+the row-level error markers `error` and `enrich_error`. A marker is a row's only
+signal that its data is incomplete, so filtering one away would produce a row
+that looks whole - and the nonzero exit code cannot say which row was affected.
+
 ### Errors
 
 Errors that prevent command execution entirely (auth failure, network error) go to stderr as JSON:
@@ -1233,7 +1238,7 @@ slack saved list [flags]
   --limit              Max items to return (default: 20, max: 100)
   --cursor             Continue from previous page
   --all                Fetch all pages
-  --enrich             Fetch message text and channel names for each item
+  --enrich             Fetch message text and sender for each item
   --include-completed  Include completed items
 ```
 
@@ -1244,7 +1249,7 @@ $ slack saved list --limit=2
 {"_meta":{"has_more":true,"next_cursor":"c2F2ZWQ"}}
 ```
 
-With `--enrich`, each item includes `channel_name`, `text`, and `from_user`:
+With `--enrich`, each item adds `text` and `from_user`:
 
 ```
 $ slack saved list --limit=1 --enrich
@@ -1252,9 +1257,55 @@ $ slack saved list --limit=1 --enrich
 {"_meta":{"has_more":true,"next_cursor":"c2F2ZWQ"}}
 ```
 
-Enrichment fetches `conversations.history` (for message text) and
-`conversations.info` (for channel name) concurrently with a semaphore
-(max 10 concurrent requests). Rate limit retries apply.
+`channel_name` is not part of `--enrich`. It comes from the standard output
+enrichment described under "Output enrichment", with or without the flag, and is
+best-effort: eligible named-channel rows get it, DMs never do, and an unresolved
+channel omits it.
+
+Enrichment looks up each item's message with `conversations.history`, bounded to
+10 items in flight. `conversations.history` never returns thread replies, so an
+item the window does not contain falls back to `chat.getPermalink` plus
+`conversations.replies` - the same path `message get` uses. A saved reply
+therefore costs two extra requests.
+
+Nothing retries an individual lookup. A rate-limited lookup fails the page,
+which means `api.FetchPage` retries the whole fetch with `Retry-After` backoff -
+so rate-limited enrichment is retried, but at page granularity: `saved.list` and
+every already-successful lookup on that page are redone, and the resulting
+`rate_limited` error names `saved.list` rather than the method that was actually
+limited. The concurrency bound limits in-flight work, not request rate.
+
+The message lookups use the workspace (`T`-prefix) token while `saved.list` uses
+the session (`E`-prefix org) token, because `chat.getPermalink` returns
+`enterprise_is_restricted` on the org context. So on Enterprise Grid `--enrich`
+needs both credentials stored; a bare `saved list` needs only the session one and
+resolves channel names through it, as before.
+
+Two consequences on Grid. `SLACK_TOKEN` takes precedence over stored credentials
+for every client, so setting it collapses both onto one token and reinstates
+whichever restriction that context carries - leave it unset and select with
+`SLACK_WORKSPACE` plus `SLACK_WORKSPACE_ORG`. And the workspace credential needs
+the `:history` scopes (see README); a desktop session token has them already.
+
+An item whose message cannot be looked up keeps its row and gains an
+`enrich_error` code, so an unenriched row is never silently indistinguishable
+from a message with no text:
+
+```
+$ slack saved list --enrich
+{"channel_id":"C01ABC","channel_name":"general","message_ts":"1709251200.000100","saved_at":"2024-03-01T00:00:00Z","todo_state":"uncompleted","enrich_error":"not_in_channel","permalink":"https://acme.slack.com/archives/C01ABC/p1709251200000100"}
+{"_meta":{"has_more":false}}
+```
+
+`enrich_error` values: `message_not_found`, `thread_not_found`,
+`not_in_channel`, `channel_not_found`. A run containing any of them exits 1
+after writing every row and the trailer, and writes nothing to stderr.
+
+Any other lookup failure - auth, `missing_scope`, a rate limit, a network
+error, or a code not listed above - is treated as a whole-run problem instead.
+The page that hit it emits no rows, the error goes to stderr, and `_meta`
+carries the code. Note a successfully fetched message with empty `text` is a
+success, not an error: bot and block-only messages legitimately have none.
 
 Errors:
 

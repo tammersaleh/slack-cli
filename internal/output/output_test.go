@@ -447,3 +447,47 @@ func TestFieldFiltering_PreservesEnrichFunc(t *testing.T) {
 		t.Error("'text' should be filtered out")
 	}
 }
+
+// TestFilterFields_AlwaysKeptFields pins the projection rule that --fields
+// cannot override. It lives here rather than in a command's suite because the
+// rule is package-wide: a command-specific test would stay green if an entry
+// were dropped from alwaysKeptFields, which is exactly how the contract would
+// rot. Each marker is checked on its own for that reason.
+func TestFilterFields_AlwaysKeptFields(t *testing.T) {
+	row := map[string]any{
+		"input":        "#general",
+		"error":        "channel_not_found",
+		"enrich_error": "not_in_channel",
+		"name":         "general",
+		"is_private":   false,
+	}
+
+	got := filterFields(row, []string{"name"})
+
+	for _, key := range []string{"input", "error", "enrich_error", "name"} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("%q was filtered out; a row-level marker is its only signal "+
+				"that the data is incomplete", key)
+		}
+	}
+	// Everything not asked for and not a marker still goes.
+	if _, ok := got["is_private"]; ok {
+		t.Error("is_private survived --fields=name")
+	}
+}
+
+// TestFilterFields_DoesNotSynthesizeMarkers guards the other direction: a row
+// with no error must not gain an empty marker key just because the field is
+// preserved when present.
+func TestFilterFields_DoesNotSynthesizeMarkers(t *testing.T) {
+	got := filterFields(map[string]any{"name": "general", "id": "C01ABC"}, []string{"id"})
+
+	for _, key := range []string{"input", "error", "enrich_error"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("filterFields invented a %q key on a row that had none", key)
+		}
+	}
+	if len(got) != 1 {
+		t.Errorf("expected only id, got %v", got)
+	}
+}

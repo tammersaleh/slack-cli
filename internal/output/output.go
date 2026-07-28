@@ -132,19 +132,33 @@ func (p *Printer) PrintError(e *Error) error {
 	return json.NewEncoder(p.Err).Encode(e)
 }
 
+// alwaysKeptFields survive --fields no matter what the caller asked for.
+//
+// "input" is a spec requirement for info commands. The error markers are here
+// because they are a row's only signal that its data is incomplete: filtering
+// one away leaves a row that looks whole, which is the failure mode --fields
+// should never be able to manufacture. The command still exits nonzero, but the
+// exit code cannot say which row was affected.
+var alwaysKeptFields = map[string]bool{
+	"input":        true,
+	"error":        true,
+	"enrich_error": true,
+}
+
 // filterFields returns a copy of m containing only the specified fields.
-// If fields is empty, returns m unchanged. The "input" field is always preserved
-// (spec requirement for info commands).
+// If fields is empty, returns m unchanged. alwaysKeptFields survive regardless.
 func filterFields(m map[string]any, fields []string) map[string]any {
 	if len(fields) == 0 {
 		return m
 	}
 
-	allowed := make(map[string]bool, len(fields)+1)
+	allowed := make(map[string]bool, len(fields)+len(alwaysKeptFields))
 	for _, f := range fields {
 		allowed[strings.TrimSpace(f)] = true
 	}
-	allowed["input"] = true
+	for f := range alwaysKeptFields {
+		allowed[f] = true
+	}
 
 	filtered := make(map[string]any, len(allowed))
 	for k, v := range m {
