@@ -152,12 +152,19 @@ func pageCursorFetch[T any](fetch func(page int) ([]T, *slack.Paging, error)) ap
 // An error a fetch closure raised itself is already an *output.Error - a
 // thread that doesn't exist, a response that wouldn't parse. Those describe
 // the request rather than a page that failed to arrive, so they pass through
-// with their detail and hint intact and are not resumable. Everything else is
-// a transport or API failure: it goes through ClassifyError, picking up the
-// auth hint for this session, and the same cursor is worth retrying.
+// with their detail and hint intact and are not resumable.
+//
+// Everything else goes through ClassifyError, picking up the auth hint for this
+// session. Those are resumable by default, because the cursor still names a
+// real page and retrying it - after a wait, or after the caller repairs
+// credentials or permissions - can work. The exception is a failure that voids
+// the continuation itself: a cursor Slack rejected, a malformed request, a
+// method that no longer exists. api.IsNonResumablePageError names those, and it
+// is asked about the original error rather than the classified one, because
+// resumability is its own policy and must not be inferred from the exit code.
 func streamError(cli *CLI, err error) (oErr *output.Error, resumable bool) {
 	if errors.As(err, &oErr) {
 		return oErr, false
 	}
-	return cli.ClassifyError(err), true
+	return cli.ClassifyError(err), !api.IsNonResumablePageError(err)
 }

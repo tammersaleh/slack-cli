@@ -383,8 +383,186 @@ func TestTruncation_QuietSuppressesTrailer(t *testing.T) {
 	}
 }
 
-// A thread that doesn't exist is a verdict on the request, not a page that
-// went missing: the trailer says the stream is over with nothing to resume.
+// failAfterFirstPageWith serves one good page, then fails every later page
+// with the given Slack error string.
+func failAfterFirstPageWith(slackErr, itemsKey string, items any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("cursor") == "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":                true,
+				itemsKey:            items,
+				"response_metadata": map[string]string{"next_cursor": "page2cursor"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": slackErr})
+	}
+}
+
+// A cursor Slack rejects cannot be the cursor to resume from. Handing it back
+// with has_more:true means "this page never arrived, resume here", so a
+// consumer following the documented contract retries a token that can never
+// work - forever, if it loops.
+func TestChannelList_RejectedCursorTrailerIsTerminal(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_cursor"})
+	})
+
+	r := runWithMockFull(t, mux, "channel", "list", "--cursor", "staleCursor")
+	if r.err == nil {
+		t.Fatal("expected invalid_cursor to fail the command")
+	}
+
+	meta := metaTrailer(t, r.stdout)
+	if meta["error"] != "invalid_cursor" {
+		t.Errorf("expected _meta.error='invalid_cursor', got %v", meta["error"])
+	}
+	if meta["has_more"] != false {
+		t.Errorf("expected has_more=false on a rejected cursor, got %v", meta["has_more"])
+	}
+	if _, ok := meta["next_cursor"]; ok {
+		t.Errorf("expected no next_cursor - Slack just rejected it - got %v", meta["next_cursor"])
+	}
+
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected an *output.Error, got %#v", r.err)
+	}
+	if oErr.Code != output.ExitGeneral {
+		t.Errorf("expected exit code %d, got %d", output.ExitGeneral, oErr.Code)
+	}
+	if !strings.Contains(oErr.Hint, "--cursor") {
+		t.Errorf("expected a hint telling the caller to drop --cursor, got %q", oErr.Hint)
+	}
+}
+
+// The same verdict reached mid-stream: rows already written stay, but the
+// trailer must not name the rejected cursor as the resume point.
+func TestChannelList_RejectedCursorMidStreamIsTerminal(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", failAfterFirstPageWith("invalid_cursor", "channels", onePageOfChannels()))
+
+	r := runWithMockFull(t, mux, "channel", "list", "--all")
+	if r.err == nil {
+		t.Fatal("expected the page-2 rejection to be reported")
+	}
+
+	lines := nonEmptyLines(r.stdout)
+	if len(lines) != 2 {
+		t.Fatalf("expected the page-1 channel plus a trailer, got %d lines:\n%s", len(lines), r.stdout)
+	}
+	if id := parseJSON(t, lines[0])["id"]; id != "C01" {
+		t.Errorf("expected the fetched page to stay on stdout, got %v", id)
+	}
+
+	meta := metaTrailer(t, r.stdout)
+	if meta["error"] != "invalid_cursor" {
+		t.Errorf("expected _meta.error='invalid_cursor', got %v", meta["error"])
+	}
+	if meta["has_more"] != false {
+		t.Errorf("expected has_more=false on a rejected cursor, got %v", meta["has_more"])
+	}
+	if _, ok := meta["next_cursor"]; ok {
+		t.Errorf("expected no next_cursor, got %v", meta["next_cursor"])
+	}
+}
+
+// --quiet suppresses the terminal trailer too, same as every other outcome.
+func TestChannelList_RejectedCursorQuietSuppressesTrailer(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_cursor"})
+	})
+
+	r := runWithMockFull(t, mux, "--quiet", "channel", "list", "--cursor", "staleCursor")
+	if strings.TrimSpace(r.stdout) != "" {
+		t.Errorf("expected no stdout under --quiet, got %q", r.stdout)
+	}
+	if r.err == nil {
+		t.Error("expected the command to still fail")
+	}
+}
+
+// The other half of the contract. An auth failure or a missing scope is a well
+// formed request against a still-valid cursor: the caller re-authenticates or
+// gets the scope, then resumes. Marking those terminal would throw away a
+// usable checkpoint, so they must keep has_more:true and the failed cursor.
+func TestChannelList_RecoverableFailuresKeepResumeCursor(t *testing.T) {
+	tests := []struct {
+		slackErr string
+		wantCode int
+	}{
+		{"token_revoked", output.ExitAuth},
+		{"missing_scope", output.ExitGeneral},
+		{"team_is_restricted", output.ExitGeneral},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.slackErr, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/users.conversations", failAfterFirstPageWith(tt.slackErr, "channels", onePageOfChannels()))
+
+			r := runWithMockFull(t, mux, "channel", "list", "--all")
+			if r.err == nil {
+				t.Fatalf("expected %s to be reported", tt.slackErr)
+			}
+
+			meta := metaTrailer(t, r.stdout)
+			if meta["error"] != tt.slackErr {
+				t.Errorf("expected _meta.error=%q, got %v", tt.slackErr, meta["error"])
+			}
+			if meta["has_more"] != true {
+				t.Errorf("expected has_more=true - the page is still fetchable once fixed - got %v", meta["has_more"])
+			}
+			if meta["next_cursor"] != "page2cursor" {
+				t.Errorf("expected the failed page as the resume cursor, got %v", meta["next_cursor"])
+			}
+
+			var oErr *output.Error
+			if !errors.As(r.err, &oErr) {
+				t.Fatalf("expected an *output.Error, got %#v", r.err)
+			}
+			if oErr.Code != tt.wantCode {
+				t.Errorf("expected exit code %d, got %d", tt.wantCode, oErr.Code)
+			}
+		})
+	}
+}
+
+// Slack has its own way of saying the thread isn't there: conversations.replies
+// answers ok:false with thread_not_found rather than an empty success payload
+// (verified live 2026-07-27 against a bogus ts in a real channel). That reaches
+// streamError as a raw Slack error, not as the closure-built *output.Error the
+// sibling test covers, and it must be just as terminal - SPEC names
+// thread_not_found as the canonical has_more:false outcome.
+func TestThreadList_SlackRaisedNotFoundTrailerIsTerminal(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "thread_not_found"})
+	})
+
+	r := runWithMockFull(t, mux, "thread", "list", "C01ABC", "1709251200.000100")
+	if r.err == nil {
+		t.Fatal("expected thread_not_found to be fatal")
+	}
+
+	meta := metaTrailer(t, r.stdout)
+	if meta["error"] != "thread_not_found" {
+		t.Errorf("expected _meta.error='thread_not_found', got %v", meta["error"])
+	}
+	if meta["has_more"] != false {
+		t.Errorf("expected has_more=false on a terminal outcome, got %v", meta["has_more"])
+	}
+	if _, ok := meta["next_cursor"]; ok {
+		t.Errorf("expected no resume cursor, got %v", meta["next_cursor"])
+	}
+}
+
+// The other half: the CLI synthesizes thread_not_found itself when Slack
+// answers ok:true with no messages. That path builds an *output.Error in the
+// fetch closure, so it is terminal for a different reason than the test above.
 func TestThreadList_NotFoundTrailerIsTerminal(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.replies", func(w http.ResponseWriter, r *http.Request) {

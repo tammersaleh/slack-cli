@@ -324,6 +324,26 @@ When `_meta.error` is present:
 - `has_more:false` means the outcome is terminal and there is nothing to resume
   (`thread_not_found`, for example).
 
+A retained `next_cursor` is a checkpoint, not permission to retry immediately or
+indefinitely. Read `_meta.error` first: `rate_limited` needs a wait, an auth
+error (exit code 2) needs credentials repaired, `missing_scope` needs a scope
+granted. Bound your retries either way - no error code makes an unchanged retry
+loop safe.
+
+A failure that voids the request itself is reported as terminal, so it can never
+be mistaken for a resume point. A cursor Slack rejected is the case that matters
+most:
+
+```
+$ slack channel list --cursor=dGVhbTpD
+{"_meta":{"has_more":false,"error":"invalid_cursor"}}
+```
+
+Malformed arguments (`invalid_arguments`, `invalid_limit`, `invalid_query`,
+`invalid_ts_oldest`), a timestamp matching no message (`thread_not_found`), and
+a method that no longer exists (`unknown_method`) are terminal for the same
+reason. Everything else keeps its resume cursor.
+
 The cursor is a page-boundary retry point, not a transactional checkpoint.
 Slack cursors can expire, and page-number result sets shift between runs, so a
 resumed run can duplicate or miss items if the underlying data changed. Work

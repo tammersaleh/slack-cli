@@ -53,6 +53,18 @@ func UserNotFound(input string) *Error {
 	}
 }
 
+// InvalidCursor is returned when Slack rejects the token passed to --cursor.
+// The hint sends the caller back to the start rather than into a retry loop:
+// the cursor is void, so there is nothing to resume from.
+func InvalidCursor() *Error {
+	return &Error{
+		Err:    "invalid_cursor",
+		Detail: "Slack rejected the cursor passed to --cursor",
+		Hint:   "Rerun the command without --cursor. A cursor expires, and it is only valid for the same command, flags, workspace, and CLI version that produced it - Slack mints it against one endpoint and one set of server-side filters.",
+		Code:   ExitGeneral,
+	}
+}
+
 // InvalidURL is returned when input was an http(s) URL but not a usable Slack
 // reference of the kind the command needs (malformed, wrong host, or a URL of
 // the wrong kind - e.g. a file link where a user is expected). detail comes
