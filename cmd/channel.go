@@ -18,7 +18,7 @@ type ChannelCmd struct {
 }
 
 type ChannelListCmd struct {
-	Limit            int    `help:"Page size." default:"100"`
+	Limit            int    `help:"Page size (max 200). Under --include-non-member Slack drops archived channels after picking the page, so a page comes back around a quarter this size - pass 200 for bulk work." default:"100"`
 	Cursor           string `help:"Continue from previous page."`
 	All              bool   `help:"Fetch all pages."`
 	Type             string `help:"Channel type: public, private, mpim, im, all." default:"all" enum:"public,private,mpim,im,all"`

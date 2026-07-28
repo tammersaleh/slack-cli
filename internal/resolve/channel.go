@@ -59,11 +59,14 @@ func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, er
 	}
 	r.mu.RUnlock()
 
-	// 2. File cache.
+	// 2. File cache. Its snapshot is complete but up to a day old, so it
+	// extends the in-memory maps rather than replacing them - a replace would
+	// evict anything a member scan resolved earlier in this process, including
+	// channels created or joined since the snapshot was taken.
 	if fc, err := r.loadFileCache(); err == nil && fc != nil {
 		if id, ok := fc.Channels[name]; ok {
 			r.mu.Lock()
-			r.setChannelMaps(fc.Channels)
+			r.addChannelsToCache(fc.Channels)
 			r.mu.Unlock()
 			return id, nil
 		}
@@ -136,9 +139,29 @@ func (r *Resolver) markChannelFailed(id string) {
 	r.mu.Unlock()
 }
 
-// resolveByPagination fetches channels page-by-page, stopping as soon as the
-// target name is found. If all pages are exhausted, the complete map is written
-// to the file cache.
+// resolveChannelTypes are the channel kinds a name can refer to. DMs have no
+// name to resolve and group DMs only a generated one, so both list walks ask
+// for the same two kinds.
+var resolveChannelTypes = []string{"public_channel", "private_channel"}
+
+// resolveByPagination resolves a name from the API, trying the user's own
+// conversations before the whole workspace.
+//
+// The member-scoped scan reads users.conversations: Tier 3, and only the
+// conversations the authed user is in. The fallback reads conversations.list:
+// Tier 2, and every channel in the workspace. Measured cold on a large
+// Enterprise Grid org, resolving a name the user is a member of took 75 and 95
+// conversations.list requests for two probes (76s and 259s including
+// rate-limit waits) against 3 users.conversations requests each, and 6-7 to
+// exhaust the whole member list. Most names callers pass are channels they are
+// in, and a hit never touches the org walk.
+//
+// A member scan that misses or fails costs those 6-7 requests before the
+// unchanged org walk. Failure is not a verdict on the name - Enterprise Grid
+// returns enterprise_is_restricted for an org-level token, an older OAuth token
+// can lack a scope - so any error falls through rather than aborting. A dead
+// context needs no special case: the org walk checks ctx before its first
+// request and returns the same error.
 func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -150,42 +173,90 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 		}
 	}
 
-	channels := make(map[string]string)
-	var found string
 	bot := r.client.Bot()
 
-	err := api.PaginateEach(ctx, "conversations.list", func(cursor string) ([]slack.Channel, string, error) {
-		return bot.GetConversationsContext(ctx, &slack.GetConversationsParameters{
-			Types:           []string{"public_channel", "private_channel"},
+	found, seen, err := scanForName(ctx, "users.conversations", name, func(cursor string) ([]slack.Channel, string, error) {
+		// An empty UserID means the authenticated user.
+		return bot.GetConversationsForUserContext(ctx, &slack.GetConversationsForUserParameters{
+			Types:           resolveChannelTypes,
 			Limit:           200,
 			ExcludeArchived: true,
 			Cursor:          cursor,
 		})
-	}, func(items []slack.Channel) bool {
-		for _, ch := range items {
-			if _, exists := channels[ch.Name]; !exists {
-				channels[ch.Name] = ch.ID
-			}
-			if ch.Name == name {
-				found = ch.ID
-			}
-		}
-		return found != ""
+	})
+	if found != "" {
+		// Memory only. The file cache is the complete conversations.list
+		// snapshot; a member-scoped view must never be persisted as one.
+		r.addChannelsToCache(seen)
+		return found, nil
+	}
+	if err != nil {
+		api.TracerFrom(ctx).Event("fallback", map[string]any{
+			"from":   "users.conversations",
+			"to":     "conversations.list",
+			"reason": err.Error(),
+		})
+	}
+
+	found, channels, err := scanForName(ctx, "conversations.list", name, func(cursor string) ([]slack.Channel, string, error) {
+		return bot.GetConversationsContext(ctx, &slack.GetConversationsParameters{
+			Types:           resolveChannelTypes,
+			Limit:           200,
+			ExcludeArchived: true,
+			Cursor:          cursor,
+		})
 	})
 	if err != nil {
 		return "", err
 	}
 
-	// Update in-memory cache with whatever we fetched.
-	r.setChannelMaps(channels)
-
-	// Write file cache only on full pagination (found=="" means we exhausted all pages).
+	// found=="" means the walk exhausted every page, so this map is the
+	// complete snapshot: it replaces the cache and gets written to disk.
 	if found == "" {
+		r.setChannelMaps(channels)
 		r.saveFileCache(channels)
 		return "", fmt.Errorf("channel %q not found", name)
 	}
 
+	// An early exit saw only the pages up to the match. Extend the cache with
+	// them rather than replacing it, or a hit here would evict names an
+	// earlier member scan in this process already resolved.
+	r.addChannelsToCache(channels)
 	return found, nil
+}
+
+// scanForName walks one list endpoint page by page, stopping at the first page
+// that contains name. It returns the matched ID - empty when every page was
+// fetched without a match - and a name->ID map of every row it saw.
+//
+// First match wins on a duplicate name, for the returned ID and the map alike:
+// returning the last match while caching the first made a repeat lookup of the
+// same name answer differently than the lookup that populated the cache.
+func scanForName(ctx context.Context, endpoint, name string, fetch api.PageFunc[slack.Channel]) (string, map[string]string, error) {
+	seen := make(map[string]string)
+	var found string
+
+	err := api.PaginateEach(ctx, endpoint, fetch, func(items []slack.Channel) bool {
+		for _, ch := range items {
+			if _, exists := seen[ch.Name]; !exists {
+				seen[ch.Name] = ch.ID
+			}
+			if found == "" && ch.Name == name {
+				found = ch.ID
+			}
+		}
+		return found != ""
+	})
+	return found, seen, err
+}
+
+// addChannelsToCache inserts every entry into the in-memory maps without
+// replacing what is already there, so a partial view can extend the cache but
+// never shrink it. Must be called with r.mu held.
+func (r *Resolver) addChannelsToCache(channels map[string]string) {
+	for name, id := range channels {
+		r.addChannelToCache(id, name)
+	}
 }
 
 // setChannelMaps populates forward and reverse channel maps.

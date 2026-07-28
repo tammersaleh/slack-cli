@@ -176,7 +176,9 @@ with `--type`.
 `--include-non-member` reads the whole workspace and is much slower - hundreds
 of rate-limited requests and minutes of wall clock on a large org, against a few
 seconds for the default. Use it only when the channel you want is one you
-haven't joined.
+haven't joined. Pass `--limit 200` with it: Slack drops archived channels after
+picking the page, so a page comes back around a quarter the size you asked for,
+and the default 100 doubles the number of requests.
 
 Two fields behave differently on the default path: `is_member` is always `true`
 (that's what makes a conversation yours) except on `im` rows, where Slack reports

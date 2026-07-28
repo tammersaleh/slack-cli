@@ -347,6 +347,15 @@ func assertTimeoutError(t *testing.T, err error) {
 func TestTrace_EmitsPageEvents(t *testing.T) {
 	calls := 0
 	mux := http.NewServeMux()
+	// Name resolution scans the user's own conversations first; an empty page
+	// hands it off to the org-wide walk this test is about.
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -376,13 +385,19 @@ func TestTrace_EmitsPageEvents(t *testing.T) {
 		t.Fatalf("expected trace events on stderr, got none")
 	}
 
-	// First line should be a page event for conversations.list (name resolution).
-	evt := parseJSON(t, lines[0])
-	if evt["kind"] != "page" {
-		t.Errorf("expected first event kind='page', got %q", evt["kind"])
+	// Name resolution emits a page event per request, in the order the
+	// resolver tries the two endpoints.
+	if len(lines) < 2 {
+		t.Fatalf("expected a page event per endpoint, got %d: %q", len(lines), lines)
 	}
-	if evt["endpoint"] != "conversations.list" {
-		t.Errorf("expected endpoint='conversations.list', got %q", evt["endpoint"])
+	for i, want := range []string{"users.conversations", "conversations.list"} {
+		evt := parseJSON(t, lines[i])
+		if evt["kind"] != "page" {
+			t.Errorf("event %d: expected kind='page', got %q", i, evt["kind"])
+		}
+		if evt["endpoint"] != want {
+			t.Errorf("event %d: expected endpoint=%q, got %q", i, want, evt["endpoint"])
+		}
 	}
 
 	// Trace output must stay on stderr; stdout must carry only the JSONL
