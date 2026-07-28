@@ -75,7 +75,7 @@ export SLACK_CLIENT_SECRET="your-client-secret"
 slack auth login
 ```
 
-This opens your browser for the OAuth flow. Once approved, tokens are stored in `~/.config/slack-cli/credentials.json`.
+This opens your browser for the OAuth flow. Once approved, tokens are stored in `slack-cli/credentials.json` inside your user config directory - `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` on Linux.
 
 ### Verify
 

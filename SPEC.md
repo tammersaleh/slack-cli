@@ -157,7 +157,7 @@ only paginated helpers and internal-API calls are instrumented.
 - **User tokens** (`xoxp-`): Required for `search`. Tied to a user.
 - **Session tokens** (`xoxc-`): Extracted from Slack Desktop app. Require a `d` cookie on every API request. Function as user tokens.
 
-Tokens stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. Each entry includes an `auth_method` field (`"oauth"` or `"desktop"`) used for context-specific error hints. `--workspace` selects the workspace when multiple exist. If only one workspace exists, it's used automatically.
+Tokens stored in `slack-cli/credentials.json` inside the user config directory (see Caching for how that resolves per platform), keyed by workspace `TeamID`. Each entry includes an `auth_method` field (`"oauth"` or `"desktop"`) used for context-specific error hints. `--workspace` selects the workspace when multiple exist. If only one workspace exists, it's used automatically.
 
 ### OAuth
 
@@ -1574,8 +1574,10 @@ Slack API: `drafts.delete`
 
 ## Caching
 
-Channel and user resolution caches are stored under
-`~/.config/slack-cli/cache/`:
+Channel and user resolution caches are stored under `slack-cli/cache/` inside the
+user config directory (`os.UserConfigDir`), which is
+`~/Library/Application Support` on macOS and `$XDG_CONFIG_HOME` or `~/.config` on
+Linux. `slack cache info` prints the resolved paths:
 
 - `channels-{teamID}.json` - channel name-to-ID mappings (24h TTL)
 - `users-{teamID}.json` - user ID-to-profile mappings (24h TTL)
@@ -1603,7 +1605,7 @@ Environment variables:
 - `SLACK_USER_TOKEN` - user token override (bypasses stored credentials)
 - `SLACK_COOKIE` - `d` cookie for `xoxc-` token authentication
 
-Credentials are stored in `~/.config/slack-cli/credentials.json`, keyed by workspace `TeamID`. Managed by `slack auth login` / `slack auth logout`.
+Credentials are stored in `slack-cli/credentials.json` inside the user config directory (see Caching above for how that resolves per platform), keyed by workspace `TeamID`. Managed by `slack auth login` / `slack auth logout`.
 
 ## Phasing
 
