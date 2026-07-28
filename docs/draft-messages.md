@@ -126,7 +126,6 @@ auto-replace path applies.
   "date_created": 1776538579,
   "date_scheduled": 0,
   "last_updated_ts": "1776538579.203325",
-  "client_last_updated_ts": "1776538579.2033250",
   "last_updated_client": "Slack SSB Mac (Atom)",
   "blocks": [...],
   "file_ids": [],
@@ -136,6 +135,13 @@ auto-replace path applies.
   "destinations": [{"channel_id": "D09...", "user_ids": ["U..."]}]
 }
 ```
+
+The response carries no `client_last_updated_ts`. That is a *request* parameter,
+which update and delete send as `padDraftTS(last_updated_ts)`. An earlier version
+of this example listed it here, next to the response's own `last_updated_ts` and
+`last_updated_client`, which is how it got mistaken for a response field and
+picked up a matching struct tag. Verified against a real `drafts.list` payload
+2026-07-28.
 
 Slack reflects DM destinations back with both `channel_id` and
 `user_ids`. When you update or delete, strip `user_ids` from

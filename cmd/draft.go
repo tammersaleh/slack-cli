@@ -43,22 +43,26 @@ type DraftListCmd struct {
 }
 
 // draftData is the parsed draft object from Slack responses.
+//
+// Note there is no client_last_updated_ts field: that is a *request* parameter,
+// which update and delete send derived from LastUpdatedTS via padDraftTS. The
+// response carries last_updated_ts (and last_updated_client), verified against a
+// real drafts.list payload.
 type draftData struct {
-	ID                  string          `json:"id"`
-	ClientMsgID         string          `json:"client_msg_id"`
-	UserID              string          `json:"user_id"`
-	TeamID              string          `json:"team_id"`
-	DateCreated         int64           `json:"date_created"`
-	DateScheduled       int64           `json:"date_scheduled"`
-	LastUpdatedTS       string          `json:"last_updated_ts"`
-	ClientLastUpdatedTS string          `json:"client_last_updated_ts"`
-	Blocks              json.RawMessage `json:"blocks"`
-	Attachments         json.RawMessage `json:"attachments,omitempty"`
-	FileIDs             []string        `json:"file_ids"`
-	IsFromComposer      bool            `json:"is_from_composer"`
-	IsDeleted           bool            `json:"is_deleted"`
-	IsSent              bool            `json:"is_sent"`
-	Destinations        []destination   `json:"destinations"`
+	ID             string          `json:"id"`
+	ClientMsgID    string          `json:"client_msg_id"`
+	UserID         string          `json:"user_id"`
+	TeamID         string          `json:"team_id"`
+	DateCreated    int64           `json:"date_created"`
+	DateScheduled  int64           `json:"date_scheduled"`
+	LastUpdatedTS  string          `json:"last_updated_ts"`
+	Blocks         json.RawMessage `json:"blocks"`
+	Attachments    json.RawMessage `json:"attachments,omitempty"`
+	FileIDs        []string        `json:"file_ids"`
+	IsFromComposer bool            `json:"is_from_composer"`
+	IsDeleted      bool            `json:"is_deleted"`
+	IsSent         bool            `json:"is_sent"`
+	Destinations   []destination   `json:"destinations"`
 }
 
 type destination struct {
