@@ -58,6 +58,21 @@ func TestParse_Valid(t *testing.T) {
 			in:   "https://acme.slack.com/files/U0123ABCD/F0456WXYZ/report.pdf",
 			want: Ref{Kind: KindFile, FileID: "F0456WXYZ", UserID: "U0123ABCD"},
 		},
+		{
+			// Three segments is the minimal valid files URL: the trailing
+			// filename is optional, so /files/<uploader>/<file> must parse.
+			name: "file without trailing filename",
+			in:   "https://acme.slack.com/files/U0123ABCD/F0456WXYZ",
+			want: Ref{Kind: KindFile, FileID: "F0456WXYZ", UserID: "U0123ABCD"},
+		},
+		{
+			// url.Parse percent-decodes the path before splitPath sees it, so a
+			// copied profile URL carrying the @ as %40 still resolves: the
+			// segment reads as "@W…" and TrimPrefix strips it.
+			name: "user enterprise profile with percent-encoded at sign",
+			in:   "https://acme.slack.com/user/%40W0123ABCD",
+			want: Ref{Kind: KindUser, UserID: "W0123ABCD"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

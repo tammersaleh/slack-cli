@@ -206,15 +206,15 @@ func tsFromPSegment(seg string) (string, error) {
 	return digits[:len(digits)-6] + "." + digits[len(digits)-6:], nil
 }
 
-// splitPath returns the non-empty, unescaped path segments.
+// splitPath returns the non-empty path segments. Callers pass url.URL.Path,
+// which url.Parse has already percent-decoded (and it rejects invalid escapes
+// outright), so no unescaping happens here - a second PathUnescape pass would
+// wrongly decode a segment that legitimately contains a percent sequence.
 func splitPath(p string) []string {
 	var out []string
 	for seg := range strings.SplitSeq(p, "/") {
 		if seg == "" {
 			continue
-		}
-		if unescaped, err := url.PathUnescape(seg); err == nil {
-			seg = unescaped
 		}
 		out = append(out, seg)
 	}
