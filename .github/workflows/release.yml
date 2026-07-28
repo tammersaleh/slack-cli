@@ -28,13 +28,21 @@ jobs:
       # RELEASE_PAT (user-attributed), not GITHUB_TOKEN - otherwise the
       # resulting merge commit won't trigger this workflow again to run
       # goreleaser.
+      # The PR number comes through the environment, not string interpolation.
+      # Inlining ${{ steps.release.outputs.pr }} into the script put the PR body
+      # - which quotes commit subjects verbatim - inside single quotes, so one
+      # apostrophe in a commit subject ("can't") ended the quoted string and the
+      # step died with a bash syntax error. Releases then stalled silently: CI
+      # was green, the release PR just never got auto-merge enabled.
       - name: Enable auto-merge on release PR
         if: ${{ steps.release.outputs.pr }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+          REPO: ${{ github.repository }}
         run: |
-          pr_number=$(echo '${{ steps.release.outputs.pr }}' | jq -r '.number')
-          gh pr merge --auto --squash "$pr_number" --repo ${{ github.repository }}
+          pr_number=$(jq -r '.number' <<<"$RELEASE_PR")
+          gh pr merge --auto --squash "$pr_number" --repo "$REPO"
 
   goreleaser:
     needs: release-please
