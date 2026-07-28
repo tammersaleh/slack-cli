@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.0.2](https://github.com/tammersaleh/slack-cli/compare/v4.0.1...v4.0.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* give _meta.error a stable code instead of Go error text ([da9454a](https://github.com/tammersaleh/slack-cli/commit/da9454a4f2f3ad6ac48e217a42cba232cddf9d20))
+* keep --after/--before on every page of a message walk ([19bfda3](https://github.com/tammersaleh/slack-cli/commit/19bfda34a9074af156dc654346866a842f94315b))
+* make --has-unread actually find unread conversations ([4cd56be](https://github.com/tammersaleh/slack-cli/commit/4cd56be5dd1bdc6393deee73c25a03bae1eaa258))
+* make --query search every page it can, and say when it can't ([75edd8e](https://github.com/tammersaleh/slack-cli/commit/75edd8e6f0b33911d8defdd443ee54fd06e0d017))
+* resolve a channel name from your own conversations first ([cc0ac1d](https://github.com/tammersaleh/slack-cli/commit/cc0ac1d9fc382f1bd008d56984462073bdcb3cce))
+* stop offering a rejected cursor as the page to resume from ([dc65038](https://github.com/tammersaleh/slack-cli/commit/dc650383385d0b922bb5d999babdabae63dba25f))
+
 ## [4.0.1](https://github.com/tammersaleh/slack-cli/compare/v4.0.0...v4.0.1) (2026-07-27)
 
 
