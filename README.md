@@ -43,8 +43,19 @@ Under **OAuth & Permissions**, add these **Bot Token Scopes**:
 - `groups:read`
 - `im:read`
 - `mpim:read`
+- `channels:history`
+- `groups:history`
+- `im:history`
+- `mpim:history`
 - `users:read`
+- `users.profile:read`
 - `reactions:read`
+
+The four `:history` scopes back `conversations.history` and
+`conversations.replies`, so `message list`, `message get`, `thread list`,
+`reaction list` and `saved list --enrich` all need them. `users.profile:read`
+backs `user info --full` and `user manager-chain`. If you authorized this app
+before those scopes were listed, re-run `slack auth login` to pick them up.
 
 Add this **User Token Scope** (needed for `search`):
 

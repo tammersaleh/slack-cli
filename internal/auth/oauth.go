@@ -21,7 +21,15 @@ const (
 	defaultSlackBaseURL = "https://slack.com"
 
 	// Scopes requested for the bot token.
-	botScopes = "channels:read,groups:read,im:read,mpim:read,users:read,users.profile:read,reactions:read"
+	// The history scopes back conversations.history and conversations.replies,
+	// which message list, message get, thread list, reaction list and
+	// saved list --enrich all depend on. They were missing, so an OAuth token
+	// got missing_scope from every one of those commands; a desktop session
+	// token carries them already, which is why it went unnoticed. Tokens issued
+	// before this must re-run 'slack auth login'.
+	botScopes = "channels:read,groups:read,im:read,mpim:read," +
+		"channels:history,groups:history,im:history,mpim:history," +
+		"users:read,users.profile:read,reactions:read"
 
 	// Scopes requested for the user token.
 	userScopes = "search:read"
