@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.0.0](https://github.com/tammersaleh/slack-cli/compare/v4.0.2...v5.0.0) (2026-08-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* a --enrich run whose items cannot all be looked up now exits 1 after writing every row, where it used to exit 0 with the fields missing. Rows can carry a new enrich_error field.
+
+### Bug Fixes
+
+* request the history scopes in the OAuth flow ([c9efc16](https://github.com/tammersaleh/slack-cli/commit/c9efc16933493e8db2580bfaad2f7a5c6c5d7361))
+* resolve thread replies in saved list --enrich ([67440f6](https://github.com/tammersaleh/slack-cli/commit/67440f6c4bdc4ae0f9c0c5662406f8701e2b7fdb))
+
 ## [4.0.2](https://github.com/tammersaleh/slack-cli/compare/v4.0.1...v4.0.2) (2026-07-28)
 
 
