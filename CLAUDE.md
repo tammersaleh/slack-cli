@@ -231,6 +231,21 @@ Rules:
   verbatim into the changelog.
 - Body text on feat/fix commits shows up in the expanded release notes.
   Worth keeping them tidy for the same reason.
+- **The version number is never a reason to ask.** Pick the type from
+  user-facing impact, commit it, push it. A major bump is not a bigger
+  decision than a patch, it is the same decision with a different
+  number, and `feat!:`/`fix!:` exist precisely so breaking changes ship
+  with an honest version. If the change breaks a caller, mark it
+  breaking and let release-please cut whatever that implies.
+
+Do not ask about any of this. Not "should I cut 5.0.0?", not "is
+`fix!:` right?", not "want me to downgrade this to avoid a major?".
+Pick the type, say in one line why you picked it, and push. Being
+wrong about a type is cheap and fixable; a round trip asking about it
+is not. Reasoning that a release is "outward-facing", "irreversible",
+"consequential", or "a big signal" is the exact rationalization this
+rule exists to stop - a published version is the normal, expected
+output of this repo, and none of those adjectives make it a question.
 
 ## Autonomy
 
@@ -240,6 +255,15 @@ After giving a status summary, keep working. Only escalate when:
 
 - A design decision isn't covered by `SPEC.md`.
 - Something feels wrong (scope creep, Slack API limitation, etc.).
+
+Neither exception covers releases. Commit type, version bump, pushing
+to main, and cutting a release are all part of the workflow, never
+questions - see "The version number is never a reason to ask" above.
+`AskUserQuestion` is the wrong tool for every one of them, and dressing
+the question up as "flagging a decision" or "surfacing a consequence"
+rather than asking permission is the same thing wearing a hat: if the
+turn ends with work sitting uncommitted or unpushed pending an answer,
+the rule was broken. Finish the workflow, then report what shipped.
 
 ## Project structure
 
