@@ -36,6 +36,15 @@ const (
 	replyTS       = "1709251200.000300"
 )
 
+// enrichUserNames backs the users.info fixture. The resolver's Enrich turns a
+// row's from_user into from_user_name through a single users.info call, so the
+// mock has to answer it for real - an unhandled route 404s and LookupUser
+// swallows the failure, which makes any assertion about that call vacuous.
+var enrichUserNames = map[string]string{
+	"U01XYZ": "alice",
+	"U02MGR": "bob",
+}
+
 func tsToPathSegment(ts string) string {
 	return "p" + strings.ReplaceAll(ts, ".", "")
 }
@@ -192,6 +201,20 @@ func (m *enrichMock) mux(t *testing.T, items []map[string]any, nextCursor string
 		writeJSON(w, map[string]any{
 			"ok":      true,
 			"channel": map[string]any{"id": enrichChannel, "name": "general", "is_channel": true},
+		})
+	})
+
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		id := r.FormValue("user")
+		name, ok := enrichUserNames[id]
+		if !ok {
+			slackErr(w, "user_not_found")
+			return
+		}
+		writeJSON(w, map[string]any{
+			"ok":   true,
+			"user": map[string]any{"id": id, "name": name, "profile": map[string]any{"display_name": name}},
 		})
 	})
 
@@ -932,18 +955,41 @@ func requestToken(r *http.Request) string {
 
 // TestSavedListEnrich_TokenRouting is the regression test for the bug the mocks
 // could not see: saved.list must go out on the org session token while every
-// message lookup uses the workspace token.
+// other call - the per-item message lookups AND the output resolver's name
+// lookups - uses the workspace token.
 //
-// chat.getPermalink here rejects the org token with enterprise_is_restricted,
-// exactly as the live Grid org does. A one-client implementation fails this test
-// for the same reason it failed live; the fixed one resolves the reply.
+// What this proves, exactly: for each endpoint below, every request the run made
+// carried the expected token. That covers three wrong-but-plausible
+// implementations. (1) One client for everything, the shipped bug: it fails here
+// for the same reason it failed live, because chat.getPermalink rejects the org
+// token with enterprise_is_restricted the way the live Grid org does. (2) Message
+// lookups routed correctly but cli.NewResolver handed the session client, which
+// sends the resolver's conversations.info/users.info out on the org token. (3) An
+// endpoint hit several times where only one of the calls used the wrong token -
+// recording every request rather than the last is what catches that.
+//
+// What this does NOT prove: which teamID namespace the resolver keys its cache
+// on. Token routing only shows which *client* the resolver was given, and
+// cli.NewResolver(client) must also run after cli.NewClient() so the cache is
+// namespaced to the workspace team rather than the org. Pinning that ordering
+// needs a different test - seeded E-keyed and T-keyed cache files with
+// conflicting contents, then an assertion about which one is read. Deliberately
+// not built here.
+//
+// users.info is served for real by the mock and the resolved from_user_name is
+// asserted below: an unhandled route would 404, LookupUser swallows that as a
+// best-effort miss, and the request would still be recorded - so the token
+// assertion alone would hold on an implementation where the lookup never worked.
 func TestSavedListEnrich_TokenRouting(t *testing.T) {
-	seen := map[string]string{}
+	// Every token seen per endpoint, not just the last: an endpoint called more
+	// than once (users.info, conversations.info) could otherwise have a single
+	// wrong-token call overwritten by a correct one.
+	seen := map[string][]string{}
 	var mu sync.Mutex
 	record := func(endpoint string, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		seen[endpoint] = requestToken(r)
+		seen[endpoint] = append(seen[endpoint], requestToken(r))
 	}
 
 	m := &enrichMock{}
@@ -976,6 +1022,15 @@ func TestSavedListEnrich_TokenRouting(t *testing.T) {
 	if len(rows) != 1 || rows[0]["text"] != "the reply" {
 		t.Fatalf("the reply did not resolve: %v", rows)
 	}
+	// Proof the resolver's lookups actually succeeded rather than being recorded
+	// and then discarded as best-effort misses.
+	if rows[0]["from_user_name"] != enrichUserNames["U01XYZ"] {
+		t.Errorf("from_user_name = %v, want %q (users.info did not resolve)",
+			rows[0]["from_user_name"], enrichUserNames["U01XYZ"])
+	}
+	if rows[0]["channel_name"] != "general" {
+		t.Errorf("channel_name = %v, want general (conversations.info did not resolve)", rows[0]["channel_name"])
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -984,14 +1039,22 @@ func TestSavedListEnrich_TokenRouting(t *testing.T) {
 		"conversations.history": teamToken,
 		"chat.getPermalink":     teamToken,
 		"conversations.replies": teamToken,
+		// The output resolver's own calls. They are not message lookups, so an
+		// implementation can get the four above right and still hand
+		// cli.NewResolver the session client.
+		"conversations.info": teamToken,
+		"users.info":         teamToken,
 	} {
-		got, ok := seen[endpoint]
-		if !ok {
+		got := seen[endpoint]
+		if len(got) == 0 {
 			t.Errorf("%s was never called", endpoint)
 			continue
 		}
-		if got != want {
-			t.Errorf("%s used the wrong token: got %q, want %q", endpoint, got, want)
+		for i, tok := range got {
+			if tok != want {
+				t.Errorf("%s request %d of %d used the wrong token: got %q, want %q",
+					endpoint, i+1, len(got), tok, want)
+			}
 		}
 	}
 }
