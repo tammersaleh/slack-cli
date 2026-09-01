@@ -875,18 +875,15 @@ func TestSavedListEnrich_ErrorMarkerSurvivesFieldFilter(t *testing.T) {
 // the two clients genuinely differ.
 func runWithTwoCredentials(t *testing.T, handler http.Handler, args ...string) (string, error) {
 	t.Helper()
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
+	return runWithTwoCredentialsStdin(t, "", handler, args...)
+}
 
-	isolateTestEnv(t)
-
-	// os.UserConfigDir reads HOME on darwin and XDG_CONFIG_HOME elsewhere; set
-	// both so the credentials file lands in the temp dir on either.
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-
-	creds := map[string]any{"workspaces": map[string]any{
+// runWithTwoCredentialsStdin is runWithTwoCredentials with a stdin payload, for
+// commands that read one (draft create). An empty stdin is not wired up, so the
+// TTY-detection path stays as runWithTwoCredentials always exercised it.
+func runWithTwoCredentialsStdin(t *testing.T, stdin string, handler http.Handler, args ...string) (string, error) {
+	t.Helper()
+	workspaces := map[string]any{
 		orgWorkspaceID: map[string]any{
 			"bot_token": orgToken, "cookie": "d=xyz",
 			"auth_method": "desktop", "team_id": orgWorkspaceID, "team_name": "Acme Org",
@@ -898,7 +895,30 @@ func runWithTwoCredentials(t *testing.T, handler http.Handler, args ...string) (
 			// per-stage authMethod switching cannot be observed at all.
 			"auth_method": "oauth", "team_id": teamWorkspaceID, "team_name": "Acme",
 		},
-	}}
+	}
+	return runWithCredentialsStdin(t, stdin, workspaces, teamWorkspaceID, handler, args...)
+}
+
+// runWithCredentialsStdin is the general form: it writes the given workspaces
+// map as the stored credentials file, points SLACK_WORKSPACE at workspaceEnv
+// and SLACK_WORKSPACE_ORG at the org credential, and leaves SLACK_TOKEN unset
+// so NewClient and NewSessionClient genuinely resolve separate credentials.
+// workspaceEnv may name a workspace the map does not hold - that is how the
+// org-only topology (a session credential and nothing else) is simulated.
+func runWithCredentialsStdin(t *testing.T, stdin string, workspaces map[string]any, workspaceEnv string, handler http.Handler, args ...string) (string, error) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	isolateTestEnv(t)
+
+	// os.UserConfigDir reads HOME on darwin and XDG_CONFIG_HOME elsewhere; set
+	// both so the credentials file lands in the temp dir on either.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	creds := map[string]any{"workspaces": workspaces}
 
 	for _, dir := range []string{
 		filepath.Join(home, "Library", "Application Support", "slack-cli"),
@@ -918,7 +938,8 @@ func runWithTwoCredentials(t *testing.T, handler http.Handler, args ...string) (
 
 	// SLACK_TOKEN must stay unset here, or both clients collapse onto it.
 	t.Setenv("SLACK_TOKEN", "")
-	t.Setenv("SLACK_WORKSPACE", teamWorkspaceID)
+	t.Setenv("SLACK_USER_TOKEN", "")
+	t.Setenv("SLACK_WORKSPACE", workspaceEnv)
 	t.Setenv("SLACK_WORKSPACE_ORG", orgWorkspaceID)
 	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
 
@@ -933,6 +954,9 @@ func runWithTwoCredentials(t *testing.T, handler http.Handler, args ...string) (
 		return "", err
 	}
 	cli.SetOutput(&outBuf, &errBuf)
+	if stdin != "" {
+		cli.SetInput(strings.NewReader(stdin))
+	}
 	runErr := kctx.Run(&cli)
 	return outBuf.String(), runErr
 }

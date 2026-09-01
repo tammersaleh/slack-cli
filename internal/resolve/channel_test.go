@@ -840,3 +840,37 @@ func TestEnsureChannelCache_FailureCachedAcrossEnrichCalls(t *testing.T) {
 		t.Errorf("conversations.info hit %d times, want 1 (failure should be memoized)", calls)
 	}
 }
+
+// TestChannelInputNeedsLookup pins the predicate's parity with
+// ResolveChannel's early returns. The predicate decides, at the command layer,
+// whether a channel recipient needs a name lookup - and therefore which client
+// (and credential) the resolver is built on - so a "false" for an input
+// ResolveChannel would actually walk the channel lists for reintroduces the
+// wrong-client bug for that input shape.
+func TestChannelInputNeedsLookup(t *testing.T) {
+	cases := []struct {
+		input string
+		want  bool
+	}{
+		{"general", true},
+		{"#general", true},
+		{"", true}, // matches ResolveChannel: an empty name falls through to the walk
+		{"C0123ABCD", false},
+		{"D0123ABCD", false},
+		{"G0123ABCD", false},
+		{"M0123ABCD", false},
+		{"T0123ABCD", false}, // wrong-prefix Slack ID: local fast-fail
+		{"B0123ABCD", false},
+		{"https://acme.slack.com/archives/C0123ABCD", false},
+		{"https://acme.slack.com/archives/C0123ABCD/p1713300000123456", false},
+		{"https://acme.slack.com/team/U0123ABCD", false},                       // wrong kind: local error
+		{"https://acme.slack.com/files/U0123ABCD/F0456WXYZ/report.pdf", false}, // wrong kind: local error
+		{"https://acme.slack.com/nonsense", false},                             // malformed Slack URL: local error
+		{"https://example.com/archives/C0123ABCD", false},                      // non-Slack host: local error
+	}
+	for _, tc := range cases {
+		if got := ChannelInputNeedsLookup(tc.input); got != tc.want {
+			t.Errorf("ChannelInputNeedsLookup(%q) = %v, want %v", tc.input, got, tc.want)
+		}
+	}
+}

@@ -173,21 +173,17 @@ func classifyRecipient(s string) recipientKind {
 	return recipientChannel
 }
 
-// resolveDestination turns the recipient args into a single draft destination:
-// a channel_id (exactly one channel recipient, current behavior) or a user_ids
-// set (one or more user recipients, a DM/MPDM that need not exist yet). Mixing
-// kinds, multiple channels, or --thread/--broadcast on a user destination are
-// fatal input errors. User recipients are resolved fully before any write;
-// every unresolved input is reported and aborts the command.
-func (c *DraftCreateCmd) resolveDestination(ctx context.Context, r *resolve.Resolver) (destination, error) {
-	var channels, users []string
+// splitRecipients classifies the recipient args into channel and user inputs.
+// Pure - no network calls - so Run can pick the resolver's client before any
+// resolution happens. A malformed URL surfaces its own precise reason here,
+// ahead of resolveDestination's mix/arity checks - otherwise it gets bucketed
+// as a channel and reported as "cannot mix" or "one channel only", hiding the
+// actual problem. (A well-formed but wrong-kind URL, e.g. a file link, still
+// classifies as a channel and is rejected by ResolveChannel as invalid_input.)
+func (c *DraftCreateCmd) splitRecipients() (channels, users []string, err error) {
 	for _, rec := range c.Recipients {
-		// A URL that parsed but is malformed/wrong-kind must surface its own
-		// precise reason, ahead of the mix/arity checks below - otherwise a bad
-		// URL gets bucketed as a channel and reported as "cannot mix" or "one
-		// channel only", hiding the actual problem.
 		if _, matched, perr := slackurl.Parse(rec); matched && perr != nil {
-			return destination{}, output.InvalidURL(rec, perr.Error())
+			return nil, nil, output.InvalidURL(rec, perr.Error())
 		}
 		switch classifyRecipient(rec) {
 		case recipientUser:
@@ -196,7 +192,16 @@ func (c *DraftCreateCmd) resolveDestination(ctx context.Context, r *resolve.Reso
 			channels = append(channels, rec)
 		}
 	}
+	return channels, users, nil
+}
 
+// resolveDestination turns the split recipients into a single draft
+// destination: a channel_id (exactly one channel recipient, current behavior)
+// or a user_ids set (one or more user recipients, a DM/MPDM that need not
+// exist yet). Mixing kinds, multiple channels, or --thread/--broadcast on a
+// user destination are fatal input errors. User recipients are resolved fully
+// before any write; every unresolved input is reported and aborts the command.
+func (c *DraftCreateCmd) resolveDestination(ctx context.Context, r *resolve.Resolver, channels, users []string) (destination, error) {
 	if len(channels) > 0 && len(users) > 0 {
 		return destination{}, &output.Error{Err: "invalid_input", Detail: "cannot mix channel and user recipients; bare names are channels, use @name for a person", Code: output.ExitGeneral}
 	}
@@ -205,7 +210,7 @@ func (c *DraftCreateCmd) resolveDestination(ctx context.Context, r *resolve.Reso
 		if c.Thread != "" || c.Broadcast {
 			return destination{}, &output.Error{Err: "invalid_input", Detail: "--thread/--broadcast apply to a channel destination only, not a DM/MPDM (user) destination", Code: output.ExitGeneral}
 		}
-		// Malformed URLs were already rejected above, and a well-formed user
+		// Malformed URLs were already rejected in splitRecipients, and a well-formed user
 		// URL resolves cleanly, so ResolveUser here never hits the
 		// bad-URL/invalid_input case - any failure is a genuine not-found.
 		ids := make([]string, 0, len(users))
@@ -321,16 +326,51 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 		scheduled = epoch
 	}
 
+	// The internal drafts.create endpoint needs a session (xoxc-) token. Build
+	// that client first so a non-session token fails fast, before resolution.
 	client, err := cli.NewSessionClient()
 	if err != nil {
 		return err
 	}
-	r := cli.NewResolver(client)
+	// NewClient below (channel-name path only) overwrites the auth method
+	// captured by NewSessionClient. The only auth-classified call here is
+	// drafts.create on the session client, so its re-auth hint must reflect
+	// the session token.
+	sessionAuthMethod := cli.authMethod
+
+	channels, users, derr := c.splitRecipients()
+	if derr != nil {
+		return derr
+	}
+
+	// A name-shaped channel recipient resolves on the workspace (T-prefix)
+	// client: users.conversations and conversations.list are both
+	// enterprise_is_restricted on the org context the session client targets
+	// on Enterprise Grid, so no #name/bare name could ever resolve on it.
+	// Every other form stays on the session client so it acquires no
+	// workspace-credential requirement it never had: channel/user IDs and
+	// URLs resolve locally, and @name/email users keep the org-level
+	// directory that has always worked (users.list works on the org token;
+	// moving it to a workspace credential is an unverified scope change that
+	// could narrow visibility or change a duplicated name's collision
+	// winner, and a workspace OAuth bot lacks users:read.email). Invalid
+	// recipient sets also stay here so their invalid_input verdict can't be
+	// preempted by a not_authed from a client the command never needed.
+	resolverClient := client
+	if len(users) == 0 && len(channels) == 1 && resolve.ChannelInputNeedsLookup(channels[0]) {
+		pubClient, err := cli.NewClient()
+		if err != nil {
+			return err
+		}
+		cli.authMethod = sessionAuthMethod
+		resolverClient = pubClient
+	}
+	r := cli.NewResolver(resolverClient)
 	p := cli.NewPrinter()
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	dest, derr := c.resolveDestination(ctx, r)
+	dest, derr := c.resolveDestination(ctx, r, channels, users)
 	if derr != nil {
 		return derr
 	}

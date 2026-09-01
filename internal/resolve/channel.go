@@ -26,8 +26,32 @@ type channelFileCache struct {
 	Channels  map[string]string `json:"channels"`
 }
 
+// ChannelInputNeedsLookup reports whether ResolveChannel would need a name
+// lookup (cache or channel-list walk) for input, as opposed to answering
+// locally: URL-shaped inputs are handled locally (a channel/message URL
+// yields its channel ID, anything else a validation error), C/D/G/M IDs pass
+// through, and other Slack-ID-shaped inputs fast-fail. It mirrors
+// ResolveChannel's early returns - reusing the same predicates in the same
+// order - and the two must stay in sync, or command-level client selection
+// (which client a name lookup runs on) drifts from resolution behavior.
+// TestChannelInputNeedsLookup pins the parity.
+func ChannelInputNeedsLookup(input string) bool {
+	if _, handled, _ := channelIDFromURL(input); handled {
+		return false
+	}
+	if channelIDPattern.MatchString(input) {
+		return false
+	}
+	if slackIDPattern.MatchString(input) {
+		return false
+	}
+	return true
+}
+
 // ResolveChannel resolves a channel name or ID to a Slack channel ID.
 // Accepts channel IDs (passthrough), names with or without `#` prefix.
+// Callers deciding which client to resolve on can ask ChannelInputNeedsLookup
+// whether this will be a local answer or a name lookup.
 func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, error) {
 	if id, handled, err := channelIDFromURL(input); handled {
 		return id, err

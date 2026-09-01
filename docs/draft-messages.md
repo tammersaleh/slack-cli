@@ -174,6 +174,16 @@ No special routing is needed. `slack.com/api/drafts.*` works from any
 network that can reach Slack. No workspace subdomain, no
 `slack_route` query param, no Slack_SSB user-agent suffix.
 
+Channel-*name* resolution is the exception to "org token for everything":
+on Grid, `users.conversations` and `conversations.list` are
+`enterprise_is_restricted` on the E-prefix token, so `draft create
+'#name'` resolves the name on a separate workspace (T-prefix) client
+before posting `drafts.create` on the session client. Select the pair
+with `SLACK_WORKSPACE` plus `SLACK_WORKSPACE_ORG` and leave `SLACK_TOKEN`
+unset (it collapses both clients onto one token). Channel IDs and
+channel/message URLs resolve locally; every user-recipient form (`@name`,
+email, U/W id, profile URL) stays on the session credential.
+
 ## The ghosting bug
 
 Slack Desktop's "Drafts & sent" panel runs a reconciliation pass every

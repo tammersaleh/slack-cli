@@ -1481,14 +1481,25 @@ plain-text shortcut - this CLI is for agents, which emit structured JSON.
 
 Recipients are either one channel or one-or-more users:
 
-- Channel: `#name`, a bare name, or `Cxxx`/`Dxxx`. Exactly one. Resolved
-  via `conversations.list`.
+- Channel: `#name`, a bare name, or `Cxxx`/`Dxxx`. Exactly one. A name
+  resolves member-first via `users.conversations`, then `conversations.list`,
+  on the workspace (T-prefix) credential - on Enterprise Grid both list
+  endpoints are `enterprise_is_restricted` on the org context that
+  `drafts.create` itself requires. On Grid, select the two credentials with
+  `SLACK_WORKSPACE` (workspace) plus `SLACK_WORKSPACE_ORG` (org session) and
+  leave `SLACK_TOKEN` unset - it overrides both and collapses the clients
+  onto one token. When the workspace credential selection fails outright the
+  name lookup errors `not_authed`; when selection lands on a credential whose
+  token can't list channels, the lookup fails downstream instead. IDs and
+  channel/message URLs resolve locally and need only the session credential.
 - Users: `@name`, an email, or `Uxxx`/`Wxxx` id. One produces a 1:1 DM,
   several produce a multi-person DM (MPDM). The conversation need not exist
   yet - Slack opens it on send, so this is how you draft to people you've
   never messaged. Stamped as `user_ids` (no `channel_id`). Order preserved,
   duplicates removed. Slack caps MPDMs near 8 people; an oversized list is
-  rejected by Slack.
+  rejected by Slack. Name/email resolution runs on the session credential,
+  preserving the org-level directory scope that has always applied on
+  Enterprise Grid.
 
 Bare names are treated as channels (backward compatible); use `@name` for a
 person. Channel and user recipients can't be mixed. `--thread` / `--broadcast`
@@ -1542,7 +1553,9 @@ Errors:
 - `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body and no table attachment).
 - `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
-- `not_authed` (exit 2): No session token.
+- `not_authed` (exit 2): No session token, or - for a `#name`/bare-name
+  channel recipient only - the selected workspace credential cannot be
+  resolved.
 
 Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`; caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block or a table attachment). Slack's API accepts non-`rich_text` top-level blocks, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
 

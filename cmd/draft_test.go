@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -351,6 +352,327 @@ func TestDraftCreate_ChannelResolution(t *testing.T) {
 	_ = json.Unmarshal([]byte(gotForm.Get("destinations")), &dests)
 	if dests[0]["channel_id"] != "C01ABC" {
 		t.Errorf("expected resolved channel_id=C01ABC, got %v", dests[0])
+	}
+}
+
+// tokenRecorder wraps a mux, recording every token per endpoint - every
+// request, not just the last, so a single wrong-token call can't be
+// overwritten by a correct one - and refusing endpoints the wrapped mux
+// doesn't declare, so a test can't silently grow an unasserted call.
+func tokenRecorder(t *testing.T, mux *http.ServeMux) (http.Handler, func() map[string][]string) {
+	t.Helper()
+	seen := map[string][]string{}
+	var mu sync.Mutex
+	wrapped := http.NewServeMux()
+	wrapped.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		endpoint := strings.TrimPrefix(r.URL.Path, "/api/")
+		mu.Lock()
+		seen[endpoint] = append(seen[endpoint], requestToken(r))
+		mu.Unlock()
+		if _, pattern := mux.Handler(r); pattern == "" {
+			t.Errorf("unexpected endpoint called: %s", endpoint)
+			http.Error(w, "unexpected endpoint", 404)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	snapshot := func() map[string][]string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make(map[string][]string, len(seen))
+		for k, v := range seen {
+			out[k] = append([]string(nil), v...)
+		}
+		return out
+	}
+	return wrapped, snapshot
+}
+
+// assertEndpointTokens checks that every endpoint in want was called at least
+// once and that every recorded request to it carried the wanted token.
+func assertEndpointTokens(t *testing.T, seen map[string][]string, want map[string]string) {
+	t.Helper()
+	for endpoint, wantTok := range want {
+		got := seen[endpoint]
+		if len(got) == 0 {
+			t.Errorf("%s was never called", endpoint)
+			continue
+		}
+		for i, tok := range got {
+			if tok != wantTok {
+				t.Errorf("%s request %d of %d used the wrong token: got %q, want %q",
+					endpoint, i+1, len(got), tok, wantTok)
+			}
+		}
+	}
+}
+
+// TestDraftCreate_TokenRouting pins which client each draft create call goes
+// out on for a #name recipient: name resolution (users.conversations, then the
+// conversations.list fallback - the member page is deliberately empty so both
+// endpoints are exercised) must use the workspace token, while drafts.create
+// must use the org session token. The mock refuses each token where the live
+// Grid org does (enterprise_is_restricted from the list endpoints on the org
+// token, team_is_restricted from the internal endpoint on the workspace
+// token), so the one-client implementation fails here exactly as it failed
+// live: channel_not_found after both walks reject the org token, drafts.create
+// never called. runWithMockSession cannot see this bug: it sets SLACK_TOKEN,
+// which collapses both clients onto one token.
+func TestDraftCreate_TokenRouting(t *testing.T) {
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
+		if requestToken(r) != teamToken {
+			slackErr(w, "enterprise_is_restricted")
+			return
+		}
+		// Empty member page: forces the conversations.list fallback so the
+		// routing of both resolution endpoints is observed.
+		writeJSON(w, map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
+		if requestToken(r) != teamToken {
+			slackErr(w, "enterprise_is_restricted")
+			return
+		}
+		writeJSON(w, map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C01ABC", "name": "general", "is_member": true}},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		if requestToken(r) != orgToken {
+			slackErr(w, "team_is_restricted")
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		gotForm, _ = url.ParseQuery(string(body))
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr05555", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks": richTextBlocks("hello"), "destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+	wrapped, snapshot := tokenRecorder(t, mux)
+
+	out, err := runWithTwoCredentialsStdin(t, richTextBlocksJSON("hello"), wrapped,
+		"draft", "create", "#general",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error (resolution on the wrong client?): %v", err)
+	}
+
+	var dests []map[string]any
+	_ = json.Unmarshal([]byte(gotForm.Get("destinations")), &dests)
+	if len(dests) != 1 || dests[0]["channel_id"] != "C01ABC" {
+		t.Errorf("expected resolved channel_id=C01ABC in destinations, got %v", dests)
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected draft row + _meta trailer, got %d lines:\n%s", len(lines), out)
+	}
+	item := parseJSON(t, lines[0])
+	if item["id"] != "Dr05555" {
+		t.Errorf("expected id='Dr05555', got %q", item["id"])
+	}
+
+	assertEndpointTokens(t, snapshot(), map[string]string{
+		"users.conversations": teamToken,
+		"conversations.list":  teamToken,
+		"drafts.create":       orgToken,
+	})
+}
+
+// TestDraftCreate_TokenRouting_UserRecipient pins the deliberate asymmetry of
+// the split: a @name recipient resolves on the org session client, NOT the
+// workspace client. users.list works on the org token, and that is the scope
+// that has always applied - moving the lookup to a workspace credential is an
+// unverified scope change that could narrow visibility or change which user a
+// duplicated name resolves to, and a workspace OAuth bot lacks
+// users:read.email. No channel-list endpoint may be hit.
+func TestDraftCreate_TokenRouting_UserRecipient(t *testing.T) {
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"ok": true,
+			"members": []map[string]any{
+				{"id": "U01XYZ", "name": "alice", "profile": map[string]any{"display_name": "alice"}},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		if requestToken(r) != orgToken {
+			slackErr(w, "team_is_restricted")
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		gotForm, _ = url.ParseQuery(string(body))
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr06666", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+			"blocks": richTextBlocks("hello"), "destinations": []map[string]any{{"user_ids": []string{"U01XYZ"}}},
+		})(w, r)
+	})
+	wrapped, snapshot := tokenRecorder(t, mux)
+
+	_, err := runWithTwoCredentialsStdin(t, richTextBlocksJSON("hello"), wrapped,
+		"draft", "create", "@alice",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var dests []map[string]any
+	_ = json.Unmarshal([]byte(gotForm.Get("destinations")), &dests)
+	if len(dests) != 1 {
+		t.Fatalf("expected one destination, got %v", dests)
+	}
+	if ids, ok := dests[0]["user_ids"].([]any); !ok || len(ids) != 1 || ids[0] != "U01XYZ" {
+		t.Errorf("expected user_ids=[U01XYZ], got %v", dests[0])
+	}
+
+	assertEndpointTokens(t, snapshot(), map[string]string{
+		"users.list":    orgToken,
+		"drafts.create": orgToken,
+	})
+}
+
+// TestDraftCreate_SessionAuthHintSurvivesSplit pins the authMethod
+// capture/restore around NewClient: when drafts.create fails invalid_auth
+// after a successful workspace-client resolution, the re-auth hint must name
+// the session credential's method (desktop, --desktop) - not the workspace
+// credential's (oauth). Green on the old one-client code; deleting the
+// capture/restore in the two-client code makes it fail.
+func TestDraftCreate_SessionAuthHintSurvivesSplit(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.conversations", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C01ABC", "name": "general", "is_member": true}},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		slackErr(w, "invalid_auth")
+	})
+
+	_, err := runWithTwoCredentialsStdin(t, richTextBlocksJSON("hello"), mux,
+		"draft", "create", "#general",
+	)
+	var oErr *output.Error
+	if !errors.As(err, &oErr) {
+		t.Fatalf("expected *output.Error, got %v", err)
+	}
+	if oErr.Err != "invalid_auth" {
+		t.Fatalf("expected invalid_auth, got %q", oErr.Err)
+	}
+	if !strings.Contains(oErr.Hint, "--desktop") {
+		t.Errorf("re-auth hint should name the session credential's desktop method, got %q", oErr.Hint)
+	}
+}
+
+// TestDraftCreate_OrgOnlyCredential pins the compatibility contract of the
+// conditional split: recipient forms that need no channel-name lookup (IDs,
+// user recipients) must keep working with only an org session credential
+// stored - they never build the workspace client, so they can't fail not_authed
+// for a credential the command doesn't need. Locally-invalid recipient sets
+// keep their invalid_input verdict for the same reason. Only a name-shaped
+// channel needs the workspace credential, and its absence surfaces as
+// not_authed (actionable) rather than the old channel_not_found lie.
+func TestDraftCreate_OrgOnlyCredential(t *testing.T) {
+	orgOnly := map[string]any{
+		orgWorkspaceID: map[string]any{
+			"bot_token": orgToken, "cookie": "d=xyz",
+			"auth_method": "desktop", "team_id": orgWorkspaceID, "team_name": "Acme Org",
+		},
+	}
+
+	cases := []struct {
+		name       string
+		recipients []string
+		wantErr    string                   // "" = success
+		wantDests  string                   // substring of the destinations form value
+		extra      func(mux *http.ServeMux) // per-case endpoints beyond drafts.create
+	}{
+		{name: "channel id", recipients: []string{"C01ABC"}, wantDests: `"channel_id":"C01ABC"`},
+		{name: "channel url", recipients: []string{"https://acme.slack.com/archives/C01ABC"}, wantDests: `"channel_id":"C01ABC"`},
+		{name: "user id", recipients: []string{"U01XYZ"}, wantDests: `"user_ids":["U01XYZ"]`},
+		{name: "user name resolves on the session credential", recipients: []string{"@alice"},
+			wantDests: `"user_ids":["U01XYZ"]`,
+			extra: func(mux *http.ServeMux) {
+				mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+					if tok := requestToken(r); tok != orgToken {
+						t.Errorf("users.list used the wrong token: %q", tok)
+					}
+					writeJSON(w, map[string]any{
+						"ok": true,
+						"members": []map[string]any{
+							{"id": "U01XYZ", "name": "alice", "profile": map[string]any{"display_name": "alice"}},
+						},
+						"response_metadata": map[string]string{"next_cursor": ""},
+					})
+				})
+			}},
+		// Both invalid cases use lookup-shaped names deliberately: with an
+		// ID-shaped recipient they would pass even if the users/arity guards
+		// on the workspace-client condition were dropped, since
+		// ChannelInputNeedsLookup already answers false for an ID.
+		{name: "mixed name and user stays invalid_input", recipients: []string{"#general", "@alice"}, wantErr: "invalid_input"},
+		{name: "multiple channel names stay invalid_input", recipients: []string{"#one", "#two"}, wantErr: "invalid_input"},
+		{name: "channel name needs the workspace credential", recipients: []string{"#general"}, wantErr: "not_authed"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotForm url.Values
+			var created bool
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+				created = true
+				if requestToken(r) != orgToken {
+					slackErr(w, "team_is_restricted")
+					return
+				}
+				body, _ := io.ReadAll(r.Body)
+				gotForm, _ = url.ParseQuery(string(body))
+				draftCreateResponder(t, map[string]any{
+					"id": "Dr07777", "date_created": 1713300000, "last_updated_ts": "1713300000.1200000",
+					"blocks": richTextBlocks("hello"),
+				})(w, r)
+			})
+			if tc.extra != nil {
+				tc.extra(mux)
+			}
+			wrapped, _ := tokenRecorder(t, mux)
+
+			args := append([]string{"draft", "create"}, tc.recipients...)
+			// SLACK_WORKSPACE names a workspace the file does not hold, so
+			// NewClient fails if (and only if) the command builds it.
+			_, err := runWithCredentialsStdin(t, richTextBlocksJSON("hello"), orgOnly, "T99MISSING", wrapped, args...)
+
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected success on the session credential alone, got %v", err)
+				}
+				if !strings.Contains(gotForm.Get("destinations"), tc.wantDests) {
+					t.Errorf("destinations = %q, want it to contain %q", gotForm.Get("destinations"), tc.wantDests)
+				}
+				return
+			}
+			var oErr *output.Error
+			if !errors.As(err, &oErr) || oErr.Err != tc.wantErr {
+				t.Fatalf("expected %s, got %v", tc.wantErr, err)
+			}
+			if created {
+				t.Error("drafts.create must not be called when the destination fails")
+			}
+		})
 	}
 }
 
