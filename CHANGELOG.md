@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.1](https://github.com/tammersaleh/slack-cli/compare/v5.0.0...v5.0.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* resolve draft create channel names on the workspace client ([79419cb](https://github.com/tammersaleh/slack-cli/commit/79419cbbfc1bff69341a1459eb249372c5c79795))
+
 ## [5.0.0](https://github.com/tammersaleh/slack-cli/compare/v4.0.2...v5.0.0) (2026-08-03)
 
 
