@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.3](https://github.com/tammersaleh/slack-cli/compare/v5.0.2...v5.0.3) (2026-09-04)
+
+
+### Bug Fixes
+
+* stop the --workspace help from promising name matching ([7bdeb88](https://github.com/tammersaleh/slack-cli/commit/7bdeb88a9e9e9de4c7195c88b7b6609618309cbc))
+
 ## [5.0.2](https://github.com/tammersaleh/slack-cli/compare/v5.0.1...v5.0.2) (2026-09-04)
 
 
