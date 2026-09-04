@@ -16,7 +16,7 @@ import (
 )
 
 type CLI struct {
-	Workspace    string        `short:"w" help:"Select workspace (name or ID)." env:"SLACK_WORKSPACE"`
+	Workspace    string        `short:"w" help:"Select workspace by team ID (e.g. T01ABC)." env:"SLACK_WORKSPACE"`
 	WorkspaceOrg string        `hidden:"" env:"SLACK_WORKSPACE_ORG" help:"Enterprise Grid org workspace for internal APIs."`
 	Fields       string        `help:"Comma-separated list of top-level fields to include." env:"SLACK_FIELDS"`
 	Quiet        bool          `short:"q" help:"Suppress stdout output (exit code and stderr only)."`

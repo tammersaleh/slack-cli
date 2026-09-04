@@ -147,7 +147,7 @@ only paginated helpers and internal-API calls are instrumented.
 ## Global Flags
 
 ```
---workspace, -w   Select workspace (name or ID). Env: SLACK_WORKSPACE
+--workspace, -w   Select workspace by team ID (e.g. T01ABC). Env: SLACK_WORKSPACE
 --fields          Comma-separated list of top-level fields to include
 --quiet, -q       Suppress stdout output (exit code and stderr only)
 --timeout         Overall command timeout (e.g. 30s, 2m). Env: SLACK_TIMEOUT
