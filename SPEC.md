@@ -224,6 +224,18 @@ $ slack auth login --desktop
 {"_meta":{"has_more":false}}
 ```
 
+Rows are sorted by `team_name` (case-insensitive), then `team_id`. Desktop extraction reads workspaces from a map, so without the sort the order changed run to run.
+
+After the trailer, login writes workspace-selection guidance to stderr. It checks the `SLACK_WORKSPACE` and `SLACK_WORKSPACE_ORG` environment variables (not `--workspace`, which is a one-shot selector) against every stored workspace, not just the ones this login produced. Matching is by exact `team_id`, the same lookup every other command performs:
+
+- Value set and matches a stored workspace: `SLACK_WORKSPACE is set to T01ABC  # Acme Corp` (and `SLACK_WORKSPACE_ORG is set to E01ORG  # Acme (org)`). No export suggestion.
+- Value set but matches nothing stored: `SLACK_WORKSPACE=T09OLD does not match any saved workspace. Set one of:` followed by the candidate export lines.
+- Value unset: `Set your default workspace:` followed by the candidate export lines. When an `E`-prefixed org workspace is stored, an `Enterprise Grid detected` block follows with the `export SLACK_WORKSPACE_ORG=...` line(s).
+
+Candidates for `SLACK_WORKSPACE` are every non-`E` workspace; when only `E`-prefixed org workspaces are stored, those are offered instead. `SLACK_WORKSPACE_ORG` counts as set only when it names a stored `E`-prefixed workspace: a `T` id there is reported as not matching any saved org, since internal APIs answer `team_is_restricted` on it.
+
+The hint never picks a workspace for the user. Earlier versions suggested the first non-`E` workspace in map order, which named a different workspace each run and read as an error when `SLACK_WORKSPACE` was already set correctly.
+
 Errors:
 
 - `missing_client_credentials` (exit 1): `SLACK_CLIENT_ID` or `SLACK_CLIENT_SECRET` not set (OAuth mode only).

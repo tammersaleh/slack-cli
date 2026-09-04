@@ -3,6 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
+	"sort"
 	"strings"
 
 	"github.com/tammersaleh/slack-cli/internal/api"
@@ -83,6 +86,7 @@ func saveAndPrintWorkspaces(cli *CLI, workspaces []auth.WorkspaceCredentials) er
 
 	p := cli.NewPrinter()
 
+	sortWorkspaces(workspaces)
 	for _, ws := range workspaces {
 		creds.Workspaces[ws.TeamID] = ws
 		if err := p.PrintItem(map[string]any{
@@ -105,45 +109,109 @@ func saveAndPrintWorkspaces(cli *CLI, workspaces []auth.WorkspaceCredentials) er
 		return err
 	}
 
-	printWorkspaceHints(p, workspaces)
+	// Read the env directly rather than cli.Workspace: kong merges --workspace
+	// into that field, and a one-shot flag on login is not the persistent
+	// default these hints describe.
+	printWorkspaceHints(p.Err, os.Getenv("SLACK_WORKSPACE"), os.Getenv("SLACK_WORKSPACE_ORG"), creds.Workspaces)
 	return nil
 }
 
-// printWorkspaceHints writes export instructions to stderr after login.
-func printWorkspaceHints(p *output.Printer, workspaces []auth.WorkspaceCredentials) {
-	if len(workspaces) == 0 {
+// sortWorkspaces orders by team name (case-insensitive), then team ID.
+// DesktopLogin builds its result from a map, so without this the row order
+// and every hint derived from it changed run to run.
+func sortWorkspaces(ws []auth.WorkspaceCredentials) {
+	sort.SliceStable(ws, func(i, j int) bool {
+		a, b := strings.ToLower(ws[i].TeamName), strings.ToLower(ws[j].TeamName)
+		if a != b {
+			return a < b
+		}
+		return ws[i].TeamID < ws[j].TeamID
+	})
+}
+
+// isOrgWorkspace reports whether a team ID names an Enterprise Grid org
+// context rather than a workspace inside it.
+func isOrgWorkspace(teamID string) bool {
+	return strings.HasPrefix(teamID, "E")
+}
+
+// printWorkspaceHints writes SLACK_WORKSPACE / SLACK_WORKSPACE_ORG guidance
+// to w after login. current and currentOrg are the env values already in
+// effect; saved is every stored workspace, not just the ones this login
+// produced, since a re-login may add workspaces without changing which one
+// the user selects by default. Matching is by credentials map key - the same
+// exact lookup ResolveCredentials performs - so the hint never affirms a
+// value that a later command would reject. For SLACK_WORKSPACE it also never
+// calls stale a value ResolveCredentials would accept: an E-org id there is
+// a real, if limited, selection, and the org-only fallback below depends on
+// it. SLACK_WORKSPACE_ORG is stricter - see the E-prefix check below.
+//
+// A value that names a saved workspace is reported as set and gets no export
+// suggestion - the old unconditional hint read as "you have no workspace
+// set" when the user plainly did. A value that names nothing saved is called
+// out as stale. An unset value gets every candidate listed, because picking
+// one for the user was arbitrary.
+func printWorkspaceHints(w io.Writer, current, currentOrg string, saved map[string]auth.WorkspaceCredentials) {
+	if len(saved) == 0 {
 		return
 	}
 
-	var regular, enterprise *auth.WorkspaceCredentials
-	for i := range workspaces {
-		ws := &workspaces[i]
-		if strings.HasPrefix(ws.TeamID, "E") {
-			enterprise = ws
-		} else if regular == nil {
-			regular = ws
+	var regular, orgs []auth.WorkspaceCredentials
+	for key, ws := range saved {
+		ws.TeamID = key // the map key is the canonical ID ResolveCredentials looks up
+		if isOrgWorkspace(key) {
+			orgs = append(orgs, ws)
+		} else {
+			regular = append(regular, ws)
+		}
+	}
+	sortWorkspaces(regular)
+	sortWorkspaces(orgs)
+
+	// SLACK_WORKSPACE accepts any saved key. With only org-level credentials
+	// stored, those are the candidates - the previous hint fell back the same
+	// way, and dropping it would leave an org-only setup with no default.
+	candidates := regular
+	if len(candidates) == 0 {
+		candidates = orgs
+	}
+
+	fmt.Fprintln(w)
+	if ws, ok := saved[current]; ok && current != "" {
+		fmt.Fprintf(w, "SLACK_WORKSPACE is set to %s  # %s\n", current, ws.TeamName)
+	} else {
+		if current != "" {
+			fmt.Fprintf(w, "SLACK_WORKSPACE=%s does not match any saved workspace. Set one of:\n", current)
+		} else {
+			fmt.Fprintln(w, "Set your default workspace:")
+		}
+		fmt.Fprintln(w)
+		for _, ws := range candidates {
+			fmt.Fprintf(w, "  export SLACK_WORKSPACE=%s  # %s\n", ws.TeamID, ws.TeamName)
 		}
 	}
 
-	fmt.Fprintln(p.Err)
-	fmt.Fprintln(p.Err, "Set your default workspace:")
-	fmt.Fprintln(p.Err)
-
-	if regular != nil {
-		fmt.Fprintf(p.Err, "  export SLACK_WORKSPACE=%s  # %s\n", regular.TeamID, regular.TeamName)
-	} else if len(workspaces) > 0 {
-		ws := workspaces[0]
-		fmt.Fprintf(p.Err, "  export SLACK_WORKSPACE=%s  # %s\n", ws.TeamID, ws.TeamName)
+	// Unlike SLACK_WORKSPACE, the org selector must name an org context: a
+	// T-prefixed id there is a real credential but the wrong kind, and the
+	// internal APIs answer team_is_restricted on it.
+	if ws, ok := saved[currentOrg]; ok && isOrgWorkspace(currentOrg) {
+		fmt.Fprintf(w, "SLACK_WORKSPACE_ORG is set to %s  # %s (org)\n", currentOrg, ws.TeamName)
+	} else if currentOrg != "" || len(orgs) > 0 {
+		fmt.Fprintln(w)
+		if currentOrg != "" {
+			fmt.Fprintf(w, "SLACK_WORKSPACE_ORG=%s does not match any saved org.\n", currentOrg)
+		} else {
+			fmt.Fprintln(w, "Enterprise Grid detected. Internal APIs (saved items, sidebar")
+			fmt.Fprintln(w, "sections) require the org-level token:")
+		}
+		if len(orgs) > 0 {
+			fmt.Fprintln(w)
+			for _, ws := range orgs {
+				fmt.Fprintf(w, "  export SLACK_WORKSPACE_ORG=%s  # %s (org)\n", ws.TeamID, ws.TeamName)
+			}
+		}
 	}
-
-	if enterprise != nil {
-		fmt.Fprintln(p.Err)
-		fmt.Fprintln(p.Err, "Enterprise Grid detected. Internal APIs (saved items, sidebar")
-		fmt.Fprintln(p.Err, "sections) require the org-level token:")
-		fmt.Fprintln(p.Err)
-		fmt.Fprintf(p.Err, "  export SLACK_WORKSPACE_ORG=%s  # %s (org)\n", enterprise.TeamID, enterprise.TeamName)
-	}
-	fmt.Fprintln(p.Err)
+	fmt.Fprintln(w)
 }
 
 type AuthLogoutCmd struct {

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -93,7 +94,8 @@ func DesktopLogin(ctx context.Context, opts DesktopLoginOptions) ([]WorkspaceCre
 	}
 
 	var results []WorkspaceCredentials
-	for teamID, team := range teams {
+	for _, teamID := range sortedTeamIDs(teams) {
+		team := teams[teamID]
 		ws, err := validateDesktopCredentials(ctx, httpClient, team.Token, cookie, "https://slack.com/api/auth.test")
 		if err != nil {
 			status(fmt.Sprintf("Warning: workspace %s (%s) failed validation: %v", team.Name, teamID, err))
@@ -116,6 +118,17 @@ type desktopTeam struct {
 	Token string `json:"token"`
 	Name  string `json:"name"`
 	URL   string `json:"url"`
+}
+
+// sortedTeamIDs returns the map's keys in ascending order so validation
+// runs, and its warnings print, in a stable order across runs.
+func sortedTeamIDs(teams map[string]desktopTeam) []string {
+	ids := make([]string, 0, len(teams))
+	for id := range teams {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // extractTokensFromLevelDB reads workspace tokens from Slack's LevelDB.
