@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.2](https://github.com/tammersaleh/slack-cli/compare/v5.0.1...v5.0.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* make the auth login workspace hint reflect the current env ([87589ab](https://github.com/tammersaleh/slack-cli/commit/87589ab004968147bb03c3cc8d50a6cb78c9930e))
+
 ## [5.0.1](https://github.com/tammersaleh/slack-cli/compare/v5.0.0...v5.0.1) (2026-09-01)
 
 
