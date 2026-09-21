@@ -88,6 +88,8 @@ func TestRewriteUserModifiers(t *testing.T) {
 		{"two users", "from:@Alice Adams to:@Bob Brown", "from:<@U01XYZ> to:<@U02MGR>"},
 		{"span stops at quoted phrase", `from:@alice "exact phrase"`, `from:<@U01XYZ> "exact phrase"`},
 		{"lone at untouched", "from:@ x", "from:@ x"},
+		{"empty quotes untouched", `from:"" x`, `from:"" x`},
+		{"lone quote untouched", `from:" x`, `from:" x`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,6 +114,7 @@ func TestRewriteUserModifiers_Unresolved(t *testing.T) {
 		{"unknown multi-word reports whole span", "skypilot from:@Carol Chen in:#general", "@Carol Chen"},
 		{"unknown quoted", `from:"@Carol Chen"`, "@Carol Chen"},
 		{"unknown quoted without at", `from:"Carol Chen"`, "@Carol Chen"},
+		{"dangling quote after at is a bad name, not a panic", `from:@" x`, `@" x`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

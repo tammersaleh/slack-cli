@@ -60,7 +60,7 @@ func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (st
 			switch {
 			case val[0] == '"':
 				val, quoted = val[1:n-1], true
-			case strings.HasPrefix(val, `@"`):
+			case n > 2 && strings.HasPrefix(val, `@"`):
 				val, quoted = "@"+val[2:n-1], true
 			}
 		}
