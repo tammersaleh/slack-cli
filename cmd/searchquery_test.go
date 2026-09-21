@@ -74,6 +74,9 @@ func TestRewriteUserModifiers(t *testing.T) {
 		{"handle followed by free text", "from:@alice skypilot", "from:<@U01XYZ> skypilot"},
 		{"quoted with at inside", `from:"@Alice Adams" skypilot`, "from:<@U01XYZ> skypilot"},
 		{"quoted with at outside", `from:@"Alice Adams" skypilot`, "from:<@U01XYZ> skypilot"},
+		{"quoted without at", `from:"Alice Adams" skypilot`, "from:<@U01XYZ> skypilot"},
+		{"quoted to without at", `to:"Bob Brown"`, "to:<@U02MGR>"},
+		{"quoted in without at is a channel", `in:"Alice Adams"`, `in:"Alice Adams"`},
 		{"to modifier", "to:@bob", "to:<@U02MGR>"},
 		{"in modifier with user", "in:@Bob Brown x", "in:<@U02MGR> x"},
 		{"in modifier with channel untouched", "in:#general in:general", "in:#general in:general"},
@@ -108,6 +111,7 @@ func TestRewriteUserModifiers_Unresolved(t *testing.T) {
 		{"unknown handle", "skypilot from:@carol", "@carol"},
 		{"unknown multi-word reports whole span", "skypilot from:@Carol Chen in:#general", "@Carol Chen"},
 		{"unknown quoted", `from:"@Carol Chen"`, "@Carol Chen"},
+		{"unknown quoted without at", `from:"Carol Chen"`, "@Carol Chen"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

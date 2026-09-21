@@ -41,7 +41,7 @@ or ID, resolved through the user cache and sent to Slack as <@Uxxx>.
 Slack itself only matches handles; a real name sent raw matches nothing.
 An unquoted multi-word name runs to the next modifier; the longest prefix
 that resolves wins, so 'from:@Alice Adams skypilot' works. Quote it to
-be explicit: from:"@Alice Adams". An unresolvable name fails with
+be explicit: from:"Alice Adams". An unresolvable name fails with
 user_not_found instead of returning an empty page.
 
 Each hit includes channel{id,name}, user, ts, text, and permalink.

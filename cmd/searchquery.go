@@ -32,7 +32,9 @@ var modifierShapedPattern = regexp.MustCompile(`^-?[A-Za-z_]+:\S`)
 // without saying which. Resolving through the user cache accepts handle,
 // display name, real name, email, and ID alike and turns a name Slack
 // would drop on the floor into either the working form or a loud
-// user_not_found.
+// user_not_found. A quoted from:/to: value (`from:"Alice Adams"`) is a
+// name whether or not it carries the `@`; a quoted in: value without `@`
+// may be a channel and passes through.
 //
 // An unquoted name runs from the `@word` to the next modifier-shaped or
 // quoted token; the longest prefix of that span that resolves wins, so
@@ -61,6 +63,12 @@ func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (st
 			case strings.HasPrefix(val, `@"`):
 				val, quoted = "@"+val[2:n-1], true
 			}
+		}
+		// A quoted from:/to: value can only name a person, so the `@` is
+		// optional there. A quoted in: value may be a channel, so it keeps
+		// the `@` requirement.
+		if quoted && !strings.HasPrefix(val, "@") && !strings.EqualFold(key, "in") {
+			val = "@" + val
 		}
 		if !strings.HasPrefix(val, "@") || len(val) == 1 {
 			out = append(out, toks[i])

@@ -945,8 +945,9 @@ The CLI resolves the name through the user cache (handle, display name, real
 name, email, or ID) and rewrites the modifier to `from:<@Uxxx>`. An unquoted
 multi-word name extends to the next modifier-shaped token; the longest prefix
 that resolves wins, so `from:@Alice Adams skypilot` resolves Alice Adams and
-keeps `skypilot` as free text. Quoted forms `from:"@Alice Adams"` and
-`from:@"Alice Adams"` take the name whole. Values not starting with `@`
+keeps `skypilot` as free text. Quoted forms `from:"Alice Adams"`, `from:"@Alice Adams"`, and
+`from:@"Alice Adams"` take the name whole; the `@` is optional inside quotes for
+`from:`/`to:` but required for `in:`, whose quoted value may be a channel. Values not starting with `@`
 (`in:#general`, `from:<@U01XYZ>`) pass through untouched. A name that does not
 resolve fails with `user_not_found` (exit 1) before any search call. A name two
 users share resolves to whichever the cache indexed first. Applies to `search
