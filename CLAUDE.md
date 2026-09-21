@@ -138,7 +138,14 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    verify in the main session. The
    release flow: release-please opens a release PR that auto-merges once CI
    is green, then GoReleaser tags it and pushes the Homebrew artifact -
-   minutes, not instant. The artifact is a
+   minutes, not instant. Pushing a non-releasing commit (`chore:`, `docs:`)
+   to main after the release PR opens leaves that PR `BEHIND` and
+   auto-merge never fires (seen 2026-09-21: 70 minutes stalled with green
+   CI). Either push the cleanup commit before the `fix:`/`feat:` or, when
+   `gh pr view N --json mergeStateStatus` says `BEHIND`, run
+   `gh pr update-branch N` - CI reruns and auto-merge completes. The Bash
+   tool caps a command at 10 minutes, so a poll loop must fit inside that
+   and be re-launched, not written as a one-hour loop. The artifact is a
    **cask**, not a formula: it lives at `Casks/slack-cli.rb` in the tap (not
    `Formula/`), and the version line is `version "x.y.z"`. Don't waste time
    grepping `Formula/`. Then install and verify against the real artifact,
