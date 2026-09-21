@@ -114,7 +114,7 @@ func TestRewriteUserModifiers_Unresolved(t *testing.T) {
 		{"unknown multi-word reports whole span", "skypilot from:@Carol Chen in:#general", "@Carol Chen"},
 		{"unknown quoted", `from:"@Carol Chen"`, "@Carol Chen"},
 		{"unknown quoted without at", `from:"Carol Chen"`, "@Carol Chen"},
-		{"dangling quote after at is a bad name, not a panic", `from:@" x`, `@" x`},
+		{"dangling quote at end of query is a bad name, not a panic", `skypilot from:@"`, `@"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
