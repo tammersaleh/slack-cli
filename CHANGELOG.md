@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.0.4](https://github.com/tammersaleh/slack-cli/compare/v5.0.3...v5.0.4) (2026-09-21)
+
+
+### Bug Fixes
+
+* guard the @" slice in search modifier quote handling ([d835227](https://github.com/tammersaleh/slack-cli/commit/d83522737f3617aa1fe08be31e60097f4c3c1d0a))
+* resolve [@name](https://github.com/name) in search from:/to:/in: modifiers ([b0e1d86](https://github.com/tammersaleh/slack-cli/commit/b0e1d867de379d096d7c2068299afb5e75a160c5))
+* resolve quoted from:/to: names without a leading @ ([29abed1](https://github.com/tammersaleh/slack-cli/commit/29abed11bbd23aa26ef1150c8342dc12f8504295))
+
 ## [5.0.3](https://github.com/tammersaleh/slack-cli/compare/v5.0.2...v5.0.3) (2026-09-04)
 
 
