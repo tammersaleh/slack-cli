@@ -36,6 +36,14 @@ Example:
 
   slack search messages "deploy blocker in:#general from:@alice after:2026-01-01"
 
+@user in from:/to:/in: accepts a handle, display name, real name, email,
+or ID, resolved through the user cache and sent to Slack as <@Uxxx>.
+Slack itself only matches handles; a real name sent raw matches nothing.
+An unquoted multi-word name runs to the next modifier; the longest prefix
+that resolves wins, so 'from:@Alice Adams skypilot' works. Quote it to
+be explicit: from:"@Alice Adams". An unresolvable name fails with
+user_not_found instead of returning an empty page.
+
 Each hit includes channel{id,name}, user, ts, text, and permalink.
 Page with --cursor (a raw page number, pass-through from _meta.next_cursor)
 or use --all to fetch every page.`
@@ -60,10 +68,15 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 		}
 	}
 
-	cli.NewResolver(client) // populate resolver for output enrichment
+	resolver := cli.NewResolver(client)
 	p := cli.NewPrinter()
 	ctx, cancel := cli.Context()
 	defer cancel()
+
+	query, err := rewriteUserModifiers(ctx, resolver, c.Query)
+	if err != nil {
+		return err
+	}
 
 	limit := c.Limit
 	if limit <= 0 {
@@ -79,7 +92,7 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 	}
 
 	fetch := pageCursorFetch(func(page int) ([]slack.SearchMessage, *slack.Paging, error) {
-		msgs, err := client.User().SearchMessagesContext(ctx, c.Query, slack.SearchParameters{
+		msgs, err := client.User().SearchMessagesContext(ctx, query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,
 			Count:         limit,
@@ -129,10 +142,15 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 		}
 	}
 
-	cli.NewResolver(client) // populate resolver for output enrichment
+	resolver := cli.NewResolver(client)
 	p := cli.NewPrinter()
 	ctx, cancel := cli.Context()
 	defer cancel()
+
+	query, err := rewriteUserModifiers(ctx, resolver, c.Query)
+	if err != nil {
+		return err
+	}
 
 	limit := c.Limit
 	if limit <= 0 {
@@ -148,7 +166,7 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 	}
 
 	fetch := pageCursorFetch(func(page int) ([]slack.File, *slack.Paging, error) {
-		files, err := client.User().SearchFilesContext(ctx, c.Query, slack.SearchParameters{
+		files, err := client.User().SearchFilesContext(ctx, query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,
 			Count:         limit,

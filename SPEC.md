@@ -938,6 +938,20 @@ $ slack search messages "deploy failed" --limit=2
 
 Supports Slack search modifiers in the query string: `in:#channel`, `from:@user`, `has:link`, `has:reaction`, `before:2024-03-01`, `after:2024-02-01`, etc.
 
+`@user` in `from:`, `to:`, and `in:` is resolved before the query ships. Slack's
+search API matches `from:@handle` and `from:<@Uxxx>` but silently matches nothing
+on `from:@Real Name`, `from:@Uxxx`, or `from:"Real Name"` (verified 2026-09-21).
+The CLI resolves the name through the user cache (handle, display name, real
+name, email, or ID) and rewrites the modifier to `from:<@Uxxx>`. An unquoted
+multi-word name extends to the next modifier-shaped token; the longest prefix
+that resolves wins, so `from:@Alice Adams skypilot` resolves Alice Adams and
+keeps `skypilot` as free text. Quoted forms `from:"@Alice Adams"` and
+`from:@"Alice Adams"` take the name whole. Values not starting with `@`
+(`in:#general`, `from:<@U01XYZ>`) pass through untouched. A name that does not
+resolve fails with `user_not_found` (exit 1) before any search call. A name two
+users share resolves to whichever the cache indexed first. Applies to `search
+files` too.
+
 Errors:
 
 - `missing_user_token` (exit 2): Search requires a user token. Set `SLACK_USER_TOKEN` or re-run `slack auth login`.

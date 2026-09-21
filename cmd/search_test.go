@@ -346,3 +346,87 @@ func TestSearchMessages_AllAndCursorMutuallyExclusive(t *testing.T) {
 		t.Fatal("expected error for --all with --cursor")
 	}
 }
+
+// usersListAlice serves a one-page users.list with Alice Adams (@alice).
+func usersListAlice(mux *http.ServeMux) {
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"ok": true,
+			"members": []map[string]any{
+				{"id": "U01XYZ", "name": "alice", "real_name": "Alice Adams", "profile": map[string]any{"display_name": "alice", "real_name": "Alice Adams"}},
+			},
+			"response_metadata": map[string]string{"next_cursor": ""},
+		})
+	})
+}
+
+// A from:@Real Name modifier reaches Slack as from:<@Uxxx>. Slack's search
+// silently matches nothing on the raw form (verified live 2026-09-21), so the
+// assertion is on the query string the API receives, not on the rows.
+func TestSearchMessages_RewritesUserModifiers(t *testing.T) {
+	mux := http.NewServeMux()
+	usersListAlice(mux)
+	var gotQuery string
+	mux.HandleFunc("/api/search.messages", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotQuery = r.Form.Get("query")
+		_ = json.NewEncoder(w).Encode(searchResponse(nil, 1, 1, 0))
+	})
+
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-test")
+	if _, err := runWithMock(t, mux, "search", "messages", "skypilot from:@Alice Adams in:#general"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "skypilot from:<@U01XYZ> in:#general"; gotQuery != want {
+		t.Errorf("query sent = %q, want %q", gotQuery, want)
+	}
+}
+
+func TestSearchFiles_RewritesUserModifiers(t *testing.T) {
+	mux := http.NewServeMux()
+	usersListAlice(mux)
+	var gotQuery string
+	mux.HandleFunc("/api/search.files", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotQuery = r.Form.Get("query")
+		writeJSON(w, map[string]any{
+			"ok": true,
+			"files": map[string]any{
+				"matches": []map[string]any{},
+				"paging":  map[string]any{"count": 0, "total": 0, "page": 1, "pages": 1},
+				"total":   0,
+			},
+		})
+	})
+
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-test")
+	if _, err := runWithMock(t, mux, "search", "files", "report from:@alice"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "report from:<@U01XYZ>"; gotQuery != want {
+		t.Errorf("query sent = %q, want %q", gotQuery, want)
+	}
+}
+
+// An unresolvable @name fails before any search call: the old behavior was a
+// clean empty page, exit 0.
+func TestSearchMessages_UnresolvedUserModifierFails(t *testing.T) {
+	mux := http.NewServeMux()
+	usersListAlice(mux)
+	mux.HandleFunc("/api/search.messages", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("search.messages must not be called when a user modifier fails to resolve")
+	})
+
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-test")
+	out, err := runWithMock(t, mux, "search", "messages", "skypilot from:@Carol Chen")
+	var oe *output.Error
+	if !errors.As(err, &oe) {
+		t.Fatalf("expected *output.Error, got %v (stdout: %q)", err, out)
+	}
+	if oe.Err != "user_not_found" || oe.Input != "@Carol Chen" {
+		t.Errorf("got Err=%q Input=%q, want user_not_found / @Carol Chen", oe.Err, oe.Input)
+	}
+	if nonEmptyLines(out) != nil {
+		t.Errorf("expected no stdout, got %q", out)
+	}
+}
