@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.0.5](https://github.com/tammersaleh/slack-cli/compare/v5.0.4...v5.0.5) (2026-09-29)
+
+
+### Bug Fixes
+
+* document per-emoji reaction search modifiers ([2ff276f](https://github.com/tammersaleh/slack-cli/commit/2ff276fb424f7dc55839fdd6daa9c328eb928114))
+
 ## [5.0.4](https://github.com/tammersaleh/slack-cli/compare/v5.0.3...v5.0.4) (2026-09-21)
 
 
