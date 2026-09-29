@@ -936,7 +936,7 @@ $ slack search messages "deploy failed" --limit=2
 {"_meta":{"has_more":true,"next_cursor":"c2VhcmNo"}}
 ```
 
-Supports Slack search modifiers in the query string: `in:#channel`, `from:@user`, `has:link`, `has:reaction`, `before:2024-03-01`, `after:2024-02-01`, etc.
+Supports Slack search modifiers in the query string: `in:#channel`, `from:@user`, `has:link`, `has:reaction`, `has::eyes:` (a specific emoji reaction; `has:my::eyes:` for your own), `before:2024-03-01`, `after:2024-02-01`, etc.
 
 `@user` in `from:`, `to:`, and `in:` is resolved before the query ships. Slack's
 search API matches `from:@handle` and `from:<@Uxxx>` but silently matches nothing

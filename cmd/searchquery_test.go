@@ -85,6 +85,7 @@ func TestRewriteUserModifiers(t *testing.T) {
 		{"bare id rewritten to mention", "from:@U03ABC", "from:<@U03ABC>"},
 		{"mention form untouched", "from:<@U01XYZ> x", "from:<@U01XYZ> x"},
 		{"other modifiers untouched", "has:link after:2026-01-01 is:thread", "has:link after:2026-01-01 is:thread"},
+		{"emoji reaction modifiers untouched", "has::eyes: has:my::white_check_mark: hasmy::eyes:", "has::eyes: has:my::white_check_mark: hasmy::eyes:"},
 		{"two users", "from:@Alice Adams to:@Bob Brown", "from:<@U01XYZ> to:<@U02MGR>"},
 		{"span stops at quoted phrase", `from:@alice "exact phrase"`, `from:<@U01XYZ> "exact phrase"`},
 		{"lone at untouched", "from:@ x", "from:@ x"},
@@ -112,6 +113,7 @@ func TestRewriteUserModifiers_Unresolved(t *testing.T) {
 	}{
 		{"unknown handle", "skypilot from:@carol", "@carol"},
 		{"unknown multi-word reports whole span", "skypilot from:@Carol Chen in:#general", "@Carol Chen"},
+		{"unknown multi-word span stops at emoji reaction modifier", "from:@Carol Chen has::eyes:", "@Carol Chen"},
 		{"unknown quoted", `from:"@Carol Chen"`, "@Carol Chen"},
 		{"unknown quoted without at", `from:"Carol Chen"`, "@Carol Chen"},
 		{"dangling quote at end of query is a bad name, not a panic", `skypilot from:@"`, `@"`},

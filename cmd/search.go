@@ -30,6 +30,7 @@ token (xoxp-) since bot tokens can't search. Combine modifiers freely:
   to:@user             DMs to this user
   after:YYYY-MM-DD     / before:YYYY-MM-DD / on:YYYY-MM-DD / during:month
   has:link             / has:pin / has:reaction / has:file / has:image
+  has::eyes:           has this emoji reaction (has:my::eyes: for your own)
   is:thread            / is:saved / is:dm / is:mpdm
 
 Example:

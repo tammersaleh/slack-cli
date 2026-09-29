@@ -34,3 +34,14 @@ func TestWorkspaceFlagHelp_IDOnly(t *testing.T) {
 		t.Errorf("--workspace help should say the value is a team ID: %q", help)
 	}
 }
+
+// Slack's per-emoji reaction filters aren't guessable from the generic
+// has:reaction, so the search help must name them.
+func TestSearchMessagesHelp_EmojiReactionModifiers(t *testing.T) {
+	help := cmd.SearchMessagesCmd{}.Help()
+	for _, want := range []string{"has::eyes:", "has:my::eyes:"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("search messages help should mention %q", want)
+		}
+	}
+}

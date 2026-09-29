@@ -156,6 +156,8 @@ Query supports Slack's search modifiers. Combine freely:
   fails with `user_not_found` rather than an empty result.
 - `after:YYYY-MM-DD` / `before:YYYY-MM-DD` / `on:YYYY-MM-DD` / `during:month`
 - `has:link` / `has:pin` / `has:reaction` / `has:file` / `has:image`
+- `has::eyes:` - has a specific emoji reaction (emoji code with its colons);
+  `has:my::eyes:` - you reacted with it
 - `is:thread` - messages in threads; `is:saved` / `is:dm` / `is:mpdm`
 
 Example: `"deploy blocker in:#general from:@alice after:2026-01-01"`

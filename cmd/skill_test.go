@@ -160,6 +160,8 @@ func TestSkill_DiscoverabilityContent(t *testing.T) {
 		"`from:@user`",
 		"`after:YYYY-MM-DD`",
 		"`has:link`",
+		"`has::eyes:`",
+		"`has:my::eyes:`",
 		// Channel types explained (mpim/im are not self-documenting).
 		"`mpim`",
 		"`im`",
