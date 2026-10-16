@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.0](https://github.com/tammersaleh/slack-cli/compare/v5.0.5...v5.1.0) (2026-10-16)
+
+
+### Features
+
+* add --markdown input to draft create and update ([1adea9a](https://github.com/tammersaleh/slack-cli/commit/1adea9a1ab5949447d2737faf3f86a7b6cf49c9b))
+
 ## [5.0.5](https://github.com/tammersaleh/slack-cli/compare/v5.0.4...v5.0.5) (2026-09-29)
 
 
