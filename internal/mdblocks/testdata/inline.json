@@ -1,0 +1,18 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"Plain "},
+   {"type":"text","text":"bold","style":{"bold":true}},
+   {"type":"text","text":" "},
+   {"type":"text","text":"italic","style":{"italic":true}},
+   {"type":"text","text":" "},
+   {"type":"text","text":"strike","style":{"strike":true}},
+   {"type":"text","text":" "},
+   {"type":"text","text":"code","style":{"code":true}},
+   {"type":"text","text":" and "},
+   {"type":"text","text":"both","style":{"bold":true,"italic":true}},
+   {"type":"text","text":" then "},
+   {"type":"text","text":"bold ","style":{"bold":true}},
+   {"type":"text","text":"and strike","style":{"bold":true,"strike":true}},
+   {"type":"text","text":" end","style":{"bold":true}},
+   {"type":"text","text":"."}]}
+]}]

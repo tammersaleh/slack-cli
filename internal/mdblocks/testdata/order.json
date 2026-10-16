@@ -1,0 +1,10 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Intro line\n"}]},
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"first"}]},
+   {"type":"rich_text_section","elements":[{"type":"text","text":"second"}]}]},
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Between the lists\n"}]},
+ {"type":"rich_text_list","style":"ordered","indent":0,"offset":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"one"}]},
+   {"type":"rich_text_section","elements":[{"type":"text","text":"two"}]}]}
+]}]

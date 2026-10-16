@@ -1,0 +1,16 @@
+[
+ {
+  "type": "rich_text",
+  "elements": [
+   {
+    "type": "rich_text_section",
+    "elements": [
+     {
+      "type": "text",
+      "text": "Literal *stars*, :wave: and <@U01XYZ> and a lone colon: done.\nSoft break here\nhard break there\nbackslash break here\nEntity & and escaped &amp; stay apart."
+     }
+    ]
+   }
+  ]
+ }
+]

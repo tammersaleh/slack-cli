@@ -297,10 +297,15 @@ shortcut.
 
 ```
 slack draft list [--active] [--include-sent] [--include-deleted] [--limit N]
+slack draft create <recipient>... --markdown [--print-payload] [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] < body.md
 slack draft create <recipient>... [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] < payload.json
-slack draft update <draft-id> [--at RFC3339] [--clear-schedule] [--table FILE] [< payload.json]
+slack draft update <draft-id> [--markdown [--print-payload]] [--at RFC3339] [--clear-schedule] [--table FILE] [< body]
 slack draft delete <draft-id>...
 ```
+
+Write the body as Markdown with `--markdown` unless you need a block shape
+the subset below cannot express. Hand-rolled rich_text JSON is where the
+bugs live (lost `*italic*`, unrecognized `1.` lists, reordered blocks).
 
 `create` takes either one channel (`#name`, bare name, `Cxxx`/`Dxxx`) or
 one-or-more users (`@name`, email, `Uxxx`) for a DM/MPDM that need not exist
@@ -318,6 +323,63 @@ every user-recipient form need only the session credential.
 slack draft create @alice < payload.json            # new 1:1 DM
 slack draft create @alice @bob U07XYZ < payload.json # new MPDM (<=8 people)
 ```
+
+#### Markdown for drafts (`--markdown`)
+
+```
+cat <<'MD' | slack draft create '#general' --markdown
+# Weekly recap
+
+Shipped **three** fixes, see [the changelog](https://example.com/log).
+
+1. ordered lists work
+2. so does nesting
+   - with bullets inside
+- and bullets at the top
+
+> quoted text
+
+Ping <@U01XYZ> or @here. :tada:
+MD
+```
+
+The CLI converts the Markdown to one `rich_text` block and runs it through
+the same shape validation as hand-written JSON. `--print-payload` prints the
+converted `{"blocks":[...]}` (plus `attachments` with `--table`) and creates
+nothing - use it to inspect a conversion. `--table` composes: Markdown body
+plus a table attachment.
+
+Supported:
+
+- Paragraphs. A line break inside a paragraph (soft or hard) stays a line break. Every paragraph that has something after it ends with `\n`, so a Markdown paragraph break is at least a line break in Slack.
+- Headings: rendered as a **bold** line terminated with `\n`. The level is dropped.
+- `- ` / `* ` bullets and `1.` ordered lists, nested to three levels by indentation. An ordered list may start at any number; numbering continues across a nested list.
+- `**bold**`, `*italic*`, `~~strike~~` (two tildes, GFM), `` `code` ``. Single `*` is italic, Markdown semantics - not Slack mrkdwn, where it is bold.
+- Fenced and indented code blocks. The fence language tag is dropped.
+- `> ` quotes holding paragraphs only.
+- `[text](https://url)`, bare URLs, `<https://url>`, emails. Links must be absolute http, https, or mailto. Link titles and formatting inside the link text are dropped (Slack `link` elements hold plain text).
+- `:emoji:` and `:emoji::skin-tone-3:`.
+- `<@U01XYZ>` / `<@W01XYZ>` user mentions, `<#C01ABC>` / `<#C01ABC|name>` channel mentions (the label is dropped), `@here` / `@channel` / `@everyone`.
+- Backslash escapes: `\*`, `\:`, `\@`, `\<` stay literal, as does anything inside a code span or code block.
+
+The only things dropped are the ones named above: heading level, fence
+language, link title, link-text formatting, and the `<#C|label>` label.
+Everything else outside the subset is rejected with `invalid_markdown` and a
+line number:
+`@name` mentions (resolve the id first with `slack user info @name` and write
+`<@Uxxx>`), horizontal rules, images, HTML, pipe tables (use `--table`), a
+list nested more than three deep, a list item with more than one paragraph,
+a quote holding a list, code block, or nested quote, a mention or emoji
+inside link text, a relative or non-http(s)/mailto link, and an empty list
+item, quote, or code block (Slack rejects an empty text inline).
+
+Verified live 2026-10-16 through the drafts API: every construct above round-trips
+through `drafts.create` and `drafts.list` byte for byte and survives the
+reconciliation window. Desktop compose-box rendering of italic/strike,
+ordered-list `offset`, and whether the trailing `\n` after a heading or
+paragraph shows as a blank line or a single line break was not inspected by
+the CLI author; check the draft in the client the first time you rely on one
+of those.
 
 #### Block Kit for drafts
 

@@ -1,0 +1,12 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"Status for ","style":{"bold":true}},
+   {"type":"text","text":"Mission Control","style":{"bold":true,"italic":true}},
+   {"type":"text","text":"\n"}]},
+ {"type":"rich_text_section","elements":[{"type":"text","text":"A paragraph.\n"}]},
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"Ends with ","style":{"bold":true}},
+   {"type":"emoji","name":"wave"},
+   {"type":"text","text":"\n"}]},
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Another paragraph."}]}
+]}]

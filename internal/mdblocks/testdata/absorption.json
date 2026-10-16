@@ -1,0 +1,20 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"Ends "},
+   {"type":"text","text":"bold","style":{"bold":true}},
+   {"type":"text","text":"\n"}]},
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]},
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"Heading before quote","style":{"bold":true}},
+   {"type":"text","text":"\n"}]},
+ {"type":"rich_text_quote","elements":[{"type":"text","text":"quoted"}]},
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Plain sentence before a list\n"}]},
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"item two"}]}]},
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"Ends with "},
+   {"type":"user","user_id":"U01XYZ"},
+   {"type":"text","text":"\n"}]},
+ {"type":"rich_text_preformatted","elements":[{"type":"text","text":"code"}]}
+]}]

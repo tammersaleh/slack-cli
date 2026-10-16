@@ -1,0 +1,9 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Run this:\n"}]},
+ {"type":"rich_text_preformatted","elements":[{"type":"text","text":"go run .\necho \"`done`\""}]},
+ {"type":"rich_text_preformatted","elements":[{"type":"text","text":"indented block"}]},
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"Then "},
+   {"type":"text","text":"inline *not* :wave: <@U01XYZ>","style":{"code":true}},
+   {"type":"text","text":" stays literal."}]}
+]}]

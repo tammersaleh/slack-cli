@@ -1,0 +1,9 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},
+ {"type":"rich_text_list","style":"ordered","indent":1,"offset":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"x"}]},
+   {"type":"rich_text_section","elements":[{"type":"text","text":"y"}]}]},
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"b"}]}]}
+]}]

@@ -1,0 +1,10 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"parent A"}]}]},
+ {"type":"rich_text_list","style":"bullet","indent":1,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"child"}]}]},
+ {"type":"rich_text_list","style":"bullet","indent":2,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"grandchild"}]}]},
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"parent B"}]}]}
+]}]

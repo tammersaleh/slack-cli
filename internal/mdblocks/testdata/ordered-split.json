@@ -1,0 +1,9 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_list","style":"ordered","indent":0,"offset":2,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"three"}]},
+   {"type":"rich_text_section","elements":[{"type":"text","text":"four"}]}]},
+ {"type":"rich_text_list","style":"bullet","indent":1,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"sub"}]}]},
+ {"type":"rich_text_list","style":"ordered","indent":0,"offset":4,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"five"}]}]}
+]}]

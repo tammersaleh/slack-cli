@@ -1,0 +1,7 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Someone said:\n"}]},
+ {"type":"rich_text_quote","elements":[
+   {"type":"text","text":"first line\nsecond line\n\nsecond paragraph with "},
+   {"type":"text","text":"bold","style":{"bold":true}}]},
+ {"type":"rich_text_section","elements":[{"type":"text","text":"After."}]}
+]}]

@@ -1,0 +1,14 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[
+   {"type":"text","text":"See "},
+   {"type":"link","url":"https://example.com/docs","text":"the docs"},
+   {"type":"text","text":" and "},
+   {"type":"link","url":"https://example.com/b","text":"bold link","style":{"bold":true}},
+   {"type":"text","text":".\nBare "},
+   {"type":"link","url":"https://example.com/bare"},
+   {"type":"text","text":", then "},
+   {"type":"link","url":"https://example.com/auto"},
+   {"type":"text","text":" and mail "},
+   {"type":"link","url":"mailto:alice@example.com","text":"alice@example.com"},
+   {"type":"text","text":"."}]}
+]}]

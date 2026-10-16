@@ -1,0 +1,5 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"loose a"}]},
+   {"type":"rich_text_section","elements":[{"type":"text","text":"loose b"}]}]}
+]}]

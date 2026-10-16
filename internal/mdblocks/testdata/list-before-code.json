@@ -1,0 +1,10 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+   {"type":"rich_text_section","elements":[
+     {"type":"text","text":"item with "},
+     {"type":"link","url":"https://example.com","text":"link"}]},
+   {"type":"rich_text_section","elements":[
+     {"type":"text","text":"item with "},
+     {"type":"emoji","name":"tada"}]}]},
+ {"type":"rich_text_quote","elements":[{"type":"text","text":"quoted"}]}
+]}]

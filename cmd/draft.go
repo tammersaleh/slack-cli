@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/api"
+	"github.com/tammersaleh/slack-cli/internal/mdblocks"
 	"github.com/tammersaleh/slack-cli/internal/output"
 	"github.com/tammersaleh/slack-cli/internal/resolve"
 	"github.com/tammersaleh/slack-cli/internal/slackurl"
@@ -256,11 +257,28 @@ type DraftCreateCmd struct {
 	DateScheduled int64    `help:"Schedule send at Unix epoch (alternative to --at)."`
 	Table         string   `help:"Build a table from a CSV/TSV file and attach it (first row bold)."`
 	NoHeader      bool     `help:"With --table, treat the first row as data, not a bold header."`
+	Markdown      bool     `help:"Read Markdown on stdin instead of Block Kit JSON (see --help for the subset)."`
+	PrintPayload  bool     `help:"With --markdown, print the converted payload as JSON and create nothing."`
 }
 
 func (DraftCreateCmd) Help() string {
-	return `Pipe Block Kit JSON on stdin: either a bare array of top-level
-blocks, or an object {"blocks":[...],"attachments":[...]}.
+	return `Pipe the body on stdin. With --markdown it is Markdown; otherwise it
+is Block Kit JSON - either a bare array of top-level blocks, or an object
+{"blocks":[...],"attachments":[...]}.
+
+Markdown subset: paragraphs, headings (rendered bold, level dropped),
+bullet and ordered lists nested to three levels, **bold**, *italic* (single
+star is italic, not Slack-mrkdwn bold), ~~strike~~, ` + "`code`" + `, fenced and
+indented code blocks, > quotes, [text](https://url), bare URLs, :emoji:,
+<@U01XYZ>, <#C01ABC>, @here/@channel/@everyone. Heading levels, code-fence
+language tags, link titles, formatting inside link text, and <#C01ABC|label>
+labels are dropped. Anything
+else - @name mentions (use <@Uxxx>), ---, images, HTML, pipe tables (use
+--table) - is rejected with invalid_markdown and a line number rather than
+dropped. --print-payload prints the converted payload and creates nothing.
+
+  cat body.md | slack draft create '#general' --markdown
+  cat body.md | slack draft create '#general' --markdown --print-payload | jq .blocks
 
 Top-level blocks must be rich_text - Slack's draft compose editor strips
 section / divider / header / context and bare table blocks when the user
@@ -302,8 +320,13 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	if c.At != "" && c.DateScheduled > 0 {
 		return &output.Error{Err: "invalid_input", Detail: "--at and --date-scheduled are mutually exclusive", Code: output.ExitGeneral}
 	}
+	if c.PrintPayload {
+		if err := checkPrintPayloadFlags(c.Markdown, c.At != "" || c.DateScheduled > 0 || c.Thread != "" || c.Broadcast); err != nil {
+			return err
+		}
+	}
 
-	payload, err := readDraftPayload(cli)
+	payload, err := readDraftPayload(cli, c.Markdown)
 	if err != nil {
 		return err
 	}
@@ -315,6 +338,9 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	}
 	if !payload.hasRenderableContent() {
 		return errNoRenderableContent()
+	}
+	if c.PrintPayload {
+		return printPayload(cli, payload)
 	}
 
 	scheduled := c.DateScheduled
@@ -417,15 +443,20 @@ type DraftUpdateCmd struct {
 	ClearSchedule bool   `help:"Remove scheduled send."`
 	Table         string `help:"Replace attachments with a table built from a CSV/TSV file (first row bold)."`
 	NoHeader      bool   `help:"With --table, treat the first row as data, not a bold header."`
+	Markdown      bool   `help:"Read Markdown on stdin instead of Block Kit JSON; replaces the blocks, keeps attachments."`
+	PrintPayload  bool   `help:"With --markdown, print the converted payload as JSON and update nothing."`
 }
 
 func (DraftUpdateCmd) Help() string {
-	return `Update a draft's content and/or reschedule it. Optional Block Kit
-JSON on stdin: a bare blocks array, or an object {"blocks":...,
-"attachments":...}. Each field is independent - a provided field replaces,
-an absent one is preserved; {"attachments":[]} clears attachments. --table
-replaces the attachments with a table built from a CSV/TSV file. Same
-rich_text-only rule for top-level blocks as draft create.
+	return `Update a draft's content and/or reschedule it. Optional body on
+stdin: Markdown with --markdown (replaces the blocks, keeps attachments; same
+subset as draft create), or Block Kit JSON - a bare blocks array, or an
+object {"blocks":...,"attachments":...}. Each field is independent - a
+provided field replaces, an absent one is preserved; {"attachments":[]}
+clears attachments. --table replaces the attachments with a table built
+from a CSV/TSV file. Same rich_text-only rule for top-level blocks as draft
+create. --print-payload prints what this invocation would submit (not the
+merged draft - the existing draft is not fetched) and updates nothing.
 
 If Slack Desktop has already tombstoned the draft (is_deleted=true), the
 CLI transparently creates a replacement at the same destination - carrying
@@ -433,6 +464,7 @@ its blocks and attachments - and emits the new draft ID to stdout.
 
 Examples:
 
+  slack draft update Dr01234 --markdown < body.md    # replace blocks from Markdown
   slack draft update Dr01234 < blocks.json           # replace blocks
   echo '{"attachments":[{"blocks":[{"type":"table","rows":[...]}]}]}' | slack draft update Dr01234
   slack draft update Dr01234 --table report.tsv      # replace attachments with a table
@@ -455,9 +487,15 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--at, --date-scheduled, and --clear-schedule are mutually exclusive", Code: output.ExitGeneral}
 	}
 
+	if c.PrintPayload {
+		if err := checkPrintPayloadFlags(c.Markdown, scheduledFlags > 0); err != nil {
+			return err
+		}
+	}
+
 	// stdin payload (blocks and/or attachments); absent fields keep their
 	// existing values.
-	payload, err := readDraftPayload(cli)
+	payload, err := readDraftPayload(cli, c.Markdown)
 	if err != nil {
 		return err
 	}
@@ -466,6 +504,12 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 	}
 	if payload.empty() && scheduledFlags == 0 {
 		return &output.Error{Err: "invalid_input", Detail: "No update specified: pipe Block Kit JSON (blocks and/or attachments) on stdin, pass --table, or pass --at / --date-scheduled / --clear-schedule", Code: output.ExitGeneral}
+	}
+	if c.PrintPayload {
+		// Preview shows what this invocation would submit, not the merged
+		// draft: the existing draft is not fetched, so preserved attachments
+		// are not shown.
+		return printPayload(cli, payload)
 	}
 
 	client, err := cli.NewSessionClient()
@@ -896,12 +940,42 @@ func boldTableCell(s string) map[string]any {
 	}}
 }
 
+// checkPrintPayloadFlags rejects --print-payload combinations that would
+// silently do nothing: it needs --markdown (there is nothing to preview for
+// JSON the caller already has), and write-only flags (scheduling, thread)
+// have no effect on a preview.
+func checkPrintPayloadFlags(markdown, writeOnlyFlags bool) error {
+	if !markdown {
+		return &output.Error{Err: "invalid_input", Detail: "--print-payload requires --markdown; it previews the Markdown conversion", Code: output.ExitGeneral}
+	}
+	if writeOnlyFlags {
+		return &output.Error{Err: "invalid_input", Detail: "--print-payload creates nothing, so --at, --date-scheduled, --clear-schedule, --thread, and --broadcast cannot be combined with it", Code: output.ExitGeneral}
+	}
+	return nil
+}
+
+// printPayload emits the payload this invocation would submit as one JSONL
+// row ({"blocks":[...]} plus "attachments" when present) and a _meta trailer.
+func printPayload(cli *CLI, payload draftPayload) error {
+	p := cli.NewPrinter()
+	row := map[string]any{"blocks": json.RawMessage(payload.blocksOrEmpty())}
+	if payload.hasAttachments {
+		row["attachments"] = json.RawMessage(payload.attachments)
+	}
+	if err := p.PrintItem(row); err != nil {
+		return err
+	}
+	return p.PrintMeta(output.Meta{})
+}
+
 // readDraftPayload reads and shape-validates the stdin payload, if any. Returns
 // an empty payload when stdin is a TTY or nothing is piped. Shape validation
 // runs here; the renderable-content rule is applied by the caller (create
 // requires content in what's provided; update may inherit it from the existing
-// draft).
-func readDraftPayload(cli *CLI) (draftPayload, error) {
+// draft). With markdown set, stdin is Markdown and is converted to a bare
+// blocks array first; the result goes through the same shape validation as
+// caller-supplied JSON.
+func readDraftPayload(cli *CLI, markdown bool) (draftPayload, error) {
 	// In tests, cli.in is overridden with a bytes.Reader - always try to read.
 	// In production, skip the read if stdin is a terminal.
 	if cli.in == nil {
@@ -920,8 +994,23 @@ func readDraftPayload(cli *CLI) (draftPayload, error) {
 	if strings.TrimSpace(string(raw)) == "" {
 		return draftPayload{}, nil
 	}
+	if markdown {
+		blocks, err := mdblocks.Convert(raw)
+		if err != nil {
+			return draftPayload{}, &output.Error{
+				Err:    "invalid_markdown",
+				Detail: err.Error(),
+				Hint:   markdownHint,
+				Code:   output.ExitGeneral,
+			}
+		}
+		raw = blocks
+	}
 	return parseDraftPayload(raw)
 }
+
+// markdownHint summarizes the Markdown subset for the invalid_markdown error.
+const markdownHint = "Supported: paragraphs, headings (rendered bold), bullet/ordered lists nested to 3 levels, **bold**, *italic*, ~~strike~~, `code`, fenced code, > quotes, [text](https://url), :emoji:, <@Uxxx>, <#Cxxx>, @here. Use --print-payload to inspect the conversion."
 
 // parseDraftPayload accepts either a bare blocks array or a {blocks,
 // attachments} object and shape-validates whatever is present.
@@ -949,7 +1038,7 @@ func parseDraftPayload(raw []byte) (draftPayload, error) {
 	default:
 		return p, &output.Error{
 			Err:    "invalid_blocks",
-			Detail: "stdin must be a JSON array of blocks or an object with \"blocks\" and/or \"attachments\". Tables go in attachments (or use --table); prose goes in top-level rich_text blocks.",
+			Detail: "stdin must be a JSON array of blocks or an object with \"blocks\" and/or \"attachments\". Tables go in attachments (or use --table); prose goes in top-level rich_text blocks. To write Markdown instead, pass --markdown.",
 			Hint:   skillHint,
 			Code:   output.ExitGeneral,
 		}

@@ -8,6 +8,7 @@ require (
 	github.com/refraction-networking/utls v1.8.2
 	github.com/slack-go/slack v0.18.0
 	github.com/syndtr/goleveldb v1.0.0
+	github.com/yuin/goldmark v1.8.6
 	golang.org/x/crypto v0.48.0
 	golang.org/x/net v0.51.0
 	modernc.org/sqlite v1.46.1

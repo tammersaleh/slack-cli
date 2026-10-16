@@ -1499,11 +1499,91 @@ slack draft create <recipient>... [flags]
   --date-scheduled    Schedule send at Unix epoch (alternative to --at).
   --table             Build a table from a CSV/TSV file and attach it.
   --no-header         With --table, treat the first row as data, not a bold header.
+  --markdown          stdin is Markdown, converted to one rich_text block.
+  --print-payload     With --markdown: print the converted payload, create nothing.
 
-Block Kit JSON on stdin: either a bare array of top-level blocks, or an
-object {"blocks":[...],"attachments":[...]}. Top-level blocks must be
-rich_text; tables go in attachments[].blocks[] (or use --table). No
-plain-text shortcut - this CLI is for agents, which emit structured JSON.
+Body on stdin. Block Kit JSON by default: either a bare array of top-level
+blocks, or an object {"blocks":[...],"attachments":[...]}. Top-level blocks
+must be rich_text; tables go in attachments[].blocks[] (or use --table).
+With --markdown, stdin is Markdown (subset below). No plain-text shortcut.
+```
+
+##### Markdown input
+
+`--markdown` converts stdin through `internal/mdblocks` into exactly one
+top-level `rich_text` block (Desktop flattens adjacent `rich_text` blocks, so
+one is the only stable shape) and then runs the result through the same
+`validateBlockShapes` gate as caller-supplied JSON. Blank stdin with
+`--markdown` is "nothing provided" (so `--table` alone still makes an
+attachments-only draft); non-blank stdin that converts to nothing is
+`invalid_markdown`. The parser is goldmark (CommonMark) with the GFM
+strikethrough, linkify, and table extensions, plus inline parsers for the
+Slack tokens. Every conversion is deterministic.
+
+| Markdown | rich_text |
+|---|---|
+| paragraph | `rich_text_section`; soft and hard line breaks both become `\n`; terminated with `\n` when any container follows |
+| `# heading` (any level) | `rich_text_section`, all text bold, terminated by a `\n` text inline so a blank line follows; level dropped |
+| `- ` / `* ` list | `rich_text_list` `style:bullet` |
+| `N. ` list | `rich_text_list` `style:ordered`, `offset: N-1`; a later segment of the same list continues the count |
+| nested list (indent) | a separate `rich_text_list` with `indent` 1 or 2, in source order; the parent list splits around it |
+| fenced or indented code | `rich_text_preformatted`; fence language tag dropped |
+| `> ` quote | `rich_text_quote`; paragraphs join with `\n\n` |
+| `**x**` `*x*` `~~x~~` `` `x` `` | text `style` bold / italic / strike / code, merged across nesting |
+| `[t](url)`, bare URL, `<url>`, email | `link` with `url`, `text` when it differs, inherited bold/italic/strike; title and formatting inside the label dropped |
+| `:name:`, `:name::skin-tone-N:` | `emoji` |
+| `<@Uxxx>` / `<@Wxxx>` | `user` |
+| `<#Cxxx>` / `<#Cxxx\|label>` | `channel`; label dropped |
+| `@here` `@channel` `@everyone` | `broadcast` |
+| `\*` `\:` `\@` `\<`, code spans | literal text |
+
+Every `rich_text_section` with a successor gets its trailing text extended
+with `\n` (or a separate `\n` text inline when the last inline is styled, a
+link, emoji, user, channel, or broadcast). Before a list, quote, or code
+block that is the absorption rule; before another section it keeps the
+Markdown paragraph break from collapsing, since Slack's own composer
+encodes paragraph structure as `\n` inside text rather than as section
+boundaries. Whether it renders as a blank line or one line break in the
+compose box is pending a Desktop check. The converter does this itself;
+`validateBlockShapes` stays as the backstop, so `invalid_blocks` after a
+successful conversion means a converter defect.
+
+Rejected with `invalid_markdown` (exit 1), detail prefixed `line N:`:
+
+- `@name` and `<@name>` where the name is not a `U`/`W` id - "mention people as `<@Uxxx>`". Symbolic resolution is deferred until name collisions resolve deterministically (see `todo/at-name-resolution-picks-a-random-user-when-names-collide.md`).
+- Horizontal rule, image, HTML block, inline HTML, pipe table (points at `--table`).
+- A list nested deeper than indent 2, a list item holding more than one paragraph, a quote holding anything but paragraphs.
+- A mention, channel, emoji, or image inside link text (Slack `link` elements hold text only).
+- An empty `-` list item, an item whose only content is a nested list, an empty `>` quote, or an empty code block: `drafts.create` rejects an empty text inline with `invalid_message` (verified live 2026-10-16), so these can be neither kept nor dropped.
+- A link whose URL is not absolute `http`, `https`, or `mailto`.
+
+Boundary rules: `:` is an emoji delimiter only when the character before the
+opening colon and after the closing one is not a letter, digit, or `_`
+(`10:30:45` is a time); `@` starts a mention only when the preceding
+character is not a letter, digit, `_`, or `<` (`alice@example.com` is an
+email, which linkify turns into a `mailto:` link).
+
+`--print-payload` requires `--markdown` and rejects `--at`,
+`--date-scheduled`, `--thread`, and `--broadcast` (on `update`: any schedule
+flag) as `invalid_input`. It converts, applies `--table`, validates, prints
+one row - `{"blocks":[...]}` plus `"attachments"` when present - and the
+`_meta` trailer, and makes no API call: recipients and the draft id are
+accepted syntactically but never resolved. On `update` it shows what this
+invocation would submit, not the merged draft, so preserved attachments
+are not shown.
+
+Verified live 2026-10-16 (self-DM, session token, Enterprise Grid): a draft
+holding every construct in the table round-tripped through `drafts.create`
+and `drafts.list` with server blocks byte-identical to the payload sent, and
+was not tombstoned after 25s. Not inspected: Desktop compose-box rendering
+of italic and strike, of `offset` on an ordered list, and of the trailing
+`\n` after a heading or paragraph as a blank line versus a line break.
+
+```
+$ cat body.md | slack draft create '#general' --markdown
+$ cat body.md | slack draft create '#general' --markdown --print-payload
+{"blocks":[{"type":"rich_text","elements":[...]}]}
+{"_meta":{"has_more":false}}
 ```
 
 Recipients are either one channel or one-or-more users:
@@ -1577,8 +1657,9 @@ Errors:
 - `channel_not_found` (exit 1): No channel matching the input.
 - `user_not_found` (exit 1): One or more user recipients couldn't be resolved (the message lists every unresolved input).
 - `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
+- `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset above; the detail names the line.
 - `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body and no table attachment).
-- `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
+- `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, `--print-payload` without `--markdown` or with a schedule/thread flag, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
 - `not_authed` (exit 2): No session token, or - for a `#name`/bare-name
   channel recipient only - the selected workspace credential cannot be
@@ -1597,11 +1678,15 @@ slack draft update <draft_id> [flags]
   --clear-schedule    Remove scheduled send.
   --table             Replace attachments with a table built from a CSV/TSV file.
   --no-header         With --table, treat the first row as data, not a bold header.
+  --markdown          stdin is Markdown; replaces blocks, preserves attachments.
+  --print-payload     With --markdown: print what would be submitted, update nothing.
 
-Optional Block Kit JSON on stdin: a bare blocks array, or an object
+Optional body on stdin. Block Kit JSON: a bare blocks array, or an object
 {"blocks":...,"attachments":...}. Each field is independent - a provided
 field replaces, an absent one is preserved; {"attachments":[]} clears
-attachments. Omit stdin entirely for a schedule-only update.
+attachments. With --markdown the body converts to a bare blocks array, so
+it replaces blocks and preserves attachments through the same rule. Omit
+stdin entirely for a schedule-only update.
 ```
 
 `client_last_updated_ts` is fetched from `drafts.list` and padded to 7
@@ -1631,6 +1716,7 @@ Errors:
 - `draft_not_found` (exit 1): No draft with the given id.
 - `invalid_input` (exit 1): No change specified, conflicting schedule flags, or `--table` together with stdin attachments.
 - `invalid_blocks` (exit 1): stdin isn't a valid blocks array / `{blocks, attachments}` object, or the resulting draft has no renderable content.
+- `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset (see `draft create`).
 - `not_authed` (exit 2): No session token.
 
 Slack API: `drafts.update` (or `drafts.create` on auto-replace)
