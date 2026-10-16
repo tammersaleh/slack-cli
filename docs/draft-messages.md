@@ -35,6 +35,35 @@ Two independent failure modes:
 Block type is the only variable that matters. Host, user-agent, TLS
 fingerprint, and the `last_updated_client` stamp are all irrelevant.
 
+## Markdown input
+
+`draft create --markdown` and `draft update --markdown` convert Markdown
+into the one-rich_text shape above via `internal/mdblocks` (goldmark), then
+run `validateBlockShapes` on the result. The subset, the mapping table, and
+the rejection list live in SPEC.md under `slack draft create`.
+
+Verified 2026-10-16 against the live `drafts.*` API, self-DM, session
+token on an Enterprise Grid org. One draft held every supported construct:
+a heading, a paragraph with bold / italic / strike / code / bold+italic
+and a trailing emoji, a bullet list with a link and an emoji in items plus
+nesting to indent 2 and a sibling after the nested lists, an ordered list
+starting at 3 (`offset: 2`) split by a nested bullet list and resuming at
+`offset: 4`, a two-paragraph quote, a fenced code block, a `user` element,
+a `broadcast`, and in follow-up probes a `channel` element and a
+skin-toned emoji (`name: "wave::skin-tone-3"`).
+
+| Check | Result |
+|---|---|
+| `drafts.create` accepts the payload | ok, every probe |
+| `drafts.list` blocks after 25s vs payload sent | byte-identical (plus `block_id`) |
+| `is_deleted` after 25s | false, every probe |
+| Desktop compose box: italic, strike, `offset` numbering, whether the trailing `\n` after a heading or paragraph is a blank line or a line break | not inspected - the probe draft was left in the self-DM for a human to open |
+
+The reconciliation window was observed with Desktop running; whether the
+Drafts panel was opened during it is not known, so "not tombstoned" is
+necessary rather than sufficient evidence. The CLI author's claim is
+limited to the API round-trip.
+
 ## Endpoints
 
 All four endpoints are POST against `https://slack.com/api/<method>`,
