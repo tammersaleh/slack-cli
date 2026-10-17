@@ -3,10 +3,12 @@ package cmd_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -73,8 +75,10 @@ func (s *sectionStore) applySet(form map[string][]string) string {
 	if v, ok := form["emoji"]; ok && len(v) > 0 {
 		emoji = v[0]
 	}
+	// Case-insensitive, and a section's own name never collides (both
+	// verified live 2026-10-16).
 	for _, sid := range s.order {
-		if sid != id && s.names[sid] == name {
+		if sid != id && strings.EqualFold(s.names[sid], name) {
 			return "already_exists"
 		}
 	}
@@ -712,6 +716,11 @@ func TestSectionRename_SameName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// State is identical before and after, so the row alone proves nothing -
+	// the write must actually have gone out.
+	if len(store.setCalls) != 1 {
+		t.Fatalf("expected one set call, got %d", len(store.setCalls))
+	}
 	row := parseJSON(t, nonEmptyLines(out)[0])
 	if row["name"] != "Westies" {
 		t.Errorf("expected name='Westies', got %v", row["name"])
@@ -721,19 +730,26 @@ func TestSectionRename_SameName(t *testing.T) {
 // Whitespace-only names are rejected locally. Slack stores an empty name as
 // "" and says ok (verified live 2026-10-16), so this must never reach the API.
 func TestSectionRename_BlankName(t *testing.T) {
-	store := newSectionStore()
-	store.addSection("S01ABC", "Westies", nil)
-	calls := 0
-	var gotInsert, gotRemove []bulkOp
-	mux := store.mux(&gotInsert, &gotRemove)
-	counting := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		mux.ServeHTTP(w, r)
-	})
-	_, err := runWithMockSession(t, counting, "section", "rename", "S01ABC", "  ")
-	assertOutputErrorCode(t, err, "invalid_input")
-	if calls != 0 {
-		t.Errorf("expected zero API calls, got %d", calls)
+	for _, name := range []string{"", "  ", "\t\n"} {
+		t.Run(fmt.Sprintf("%q", name), func(t *testing.T) {
+			store := newSectionStore()
+			store.addSection("S01ABC", "Westies", nil)
+			var calls atomic.Int32
+			var gotInsert, gotRemove []bulkOp
+			mux := store.mux(&gotInsert, &gotRemove)
+			counting := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				mux.ServeHTTP(w, r)
+			})
+			out, err := runWithMockSession(t, counting, "section", "rename", "S01ABC", name)
+			assertOutputErrorCode(t, err, "invalid_input")
+			if n := calls.Load(); n != 0 {
+				t.Errorf("expected zero API calls, got %d", n)
+			}
+			if out != "" {
+				t.Errorf("expected no stdout, got:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -741,8 +757,11 @@ func TestSectionRename_SectionNotFound(t *testing.T) {
 	store := newSectionStore()
 	store.addSection("S01ABC", "Westies", nil)
 	var gotInsert, gotRemove []bulkOp
-	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S99NOPE", "New")
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S99NOPE", "New")
 	assertOutputErrorCode(t, err, "section_not_found")
+	if out != "" {
+		t.Errorf("expected no stdout, got:\n%s", out)
+	}
 	if len(store.setCalls) != 0 {
 		t.Errorf("set must not be called for an unknown id, got %d calls", len(store.setCalls))
 	}
@@ -753,11 +772,47 @@ func TestSectionRename_AlreadyExists(t *testing.T) {
 	store.addSection("S01ABC", "Westies", nil)
 	store.addSection("S02DEF", "Archive", nil)
 	var gotInsert, gotRemove []bulkOp
-	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "Archive")
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "Archive")
 	assertOutputErrorCode(t, err, "already_exists")
+	if out != "" {
+		t.Errorf("expected no stdout, got:\n%s", out)
+	}
 	if store.names["S01ABC"] != "Westies" {
 		t.Errorf("name must be unchanged after already_exists, got %q", store.names["S01ABC"])
 	}
+}
+
+// Slack's duplicate check is case-insensitive (verified live 2026-10-16).
+func TestSectionRename_AlreadyExists_CaseInsensitive(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Westies", nil)
+	store.addSection("S02DEF", "Archive", nil)
+	var gotInsert, gotRemove []bulkOp
+	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "ARCHIVE")
+	assertOutputErrorCode(t, err, "already_exists")
+}
+
+// Slack stores surrounding whitespace verbatim (verified live 2026-10-16),
+// so the name is sent untrimmed and verified by exact match.
+func TestSectionRename_WhitespacePreserved(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Westies", nil)
+	var gotInsert, gotRemove []bulkOp
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "  Westies 2 ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.setCalls[0]["name"]; len(got) != 1 || got[0] != "  Westies 2 " {
+		t.Errorf("expected untrimmed name sent, got %q", got)
+	}
+	if row := parseJSON(t, nonEmptyLines(out)[0]); row["name"] != "  Westies 2 " {
+		t.Errorf("expected untrimmed name in row, got %v", row["name"])
+	}
+}
+
+func TestSectionRename_SessionTokenRequired(t *testing.T) {
+	_, err := runWithMock(t, http.NewServeMux(), "section", "rename", "S01ABC", "New")
+	assertOutputErrorCode(t, err, "session_token_required")
 }
 
 // The endpoint returns a bare ok:true, so the re-fetch is the only proof.
@@ -779,8 +834,11 @@ func TestSectionRename_EmojiWiped(t *testing.T) {
 	store.addSectionWithEmoji("S01ABC", "Westies", "dog", nil)
 	store.setHook = func() { store.emojis["S01ABC"] = "" }
 	var gotInsert, gotRemove []bulkOp
-	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "New")
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "New")
 	assertOutputErrorCode(t, err, "rename_failed")
+	if out != "" {
+		t.Errorf("expected no stdout, got:\n%s", out)
+	}
 }
 
 func TestSectionRename_SectionVanished(t *testing.T) {
@@ -801,5 +859,8 @@ func assertOutputErrorCode(t *testing.T, err error, code string) {
 	}
 	if oe.Err != code {
 		t.Fatalf("expected error code %q, got %q (%s)", code, oe.Err, oe.Detail)
+	}
+	if oe.Code == 0 {
+		t.Fatalf("expected a nonzero exit code on %q", code)
 	}
 }
