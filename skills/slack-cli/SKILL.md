@@ -285,10 +285,16 @@ slack section list
 slack section channels <section-id>
 slack section find <pattern>
 slack section move --channels ID,ID --section ID
-slack section move --channels ID,ID --new-section "Name"
-slack section create <name>
+slack section move --channels ID,ID --new-section "Name" [--emoji NAME]
+slack section create <name> [--emoji NAME]
 slack section rename <section-id> <new-name>
+slack section emoji <section-id> <emoji>
 ```
+
+Emoji values are bare names as `section list` shows them (`heart`,
+`wave::skin-tone-2`, a custom emoji name). `:heart:` is unwrapped for you;
+anything else Slack rejects is `emoji_invalid`. `section emoji ID ""` clears.
+`rename` and `emoji` each change one field - run both to change both.
 
 ### Drafts (requires session token)
 
