@@ -41,6 +41,7 @@ func TestSkill_Frontmatter(t *testing.T) {
 		"slack saved list",
 		"slack section list",
 		"slack section rename",
+		"slack section emoji",
 		"slack file list",
 	} {
 		if !strings.Contains(out, cmd) {
