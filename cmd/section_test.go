@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -37,11 +38,26 @@ type sectionStore struct {
 	// setHook runs after a successful applySet, under the lock, so a test can
 	// corrupt the stored state and simulate an ok:true that didn't take.
 	setHook func()
-	// invalidEmoji, when non-empty, is rejected with emoji_invalid by both
-	// create and set, modelling Slack's server-side validation (verified live
-	// 2026-10-16: unknown names, colon-wrapped names, wrong case, and unicode
-	// are all rejected and the section is left unchanged).
-	invalidEmoji string
+	listCalls int
+	// failListCall, when > 0, makes the Nth users.channelSections.list call
+	// (1-based) answer ok:false with failListErr, so a test can fail the
+	// post-write re-fetch while the first list and the set succeed.
+	failListCall int
+	failListErr  string
+}
+
+// validSectionEmoji models the acceptance users.channelSections.create and
+// .set share, as measured live 2026-10-16 on a scratch section: empty
+// clears; bare lowercase names (`heart`, `+1`, `-1000`-style custom names)
+// and `name::skin-tone-N` are accepted verbatim; `:heart:`, `:`, `::`,
+// `::heart::`, `:heart`, `heart:`, `Heart`, `heart ` (trailing space), a raw
+// unicode emoji, and an unknown name are all emoji_invalid. The skin-tone
+// range is modeled from the measured endpoints: 2 and 6 accepted, 1 and 9
+// rejected; 3-5 are interpolated, not measured.
+var validSectionEmoji = regexp.MustCompile(`^[a-z0-9_+-]+(::skin-tone-[2-6])?$`)
+
+func emojiAccepted(emoji string) bool {
+	return emoji == "" || validSectionEmoji.MatchString(emoji)
 }
 
 func newSectionStore() *sectionStore {
@@ -80,7 +96,7 @@ func (s *sectionStore) applySet(form map[string][]string) string {
 	if v, ok := form["emoji"]; ok && len(v) > 0 {
 		emoji = v[0]
 	}
-	if s.invalidEmoji != "" && emoji == s.invalidEmoji {
+	if !emojiAccepted(emoji) {
 		return "emoji_invalid"
 	}
 	// Case-insensitive, and a section's own name never collides (both
@@ -146,6 +162,11 @@ func (s *sectionStore) mux(gotInsert, gotRemove *[]bulkOp) *http.ServeMux {
 	mux.HandleFunc("/api/users.channelSections.list", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		s.listCalls++
+		if s.failListCall > 0 && s.listCalls == s.failListCall {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": s.failListErr})
+			return
+		}
 		var secs []map[string]any
 		for _, sid := range s.order {
 			secs = append(secs, map[string]any{
@@ -195,8 +216,9 @@ func (s *sectionStore) mux(gotInsert, gotRemove *[]bulkOp) *http.ServeMux {
 
 // createHandler models users.channelSections.create: it records the form,
 // stores a new section under id with the given name and emoji, and answers
-// emoji_invalid (no mutation) when the emoji matches invalidEmoji. Register
-// it on the store's mux for tests that create sections.
+// emoji_invalid (no mutation) when emojiAccepted rejects the value. The form
+// is recorded before validation so the wire value is observable either way.
+// Register it on the store's mux for tests that create sections.
 func (s *sectionStore) createHandler(id string, gotForm *map[string][]string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -210,7 +232,7 @@ func (s *sectionStore) createHandler(id string, gotForm *map[string][]string) ht
 			return
 		}
 		emoji := r.PostForm.Get("emoji")
-		if s.invalidEmoji != "" && emoji == s.invalidEmoji {
+		if !emojiAccepted(emoji) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "emoji_invalid"})
 			return
 		}
@@ -350,10 +372,14 @@ func TestSectionCreate_Emoji(t *testing.T) {
 // Slack rejects :name: (verified live 2026-10-16); one wrapping pair of
 // colons is stripped before sending, and the row shows the stripped value.
 func TestSectionCreate_EmojiColonsStripped(t *testing.T) {
-	for _, tc := range []struct{ flag, want string }{
-		{":tada:", "tada"},
-		{":", ":"},
-		{"::", "::"},
+	for _, tc := range []struct {
+		flag, want string
+		valid      bool
+	}{
+		{":tada:", "tada", true},
+		// Sent verbatim; Slack answers emoji_invalid (verified live 2026-10-16).
+		{":", ":", false},
+		{"::", "::", false},
 	} {
 		t.Run(tc.flag, func(t *testing.T) {
 			store := newSectionStore()
@@ -363,11 +389,21 @@ func TestSectionCreate_EmojiColonsStripped(t *testing.T) {
 			mux.HandleFunc("/api/users.channelSections.create", store.createHandler("S04JKL", &form))
 
 			out, err := runWithMockSession(t, mux, "section", "create", "Archive", "--emoji", tc.flag)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if got := form["emoji"]; len(got) != 1 || got[0] != tc.want {
 				t.Errorf("expected emoji=%q sent, got %q", tc.want, got)
+			}
+			if !tc.valid {
+				assertOutputErrorCode(t, err, "emoji_invalid")
+				if out != "" {
+					t.Errorf("expected no stdout, got:\n%s", out)
+				}
+				if len(store.order) != 0 {
+					t.Errorf("no section should have been created, got %v", store.order)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
 			}
 			if item := parseJSON(t, nonEmptyLines(out)[0]); item["emoji"] != tc.want {
 				t.Errorf("expected emoji=%q in row, got %v", tc.want, item["emoji"])
@@ -379,13 +415,12 @@ func TestSectionCreate_EmojiColonsStripped(t *testing.T) {
 // Slack's own emoji_invalid passes through as the error, exit 1, no row.
 func TestSectionCreate_EmojiInvalid(t *testing.T) {
 	store := newSectionStore()
-	store.invalidEmoji = "notanemoji"
 	var gotInsert, gotRemove []bulkOp
 	var form map[string][]string
 	mux := store.mux(&gotInsert, &gotRemove)
 	mux.HandleFunc("/api/users.channelSections.create", store.createHandler("S04JKL", &form))
 
-	out, err := runWithMockSession(t, mux, "section", "create", "Archive", "--emoji", "notanemoji")
+	out, err := runWithMockSession(t, mux, "section", "create", "Archive", "--emoji", "Heart")
 	assertOutputErrorCode(t, err, "emoji_invalid")
 	if out != "" {
 		t.Errorf("expected no stdout, got:\n%s", out)
@@ -796,13 +831,12 @@ func TestSectionMove_NewSectionEmoji(t *testing.T) {
 func TestSectionMove_NewSectionEmojiInvalid(t *testing.T) {
 	store := newSectionStore()
 	store.addSection("S01ABC", "Customers", []string{"C01"})
-	store.invalidEmoji = "notanemoji"
 	var gotInsert, gotRemove []bulkOp
 	var form map[string][]string
 	mux := store.mux(&gotInsert, &gotRemove)
 	mux.HandleFunc("/api/users.channelSections.create", store.createHandler("S99NEW", &form))
 
-	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01", "--new-section", "Archive", "--emoji", "notanemoji")
+	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01", "--new-section", "Archive", "--emoji", "Heart")
 	assertOutputErrorCode(t, err, "emoji_invalid")
 	if out != "" {
 		t.Errorf("expected no stdout, got:\n%s", out)
@@ -1138,36 +1172,88 @@ func TestSectionEmoji_Clear(t *testing.T) {
 }
 
 // Exactly one wrapping pair of colons is stripped when something sits
-// between them. ":" and "::" go verbatim so a malformed value gets Slack's
-// emoji_invalid rather than silently clearing the emoji. Everything else
-// (case, whitespace, unicode) is untouched.
+// between them. Everything else goes verbatim, and the mock answers Slack's
+// measured emoji_invalid for it (verified live 2026-10-16: ":", "::",
+// "::heart::", ":heart", "heart:", "Heart", "heart " all rejected; skin
+// tones 2 and 6 accepted, 1 and 9 rejected). want is the wire value either
+// way; valid says whether a row or emoji_invalid follows.
 func TestSectionEmoji_ColonsStripped(t *testing.T) {
-	for _, tc := range []struct{ arg, want string }{
-		{":heart:", "heart"},
-		{":wave::skin-tone-2:", "wave::skin-tone-2"},
-		{"wave::skin-tone-2", "wave::skin-tone-2"},
-		{":", ":"},
-		{"::", "::"},
-		{":::", ":"},
-		{":heart", ":heart"},
-		{"heart:", "heart:"},
-		{"Heart", "Heart"},
-		{"heart ", "heart "},
-		{": heart :", " heart "},
+	for _, tc := range []struct {
+		arg, want string
+		valid     bool
+	}{
+		{":heart:", "heart", true},
+		{":wave::skin-tone-2:", "wave::skin-tone-2", true},
+		{"wave::skin-tone-2", "wave::skin-tone-2", true},
+		{"wave::skin-tone-6", "wave::skin-tone-6", true},
+		{"wave::skin-tone-1", "wave::skin-tone-1", false},
+		{"heart::skin-tone-9", "heart::skin-tone-9", false},
+		{":", ":", false},
+		{"::", "::", false},
+		{":::", ":", false},
+		// Exactly one pass: a second would send "heart" and succeed.
+		{"::heart::", ":heart:", false},
+		{":heart", ":heart", false},
+		{"heart:", "heart:", false},
+		{"Heart", "Heart", false},
+		{"heart ", "heart ", false},
+		{": heart :", " heart ", false},
 	} {
 		t.Run(tc.arg, func(t *testing.T) {
 			store := newSectionStore()
 			store.addSectionWithEmoji("S01ABC", "Westies", "dog", nil)
 			var gotInsert, gotRemove []bulkOp
 			out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "emoji", "S01ABC", tc.arg)
-			if err != nil {
-				t.Fatal(err)
+			if len(store.setCalls) != 1 {
+				t.Fatalf("expected one set call, got %d", len(store.setCalls))
 			}
 			if got := store.setCalls[0]["emoji"]; len(got) != 1 || got[0] != tc.want {
 				t.Errorf("expected emoji=%q sent, got %q", tc.want, got)
 			}
+			if !tc.valid {
+				assertOutputErrorCode(t, err, "emoji_invalid")
+				if out != "" {
+					t.Errorf("expected no stdout, got:\n%s", out)
+				}
+				if store.emojis["S01ABC"] != "dog" {
+					t.Errorf("emoji must be unchanged after emoji_invalid, got %q", store.emojis["S01ABC"])
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
 			if row := parseJSON(t, nonEmptyLines(out)[0]); row["emoji"] != tc.want {
 				t.Errorf("expected emoji=%q in row, got %v", tc.want, row["emoji"])
+			}
+		})
+	}
+}
+
+// When the first list and the set succeed but the post-write re-fetch
+// fails, the re-fetch's own classified error must surface - not a
+// manufactured emoji_failed/rename_failed that would read as "Slack ignored
+// the write".
+func TestSectionSet_RefetchFails(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"emoji", []string{"section", "emoji", "S01ABC", "heart"}},
+		{"rename", []string{"section", "rename", "S01ABC", "New"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newSectionStore()
+			store.addSectionWithEmoji("S01ABC", "Westies", "dog", nil)
+			store.failListCall, store.failListErr = 2, "not_authed"
+			var gotInsert, gotRemove []bulkOp
+			out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), tc.args...)
+			assertOutputErrorCode(t, err, "not_authed")
+			if len(store.setCalls) != 1 {
+				t.Errorf("expected the set to have gone out once, got %d calls", len(store.setCalls))
+			}
+			if out != "" {
+				t.Errorf("expected no stdout, got:\n%s", out)
 			}
 		})
 	}
@@ -1197,9 +1283,8 @@ func TestSectionEmoji_SessionTokenRequired(t *testing.T) {
 func TestSectionEmoji_EmojiInvalid(t *testing.T) {
 	store := newSectionStore()
 	store.addSectionWithEmoji("S01ABC", "Westies", "dog", nil)
-	store.invalidEmoji = "notanemoji"
 	var gotInsert, gotRemove []bulkOp
-	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "emoji", "S01ABC", "notanemoji")
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "emoji", "S01ABC", "Heart")
 	assertOutputErrorCode(t, err, "emoji_invalid")
 	if out != "" {
 		t.Errorf("expected no stdout, got:\n%s", out)
