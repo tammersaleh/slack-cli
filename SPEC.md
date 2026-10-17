@@ -1369,9 +1369,9 @@ slack section list
 
 ```
 $ slack section list
-{"id":"S01ABC","name":"Channels","type":"channels","is_default":true,"channel_count":42}
-{"id":"S02DEF","name":"Customers","type":"channels","is_default":false,"channel_count":15}
-{"id":"S03GHI","name":"Direct Messages","type":"ims","is_default":true,"channel_count":28}
+{"id":"S01ABC","name":"Channels","emoji":"","type":"channels","channel_count":42}
+{"id":"S02DEF","name":"Customers","emoji":"handshake","type":"channels","channel_count":15}
+{"id":"S03GHI","name":"Direct Messages","emoji":"","type":"ims","channel_count":28}
 {"_meta":{"has_more":false}}
 ```
 
@@ -1454,7 +1454,33 @@ $ slack section create "Archive"
 {"_meta":{"has_more":false}}
 ```
 
-Slack API: `users.channelSections.create`
+Slack API: `users.channelSections.create`. The call always carries an
+`emoji` param (empty); without the key Slack answers `invalid_arguments`.
+
+#### slack section rename
+
+```
+slack section rename <section-id> <new-name>
+```
+
+Renames a section in place. The ID is unchanged, so anything keyed on it
+(manifests, `section move --section`) keeps working. The current emoji is
+preserved. A blank name is `invalid_input` and makes no API call. An unknown
+ID is `section_not_found`. A name another section already uses is Slack's
+`already_exists`. The write endpoint returns `ok:true` whether or not it
+changed anything, so the command re-fetches and emits the section as Slack
+now holds it; if the name or emoji does not match the request the command
+fails with `rename_failed` and emits no row.
+
+```
+$ slack section rename S02DEF "Customers (EXT)"
+{"id":"S02DEF","name":"Customers (EXT)","emoji":"handshake","type":"channels","channel_count":15}
+{"_meta":{"has_more":false}}
+```
+
+Slack API: `users.channelSections.set` (form-encoded `channel_section_id`,
+`name`, `emoji`; any key omitted is cleared on the server), then
+`users.channelSections.list`.
 
 ### drafts (Phase 3)
 
@@ -1811,7 +1837,7 @@ Credentials are stored in `slack-cli/credentials.json` inside the user config di
 ### Phase 2b: Python skill replacement
 
 - `saved list`, `saved counts` - replaces slack-saved-items skill
-- `section list`, `section channels`, `section find`, `section move`, `section create` - replaces slack-organize-channels skill
+- `section list`, `section channels`, `section find`, `section move`, `section create`, `section rename` - replaces slack-organize-channels skill
 
 ### Phase 2c: Extended read operations
 

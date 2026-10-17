@@ -287,6 +287,7 @@ slack section find <pattern>
 slack section move --channels ID,ID --section ID
 slack section move --channels ID,ID --new-section "Name"
 slack section create <name>
+slack section rename <section-id> <new-name>
 ```
 
 ### Drafts (requires session token)
