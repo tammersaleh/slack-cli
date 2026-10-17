@@ -268,8 +268,11 @@ func (c *SectionCreateCmd) Run(cli *CLI) error {
 }
 
 func createSection(ctx context.Context, client *api.Client, name string) (string, error) {
+	// Slack rejects the call with invalid_arguments when the emoji key is
+	// absent (verified live 2026-10-16); an empty value is accepted.
 	data, err := client.PostInternalForm(ctx, "users.channelSections.create", map[string]string{
-		"name": name,
+		"name":  name,
+		"emoji": "",
 	})
 	if err != nil {
 		return "", err

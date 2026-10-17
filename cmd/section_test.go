@@ -175,10 +175,12 @@ func TestSectionList(t *testing.T) {
 
 func TestSectionCreate(t *testing.T) {
 	var gotName string
+	var gotEmoji []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.channelSections.create", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		gotName = r.FormValue("name")
+		gotEmoji = r.PostForm["emoji"]
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":                 true,
 			"channel_section_id": "S04JKL",
@@ -192,6 +194,12 @@ func TestSectionCreate(t *testing.T) {
 
 	if gotName != "Archive" {
 		t.Errorf("expected name='Archive' in request, got %q", gotName)
+	}
+	// Slack answers invalid_arguments when the emoji key is absent (verified
+	// live 2026-10-16), so the key must be PRESENT, even if empty. FormValue
+	// cannot tell absent from empty - check the form map directly.
+	if len(gotEmoji) != 1 || gotEmoji[0] != "" {
+		t.Errorf("expected exactly one empty emoji param in request, got %q", gotEmoji)
 	}
 
 	lines := nonEmptyLines(out)
@@ -519,11 +527,13 @@ func TestSectionMove_NewSection(t *testing.T) {
 	store.addSection("S01ABC", "Customers", []string{"C01"})
 
 	var createdName string
+	var createdEmoji []string
 	var gotInsert, gotRemove []bulkOp
 	mux := store.mux(&gotInsert, &gotRemove)
 	mux.HandleFunc("/api/users.channelSections.create", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		createdName = r.FormValue("name")
+		createdEmoji = r.PostForm["emoji"]
 		store.mu.Lock()
 		store.addSection("S99NEW", createdName, nil)
 		store.mu.Unlock()
@@ -540,6 +550,9 @@ func TestSectionMove_NewSection(t *testing.T) {
 
 	if createdName != "Archive" {
 		t.Errorf("expected section create with name='Archive', got %q", createdName)
+	}
+	if len(createdEmoji) != 1 || createdEmoji[0] != "" {
+		t.Errorf("expected exactly one empty emoji param on create, got %q", createdEmoji)
 	}
 	// C01 was in S01ABC, so the move must remove it there and insert into the
 	// freshly created section.
