@@ -78,8 +78,8 @@ func (s *sectionStore) addSectionWithEmoji(id, name, emoji string, chans []strin
 // applySet models users.channelSections.set as observed live 2026-10-16: a
 // field whose key is OMITTED from the form is cleared, present-but-empty is
 // stored as empty, a name another section holds is already_exists (no
-// mutation), an unknown id is section_not_found. The write path accepts
-// whatever the handler is told to store, so tests can also force a
+// mutation), an unknown id is section_not_found, an emoji outside the
+// measured acceptance is emoji_invalid (no mutation). Tests can still force a
 // "Slack said ok but did nothing" outcome through setHook.
 func (s *sectionStore) applySet(form map[string][]string) string {
 	id := ""
