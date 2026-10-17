@@ -1512,20 +1512,22 @@ no row.
 
 The wire format is the bare emoji name, exactly as `section list` emits it.
 Verified live 2026-10-16 against `users.channelSections.create` and `.set`:
-`heart`, `tada`, `+1`, a custom emoji name, and `wave::skin-tone-2` are
-accepted and stored verbatim (no alias normalization); `` clears; `:heart:`,
-`:wave::skin-tone-2:`, `Heart`, `heart ` (trailing space), an out-of-range
-skin tone, a raw unicode emoji, and an unknown name are all `emoji_invalid`
-and leave the section unchanged.
+`heart`, `tada`, `+1`, a custom emoji name, `wave::skin-tone-2`, and
+`wave::skin-tone-6` are accepted and stored verbatim (no alias
+normalization); `` clears; `:heart:`, `:wave::skin-tone-2:`, `:`, `::`,
+`::heart::`, `:heart`, `heart:`, `Heart`, `heart ` (trailing space),
+`wave::skin-tone-1`, `heart::skin-tone-9`, a raw unicode emoji, and an
+unknown name are all `emoji_invalid` and leave the section unchanged.
 
 Because `:heart:` is how people type emoji, the CLI strips exactly one
 leading and one trailing colon when both are present and at least one
 character sits between them: `:heart:` becomes `heart`,
-`:wave::skin-tone-2:` becomes `wave::skin-tone-2`. `:` and `::` are sent
-verbatim so a malformed value gets Slack's `emoji_invalid` rather than
-silently clearing the emoji. Nothing else is changed - case, whitespace,
-unknown names, and unicode go verbatim and Slack's `emoji_invalid` passes
-through (exit 1). The same rule applies to `section create --emoji` and
+`:wave::skin-tone-2:` becomes `wave::skin-tone-2`. The strip runs once, so
+`::heart::` is sent as `:heart:`. `:` and `::` are sent verbatim. Every one
+of those verbatim forms is measured `emoji_invalid`, so a malformed value
+fails loudly rather than silently clearing the emoji. Nothing else is
+changed - case, whitespace, unknown names, and unicode go verbatim and
+Slack's `emoji_invalid` passes through (exit 1). The same rule applies to `section create --emoji` and
 `section move --emoji`. The stripped value is what the re-fetch is compared
 against and what the row shows.
 
