@@ -203,6 +203,12 @@ func (s *sectionStore) createHandler(id string, gotForm *map[string][]string) ht
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		*gotForm = r.PostForm
+		// An absent emoji key is invalid_arguments (verified live 2026-10-16);
+		// present-but-empty is fine. FormValue cannot tell the two apart.
+		if _, ok := r.PostForm["emoji"]; !ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_arguments"})
+			return
+		}
 		emoji := r.PostForm.Get("emoji")
 		if s.invalidEmoji != "" && emoji == s.invalidEmoji {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "emoji_invalid"})
@@ -344,21 +350,29 @@ func TestSectionCreate_Emoji(t *testing.T) {
 // Slack rejects :name: (verified live 2026-10-16); one wrapping pair of
 // colons is stripped before sending, and the row shows the stripped value.
 func TestSectionCreate_EmojiColonsStripped(t *testing.T) {
-	store := newSectionStore()
-	var gotInsert, gotRemove []bulkOp
-	var form map[string][]string
-	mux := store.mux(&gotInsert, &gotRemove)
-	mux.HandleFunc("/api/users.channelSections.create", store.createHandler("S04JKL", &form))
+	for _, tc := range []struct{ flag, want string }{
+		{":tada:", "tada"},
+		{":", ":"},
+		{"::", "::"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			store := newSectionStore()
+			var gotInsert, gotRemove []bulkOp
+			var form map[string][]string
+			mux := store.mux(&gotInsert, &gotRemove)
+			mux.HandleFunc("/api/users.channelSections.create", store.createHandler("S04JKL", &form))
 
-	out, err := runWithMockSession(t, mux, "section", "create", "Archive", "--emoji", ":tada:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := form["emoji"]; len(got) != 1 || got[0] != "tada" {
-		t.Errorf("expected emoji=tada sent, got %q", got)
-	}
-	if item := parseJSON(t, nonEmptyLines(out)[0]); item["emoji"] != "tada" {
-		t.Errorf("expected emoji=tada in row, got %v", item["emoji"])
+			out, err := runWithMockSession(t, mux, "section", "create", "Archive", "--emoji", tc.flag)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := form["emoji"]; len(got) != 1 || got[0] != tc.want {
+				t.Errorf("expected emoji=%q sent, got %q", tc.want, got)
+			}
+			if item := parseJSON(t, nonEmptyLines(out)[0]); item["emoji"] != tc.want {
+				t.Errorf("expected emoji=%q in row, got %v", tc.want, item["emoji"])
+			}
+		})
 	}
 }
 
@@ -744,6 +758,9 @@ func TestSectionMove_NewSectionEmoji(t *testing.T) {
 	for _, tc := range []struct{ flag, want string }{
 		{"tada", "tada"},
 		{":tada:", "tada"},
+		// Explicit empty still ships a present (empty) emoji key; the mock's
+		// createHandler answers invalid_arguments when the key is absent.
+		{"", ""},
 	} {
 		t.Run(tc.flag, func(t *testing.T) {
 			store := newSectionStore()
@@ -771,6 +788,30 @@ func TestSectionMove_NewSectionEmoji(t *testing.T) {
 				t.Errorf("unexpected result row: %v", result)
 			}
 		})
+	}
+}
+
+// A rejected emoji fails the create, so nothing is moved and bulkUpdate is
+// never called - the channel stays where it was.
+func TestSectionMove_NewSectionEmojiInvalid(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Customers", []string{"C01"})
+	store.invalidEmoji = "notanemoji"
+	var gotInsert, gotRemove []bulkOp
+	var form map[string][]string
+	mux := store.mux(&gotInsert, &gotRemove)
+	mux.HandleFunc("/api/users.channelSections.create", store.createHandler("S99NEW", &form))
+
+	out, err := runWithMockSession(t, mux, "section", "move", "--channels", "C01", "--new-section", "Archive", "--emoji", "notanemoji")
+	assertOutputErrorCode(t, err, "emoji_invalid")
+	if out != "" {
+		t.Errorf("expected no stdout, got:\n%s", out)
+	}
+	if gotInsert != nil || gotRemove != nil {
+		t.Errorf("bulkUpdate must not be called after a failed create, got insert=%+v remove=%+v", gotInsert, gotRemove)
+	}
+	if store.sectionOf("C01") != "S01ABC" {
+		t.Errorf("C01 should still be in S01ABC, got %q", store.sectionOf("C01"))
 	}
 }
 

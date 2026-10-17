@@ -320,7 +320,9 @@ func createSection(ctx context.Context, client *api.Client, name, emoji string) 
 // and only when at least one character sits between them - ":" and "::" go
 // through verbatim so a malformed value gets Slack's emoji_invalid instead
 // of silently clearing the emoji. Case, whitespace, unknown names, and
-// unicode are untouched; the server is the validator.
+// unicode are untouched; the server is the validator. Applied once per
+// user-supplied value: inside createSection (shared by create and move) and
+// in SectionEmojiCmd.Run - never to a value read back from the server.
 func normalizeEmojiArg(s string) string {
 	if len(s) >= 3 && s[0] == ':' && s[len(s)-1] == ':' {
 		return s[1 : len(s)-1]
@@ -349,10 +351,10 @@ func (e *sectionMismatchError) detail() string {
 // any key omitted from the form, so both fields are always sent; it also
 // returns a bare {"ok":true} regardless, so the re-fetch is the only evidence
 // the write took. A mismatch is a *sectionMismatchError; callers map it to
-// their own code. emoji goes through normalizeEmojiArg, and the returned
-// row is the re-fetched data, never the request.
+// their own code. Values are sent verbatim - rename passes an emoji read
+// back from the server, so user input is normalized by the caller - and the
+// returned row is the re-fetched data, never the request.
 func setSection(ctx context.Context, client *api.Client, id, name, emoji string) (*sectionData, error) {
-	emoji = normalizeEmojiArg(emoji)
 	if _, err := client.PostInternalForm(ctx, "users.channelSections.set", map[string]string{
 		"channel_section_id": id,
 		"name":               name,
@@ -431,7 +433,7 @@ func (c *SectionRenameCmd) Run(cli *CLI) error {
 
 type SectionEmojiCmd struct {
 	ID    string `arg:"" required:"" help:"Section ID."`
-	Emoji string `arg:"" help:"Emoji name as 'section list' shows it (heart, wave::skin-tone-2, a custom emoji). One wrapping pair of colons is stripped; anything Slack rejects is emoji_invalid. An empty value (\"\") clears the emoji."`
+	Emoji string `arg:"" required:"" help:"Emoji name as 'section list' shows it (heart, wave::skin-tone-2, a custom emoji). One wrapping pair of colons is stripped; anything Slack rejects is emoji_invalid. An empty value (\"\") clears the emoji."`
 }
 
 func (c *SectionEmojiCmd) Run(cli *CLI) error {
@@ -454,7 +456,7 @@ func (c *SectionEmojiCmd) Run(cli *CLI) error {
 	}
 
 	// The current name rides along with the new emoji (omitted keys clear).
-	updated, err := setSection(ctx, client, c.ID, current.Name, c.Emoji)
+	updated, err := setSection(ctx, client, c.ID, current.Name, normalizeEmojiArg(c.Emoji))
 	if err != nil {
 		return cli.classifySetError(err, "emoji_failed", c.ID)
 	}
