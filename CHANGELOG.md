@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.2.0](https://github.com/tammersaleh/slack-cli/compare/v5.1.0...v5.2.0) (2026-10-17)
+
+
+### Features
+
+* add section rename ([7e5e376](https://github.com/tammersaleh/slack-cli/commit/7e5e3769fb24004cc0084b7be12311a6c7699ea5))
+
+
+### Bug Fixes
+
+* send emoji on section create ([33ae84d](https://github.com/tammersaleh/slack-cli/commit/33ae84d85587073909374334702b14d81fcddea8))
+
 ## [5.1.0](https://github.com/tammersaleh/slack-cli/compare/v5.0.5...v5.1.0) (2026-10-16)
 
 
