@@ -1416,14 +1416,16 @@ Slack API: `users.channelSections.list` + `conversations.info`
 #### slack section move
 
 ```
-slack section move --channels <id>[,<id>...] (--section <id> | --new-section <name>)
+slack section move --channels <id>[,<id>...] (--section <id> | --new-section <name> [--emoji <name>])
 ```
 
 Moves channels to an existing section or creates a new one. Channel IDs are
 trimmed and deduped. `--section` must name an existing section (a bad ID is
 `section_not_found`, not a silent no-op). `moved_count` is verified: after the
 update the sections are re-fetched and only channels now in the target section
-(and no other) are counted.
+(and no other) are counted. `--emoji` sets the new section's emoji and takes
+the same values as `section create --emoji`; it is `invalid_input` without
+`--new-section` (even as `--emoji ""`), with no API call.
 
 ```
 $ slack section move --channels C01ABC,C02DEF --section S02DEF
@@ -1445,17 +1447,30 @@ insert for the target and one remove per source section.
 #### slack section create
 
 ```
-slack section create <name>
+slack section create <name> [--emoji <name>]
 ```
+
+`--emoji` is a bare emoji name as `section list` emits it (`heart`,
+`wave::skin-tone-2`, a custom emoji name). A value wrapped in one pair of
+colons (`:heart:`) is unwrapped before sending; see `section emoji` for the
+exact rule. Anything Slack does not accept is its own `emoji_invalid` (exit
+1). The row always carries `emoji` (`""` when unset).
 
 ```
 $ slack section create "Archive"
-{"id":"S04JKL","name":"Archive"}
+{"id":"S04JKL","name":"Archive","emoji":""}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ slack section create "Archive" --emoji :file_cabinet:
+{"id":"S04JKL","name":"Archive","emoji":"file_cabinet"}
 {"_meta":{"has_more":false}}
 ```
 
 Slack API: `users.channelSections.create`. The call always carries an
-`emoji` param (empty); without the key Slack answers `invalid_arguments`.
+`emoji` param (empty when the flag is absent); without the key Slack answers
+`invalid_arguments`.
 
 #### slack section rename
 
@@ -1481,6 +1496,57 @@ $ slack section rename S02DEF "Customers (EXT)"
 Slack API: `users.channelSections.set` (form-encoded `channel_section_id`,
 `name`, `emoji`; any key omitted is cleared on the server), then
 `users.channelSections.list`.
+
+#### slack section emoji
+
+```
+slack section emoji <section-id> <emoji>
+```
+
+Sets a section's emoji in place, keeping its ID and name. An empty `<emoji>`
+(`""`) clears it. An unknown ID is `section_not_found`. The write endpoint
+returns `ok:true` whether or not it changed anything, so the command
+re-fetches and emits the section as Slack now holds it; if the name or emoji
+does not match the request the command fails with `emoji_failed` and emits
+no row.
+
+The wire format is the bare emoji name, exactly as `section list` emits it.
+Verified live 2026-10-16 against `users.channelSections.create` and `.set`:
+`heart`, `tada`, `+1`, a custom emoji name, and `wave::skin-tone-2` are
+accepted and stored verbatim (no alias normalization); `` clears; `:heart:`,
+`:wave::skin-tone-2:`, `Heart`, `heart ` (trailing space), an out-of-range
+skin tone, a raw unicode emoji, and an unknown name are all `emoji_invalid`
+and leave the section unchanged.
+
+Because `:heart:` is how people type emoji, the CLI strips exactly one
+leading and one trailing colon when both are present and at least one
+character sits between them: `:heart:` becomes `heart`,
+`:wave::skin-tone-2:` becomes `wave::skin-tone-2`. `:` and `::` are sent
+verbatim so a malformed value gets Slack's `emoji_invalid` rather than
+silently clearing the emoji. Nothing else is changed - case, whitespace,
+unknown names, and unicode go verbatim and Slack's `emoji_invalid` passes
+through (exit 1). The same rule applies to `section create --emoji` and
+`section move --emoji`. The stripped value is what the re-fetch is compared
+against and what the row shows.
+
+```
+$ slack section emoji S02DEF :handshake:
+{"id":"S02DEF","name":"Customers","emoji":"handshake","type":"channels","channel_count":15}
+{"_meta":{"has_more":false}}
+```
+
+```
+$ slack section emoji S02DEF ""
+{"id":"S02DEF","name":"Customers","emoji":"","type":"channels","channel_count":15}
+{"_meta":{"has_more":false}}
+```
+
+Slack API: `users.channelSections.list`, then `users.channelSections.set`
+(form-encoded `channel_section_id`, the current `name`, and the new `emoji`;
+any key omitted is cleared on the server), then `users.channelSections.list`
+again. `rename` and `emoji` each change one field; a caller wanting both runs
+both. Both share the read-modify-write window: a concurrent edit of the other
+field between the list and the set is overwritten.
 
 ### drafts (Phase 3)
 
@@ -1837,7 +1903,7 @@ Credentials are stored in `slack-cli/credentials.json` inside the user config di
 ### Phase 2b: Python skill replacement
 
 - `saved list`, `saved counts` - replaces slack-saved-items skill
-- `section list`, `section channels`, `section find`, `section move`, `section create`, `section rename` - replaces slack-organize-channels skill
+- `section list`, `section channels`, `section find`, `section move`, `section create`, `section rename`, `section emoji` - replaces slack-organize-channels skill
 
 ### Phase 2c: Extended read operations
 
