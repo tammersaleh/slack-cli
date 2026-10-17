@@ -156,7 +156,12 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
      `slack version` is the version just cut, and exercise the new behavior
      with the installed `slack`. Note Slack rate-limits quickly under repeated
      manual calls - a `{"error":"ratelimited"}` row is the expected systemic
-     fail-fast, not a bug; wait and retry.
+     fail-fast, not a bug; wait and retry. Capture command output to a file
+     or pipe it straight into `jq`; never `OUT=$(slack ...)` then
+     `echo "$OUT" | jq`. zsh's `echo` expands `\n` inside the JSON into a
+     real newline and `jq` reports a control-character parse error that
+     looks like a CLI bug (seen 2026-10-16 verifying `--markdown`, whose
+     output is full of `"text":"\n"`).
    - Skill change (`SKILL.md`): run `skills update`, then confirm the
      expected text is in the installed skill.
    `chore:`/`docs:`/`test:`/`refactor:` cut no release, so there's no
