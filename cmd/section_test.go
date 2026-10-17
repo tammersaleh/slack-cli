@@ -2,11 +2,14 @@ package cmd_test
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
 // bulkOp mirrors one entry in the insert/remove arrays sent to
@@ -26,17 +29,58 @@ type sectionStore struct {
 	mu       sync.Mutex
 	order    []string            // stable section id order
 	names    map[string]string   // section id -> name
+	emojis   map[string]string   // section id -> emoji
 	channels map[string][]string // section id -> channel ids
+	setCalls []map[string][]string
+	// setHook runs after a successful applySet, under the lock, so a test can
+	// corrupt the stored state and simulate an ok:true that didn't take.
+	setHook func()
 }
 
 func newSectionStore() *sectionStore {
-	return &sectionStore{names: map[string]string{}, channels: map[string][]string{}}
+	return &sectionStore{names: map[string]string{}, emojis: map[string]string{}, channels: map[string][]string{}}
 }
 
 func (s *sectionStore) addSection(id, name string, chans []string) {
 	s.order = append(s.order, id)
 	s.names[id] = name
 	s.channels[id] = append([]string{}, chans...)
+}
+
+func (s *sectionStore) addSectionWithEmoji(id, name, emoji string, chans []string) {
+	s.addSection(id, name, chans)
+	s.emojis[id] = emoji
+}
+
+// applySet models users.channelSections.set as observed live 2026-10-16: a
+// field whose key is OMITTED from the form is cleared, present-but-empty is
+// stored as empty, a name another section holds is already_exists (no
+// mutation), an unknown id is section_not_found. The write path accepts
+// whatever the handler is told to store, so tests can also force a
+// "Slack said ok but did nothing" outcome through setHook.
+func (s *sectionStore) applySet(form map[string][]string) string {
+	id := ""
+	if v, ok := form["channel_section_id"]; ok && len(v) > 0 {
+		id = v[0]
+	}
+	if _, ok := s.names[id]; !ok {
+		return "section_not_found"
+	}
+	name, emoji := "", ""
+	if v, ok := form["name"]; ok && len(v) > 0 {
+		name = v[0]
+	}
+	if v, ok := form["emoji"]; ok && len(v) > 0 {
+		emoji = v[0]
+	}
+	for _, sid := range s.order {
+		if sid != id && s.names[sid] == name {
+			return "already_exists"
+		}
+	}
+	s.names[id] = name
+	s.emojis[id] = emoji
+	return ""
 }
 
 func (s *sectionStore) sectionOf(ch string) string {
@@ -95,11 +139,26 @@ func (s *sectionStore) mux(gotInsert, gotRemove *[]bulkOp) *http.ServeMux {
 			secs = append(secs, map[string]any{
 				"channel_section_id": sid,
 				"name":               s.names[sid],
+				"emoji":              s.emojis[sid],
 				"type":               "channels",
 				"channel_ids_page":   map[string]any{"channel_ids": s.channels[sid]},
 			})
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel_sections": secs})
+	})
+	mux.HandleFunc("/api/users.channelSections.set", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.setCalls = append(s.setCalls, r.PostForm)
+		if code := s.applySet(r.PostForm); code != "" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": code})
+			return
+		}
+		if s.setHook != nil {
+			s.setHook()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	})
 	mux.HandleFunc("/api/users.channelSections.channels.bulkUpdate", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
@@ -580,5 +639,167 @@ func TestSectionList_SessionTokenRequired(t *testing.T) {
 	_, err := runWithMock(t, mux, "section", "list")
 	if err == nil {
 		t.Fatal("expected error for non-session token")
+	}
+}
+
+// --- section rename ---
+
+func TestSectionList_EmitsEmoji(t *testing.T) {
+	store := newSectionStore()
+	store.addSectionWithEmoji("S01ABC", "Customers", "tada", []string{"C01"})
+	var gotInsert, gotRemove []bulkOp
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := parseJSON(t, nonEmptyLines(out)[0])
+	if row["emoji"] != "tada" {
+		t.Errorf("expected emoji='tada', got %v", row["emoji"])
+	}
+}
+
+func TestSectionRename(t *testing.T) {
+	store := newSectionStore()
+	store.addSectionWithEmoji("S01ABC", "Westies", "dog", []string{"C01", "C02"})
+	store.addSection("S02DEF", "Archive", nil)
+	var gotInsert, gotRemove []bulkOp
+
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "Westies Customers")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Omitted keys clear fields on the real endpoint, so the current emoji
+	// must ride along with the new name.
+	if len(store.setCalls) != 1 {
+		t.Fatalf("expected one set call, got %d", len(store.setCalls))
+	}
+	form := store.setCalls[0]
+	if got := form["channel_section_id"]; len(got) != 1 || got[0] != "S01ABC" {
+		t.Errorf("expected channel_section_id=S01ABC, got %q", got)
+	}
+	if got := form["name"]; len(got) != 1 || got[0] != "Westies Customers" {
+		t.Errorf("expected name='Westies Customers', got %q", got)
+	}
+	if got := form["emoji"]; len(got) != 1 || got[0] != "dog" {
+		t.Errorf("expected emoji='dog' resent, got %q", got)
+	}
+	if store.names["S01ABC"] != "Westies Customers" || store.emojis["S01ABC"] != "dog" {
+		t.Errorf("store should hold renamed section with emoji, got name=%q emoji=%q", store.names["S01ABC"], store.emojis["S01ABC"])
+	}
+
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (row + meta), got %d:\n%s", len(lines), out)
+	}
+	row := parseJSON(t, lines[0])
+	want := map[string]any{"id": "S01ABC", "name": "Westies Customers", "emoji": "dog", "type": "channels", "channel_count": float64(2)}
+	for k, v := range want {
+		if row[k] != v {
+			t.Errorf("row[%s] = %v, want %v", k, row[k], v)
+		}
+	}
+	if !strings.Contains(lines[1], "_meta") {
+		t.Errorf("expected _meta trailer, got %s", lines[1])
+	}
+}
+
+func TestSectionRename_SameName(t *testing.T) {
+	store := newSectionStore()
+	store.addSectionWithEmoji("S01ABC", "Westies", "", []string{"C01"})
+	var gotInsert, gotRemove []bulkOp
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "Westies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := parseJSON(t, nonEmptyLines(out)[0])
+	if row["name"] != "Westies" {
+		t.Errorf("expected name='Westies', got %v", row["name"])
+	}
+}
+
+// Whitespace-only names are rejected locally. Slack stores an empty name as
+// "" and says ok (verified live 2026-10-16), so this must never reach the API.
+func TestSectionRename_BlankName(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Westies", nil)
+	calls := 0
+	var gotInsert, gotRemove []bulkOp
+	mux := store.mux(&gotInsert, &gotRemove)
+	counting := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		mux.ServeHTTP(w, r)
+	})
+	_, err := runWithMockSession(t, counting, "section", "rename", "S01ABC", "  ")
+	assertOutputErrorCode(t, err, "invalid_input")
+	if calls != 0 {
+		t.Errorf("expected zero API calls, got %d", calls)
+	}
+}
+
+func TestSectionRename_SectionNotFound(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Westies", nil)
+	var gotInsert, gotRemove []bulkOp
+	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S99NOPE", "New")
+	assertOutputErrorCode(t, err, "section_not_found")
+	if len(store.setCalls) != 0 {
+		t.Errorf("set must not be called for an unknown id, got %d calls", len(store.setCalls))
+	}
+}
+
+func TestSectionRename_AlreadyExists(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Westies", nil)
+	store.addSection("S02DEF", "Archive", nil)
+	var gotInsert, gotRemove []bulkOp
+	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "Archive")
+	assertOutputErrorCode(t, err, "already_exists")
+	if store.names["S01ABC"] != "Westies" {
+		t.Errorf("name must be unchanged after already_exists, got %q", store.names["S01ABC"])
+	}
+}
+
+// The endpoint returns a bare ok:true, so the re-fetch is the only proof.
+// A rename that didn't take must be an error, not a success row.
+func TestSectionRename_IgnoredWrite(t *testing.T) {
+	store := newSectionStore()
+	store.addSectionWithEmoji("S01ABC", "Westies", "dog", nil)
+	store.setHook = func() { store.names["S01ABC"] = "Westies" }
+	var gotInsert, gotRemove []bulkOp
+	out, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "New")
+	assertOutputErrorCode(t, err, "rename_failed")
+	if len(nonEmptyLines(out)) != 0 {
+		t.Errorf("expected no stdout on rename_failed, got:\n%s", out)
+	}
+}
+
+func TestSectionRename_EmojiWiped(t *testing.T) {
+	store := newSectionStore()
+	store.addSectionWithEmoji("S01ABC", "Westies", "dog", nil)
+	store.setHook = func() { store.emojis["S01ABC"] = "" }
+	var gotInsert, gotRemove []bulkOp
+	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "New")
+	assertOutputErrorCode(t, err, "rename_failed")
+}
+
+func TestSectionRename_SectionVanished(t *testing.T) {
+	store := newSectionStore()
+	store.addSection("S01ABC", "Westies", nil)
+	store.setHook = func() { delete(store.names, "S01ABC"); store.order = nil }
+	var gotInsert, gotRemove []bulkOp
+	_, err := runWithMockSession(t, store.mux(&gotInsert, &gotRemove), "section", "rename", "S01ABC", "New")
+	assertOutputErrorCode(t, err, "rename_failed")
+}
+
+// assertOutputErrorCode requires a fatal *output.Error with the given code.
+func assertOutputErrorCode(t *testing.T, err error, code string) {
+	t.Helper()
+	var oe *output.Error
+	if !errors.As(err, &oe) {
+		t.Fatalf("expected *output.Error %q, got %T: %v", code, err, err)
+	}
+	if oe.Err != code {
+		t.Fatalf("expected error code %q, got %q (%s)", code, oe.Err, oe.Detail)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -18,12 +19,14 @@ type SectionCmd struct {
 	Find     SectionFindCmd     `cmd:"" help:"Find channels by name pattern."`
 	Move     SectionMoveCmd     `cmd:"" help:"Move channels to a section."`
 	Create   SectionCreateCmd   `cmd:"" help:"Create a sidebar section."`
+	Rename   SectionRenameCmd   `cmd:"" help:"Rename a sidebar section, keeping its ID and emoji."`
 }
 
 // sectionData is the parsed response from users.channelSections.list.
 type sectionData struct {
 	ID         string   `json:"channel_section_id"`
 	Name       string   `json:"name"`
+	Emoji      string   `json:"emoji"`
 	Type       string   `json:"type"`
 	ChannelIDs struct {
 		IDs []string `json:"channel_ids"`
@@ -111,12 +114,7 @@ func (c *SectionListCmd) Run(cli *CLI) error {
 	}
 
 	for _, s := range sections {
-		if err := p.PrintItem(map[string]any{
-			"id":            s.ID,
-			"name":          s.Name,
-			"type":          s.Type,
-			"channel_count": len(s.ChannelIDs.IDs),
-		}); err != nil {
+		if err := p.PrintItem(sectionRow(s)); err != nil {
 			return err
 		}
 	}
@@ -237,6 +235,27 @@ func (c *SectionFindCmd) Run(cli *CLI) error {
 	return p.PrintMeta(output.Meta{})
 }
 
+// sectionRow is the JSONL shape shared by section list and section rename.
+func sectionRow(s sectionData) map[string]any {
+	return map[string]any{
+		"id":            s.ID,
+		"name":          s.Name,
+		"emoji":         s.Emoji,
+		"type":          s.Type,
+		"channel_count": len(s.ChannelIDs.IDs),
+	}
+}
+
+// findSection returns the section with the given id, or nil.
+func findSection(sections []sectionData, id string) *sectionData {
+	for i := range sections {
+		if sections[i].ID == id {
+			return &sections[i]
+		}
+	}
+	return nil
+}
+
 // --- section create ---
 
 type SectionCreateCmd struct {
@@ -286,6 +305,70 @@ func createSection(ctx context.Context, client *api.Client, name string) (string
 	return resp.SectionID, nil
 }
 
+// --- section rename ---
+
+type SectionRenameCmd struct {
+	ID   string `arg:"" required:"" help:"Section ID."`
+	Name string `arg:"" required:"" help:"New section name."`
+}
+
+func (c *SectionRenameCmd) Run(cli *CLI) error {
+	// Slack stores an empty name as "" and answers ok, so reject locally
+	// before any API call. The original (untrimmed) name is what gets sent.
+	if strings.TrimSpace(c.Name) == "" {
+		return &output.Error{Err: "invalid_input", Detail: "section name must not be blank", Input: c.Name, Code: output.ExitGeneral}
+	}
+
+	client, err := cli.NewSessionClient()
+	if err != nil {
+		return err
+	}
+
+	p := cli.NewPrinter()
+	ctx, cancel := cli.Context()
+	defer cancel()
+
+	sections, err := fetchSections(ctx, client)
+	if err != nil {
+		return cli.ClassifyError(err)
+	}
+	current := findSection(sections, c.ID)
+	if current == nil {
+		return output.SectionNotFound(c.ID)
+	}
+
+	// users.channelSections.set clears any field whose key is omitted, so the
+	// current emoji rides along with the new name.
+	emoji := current.Emoji
+	if _, err = client.PostInternalForm(ctx, "users.channelSections.set", map[string]string{
+		"channel_section_id": c.ID,
+		"name":               c.Name,
+		"emoji":              emoji,
+	}); err != nil {
+		return cli.ClassifyError(err)
+	}
+
+	// The endpoint returns a bare {"ok":true} regardless, so the re-fetch is
+	// the only evidence the rename took.
+	after, err := fetchSections(ctx, client)
+	if err != nil {
+		return cli.ClassifyError(err)
+	}
+	updated := findSection(after, c.ID)
+	if updated == nil || updated.Name != c.Name || updated.Emoji != emoji {
+		detail := "section missing after users.channelSections.set"
+		if updated != nil {
+			detail = "section did not match the requested state after users.channelSections.set (name=" + strconv.Quote(updated.Name) + ", emoji=" + strconv.Quote(updated.Emoji) + ")"
+		}
+		return &output.Error{Err: "rename_failed", Detail: detail, Input: c.ID, Code: output.ExitGeneral}
+	}
+
+	if err := p.PrintItem(sectionRow(*updated)); err != nil {
+		return err
+	}
+	return p.PrintMeta(output.Meta{})
+}
+
 // --- section move ---
 
 type SectionMoveCmd struct {
@@ -333,17 +416,11 @@ func (c *SectionMoveCmd) Run(cli *CLI) error {
 	// otherwise silently no-op (the same failure class as this bug). The
 	// --new-section path already has both id and name from createSection.
 	if c.NewSection == "" {
-		found := false
-		for _, s := range sections {
-			if s.ID == targetSectionID {
-				targetSectionName = s.Name
-				found = true
-				break
-			}
-		}
-		if !found {
+		target := findSection(sections, targetSectionID)
+		if target == nil {
 			return output.SectionNotFound(targetSectionID)
 		}
+		targetSectionName = target.Name
 	}
 
 	channelIDs := normalizeChannelIDs(c.Channels)
