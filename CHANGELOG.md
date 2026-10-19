@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.0](https://github.com/tammersaleh/slack-cli/compare/v5.2.0...v5.3.0) (2026-10-19)
+
+
+### Features
+
+* add section emoji and --emoji on section create and move ([b5d0e8b](https://github.com/tammersaleh/slack-cli/commit/b5d0e8b1fcdd10ce46a9c39054ab8c927c707391))
+
 ## [5.2.0](https://github.com/tammersaleh/slack-cli/compare/v5.1.0...v5.2.0) (2026-10-17)
 
 
