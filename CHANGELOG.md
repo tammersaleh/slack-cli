@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.4.0](https://github.com/tammersaleh/slack-cli/compare/v5.3.0...v5.4.0) (2026-10-19)
+
+
+### Features
+
+* add channel invite and kick ([a3e8a32](https://github.com/tammersaleh/slack-cli/commit/a3e8a32ee52e19637e4ff160afd76c9ce0b2068b))
+
 ## [5.3.0](https://github.com/tammersaleh/slack-cli/compare/v5.2.0...v5.3.0) (2026-10-19)
 
 
