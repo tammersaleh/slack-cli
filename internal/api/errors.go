@@ -88,6 +88,13 @@ var nonResumableErrors = map[string]bool{
 // that recognizes a Slack API error, so exit-code classification and cursor
 // disposition - two independent policies - can never disagree about whether a
 // given error came from Slack.
+// SlackErrorCode returns the error code of a typed Slack API error and true,
+// or "" and false for any other error. Only a slack.SlackErrorResponse
+// qualifies, so a local error that happens to spell a Slack code is not one.
+func SlackErrorCode(err error) (string, bool) {
+	return slackErrorCode(err)
+}
+
 func slackErrorCode(err error) (string, bool) {
 	var slackErr slack.SlackErrorResponse
 	if errors.As(err, &slackErr) {

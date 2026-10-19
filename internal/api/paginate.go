@@ -86,30 +86,50 @@ func FetchPage[T any](ctx context.Context, endpoint, cursor string, fetch PageFu
 }
 
 func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T]) ([]T, string, error) {
+	var items []T
+	var next string
+	err := retry(ctx, endpoint, "page", func() (map[string]any, error) {
+		var err error
+		items, next, err = fetch(cursor)
+		return map[string]any{"items": len(items), "has_more": next != ""}, err
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return items, next, nil
+}
+
+// retry runs attempt up to maxAttempts times, waiting Retry-After (floor one
+// second) between rate-limited attempts and giving up with a
+// RateLimitExhaustedError. Any other error returns immediately. Each attempt
+// emits a trace event of the given kind carrying the attempt's own fields.
+func retry(ctx context.Context, endpoint, event string, attempt func() (fields map[string]any, err error)) error {
 	tracer := TracerFrom(ctx)
-	for attempt := range maxAttempts {
+	for n := range maxAttempts {
 		start := time.Now()
-		items, next, err := fetch(cursor)
-		tracer.Event("page", map[string]any{
+		fields, err := attempt()
+		attrs := map[string]any{
 			"endpoint":   endpoint,
-			"attempt":    attempt + 1,
-			"items":      len(items),
+			"attempt":    n + 1,
 			"latency_ms": time.Since(start).Milliseconds(),
-			"has_more":   next != "",
 			"error":      errString(err),
-		})
+		}
+		for k, v := range fields {
+			attrs[k] = v
+		}
+		tracer.Event(event, attrs)
 		if err == nil {
-			return items, next, nil
+			return nil
 		}
 
 		var rlErr *slack.RateLimitedError
 		if !errors.As(err, &rlErr) {
-			return nil, "", err
+			return err
 		}
 
 		// Last attempt exhausted.
-		if attempt == maxAttempts-1 {
-			return nil, "", &RateLimitExhaustedError{Err: err, Endpoint: endpoint, Attempts: maxAttempts}
+		if n == maxAttempts-1 {
+			return &RateLimitExhaustedError{Err: err, Endpoint: endpoint, Attempts: maxAttempts}
 		}
 
 		wait := rlErr.RetryAfter
@@ -118,17 +138,17 @@ func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch P
 		}
 		tracer.Event("retry", map[string]any{
 			"endpoint": endpoint,
-			"attempt":  attempt + 1,
+			"attempt":  n + 1,
 			"wait_ms":  wait.Milliseconds(),
 		})
 
 		select {
 		case <-time.After(wait):
 		case <-ctx.Done():
-			return nil, "", ctx.Err()
+			return ctx.Err()
 		}
 	}
-	panic("fetchWithRetry: loop exited without returning")
+	panic("retry: loop exited without returning")
 }
 
 func errString(err error) string {
