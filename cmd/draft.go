@@ -19,7 +19,6 @@ import (
 	"github.com/tammersaleh/slack-cli/internal/mdblocks"
 	"github.com/tammersaleh/slack-cli/internal/output"
 	"github.com/tammersaleh/slack-cli/internal/resolve"
-	"github.com/tammersaleh/slack-cli/internal/slackurl"
 )
 
 type DraftCmd struct {
@@ -142,58 +141,6 @@ func fetchDrafts(ctx context.Context, client *api.Client, activeOnly bool, limit
 		return nil, false, err
 	}
 	return resp.Drafts, resp.HasMore, nil
-}
-
-type recipientKind int
-
-const (
-	recipientChannel recipientKind = iota
-	recipientUser
-)
-
-// classifyRecipient decides, syntactically, whether a draft recipient arg
-// names a channel or a user. No network calls. User-shaped: @name, an email,
-// a Uxxx/Wxxx id, or a user-profile URL. Everything else (#name, bare name,
-// C/D/G/M id, channel/message URL) is a channel; bare names stay channels for
-// backward compatibility, so a person must be given as @name, email, or id.
-func classifyRecipient(s string) recipientKind {
-	if ref, ok, _ := slackurl.Parse(s); ok {
-		if ref.Kind == slackurl.KindUser {
-			return recipientUser
-		}
-		return recipientChannel
-	}
-	// An "@" means a @name handle (leading) or an email (interior); channel
-	// names can't contain one, and a URL with an "@" was handled above.
-	if strings.Contains(s, "@") {
-		return recipientUser
-	}
-	if resolve.IsUserID(s) {
-		return recipientUser
-	}
-	return recipientChannel
-}
-
-// splitRecipients classifies the recipient args into channel and user inputs.
-// Pure - no network calls - so Run can pick the resolver's client before any
-// resolution happens. A malformed URL surfaces its own precise reason here,
-// ahead of resolveDestination's mix/arity checks - otherwise it gets bucketed
-// as a channel and reported as "cannot mix" or "one channel only", hiding the
-// actual problem. (A well-formed but wrong-kind URL, e.g. a file link, still
-// classifies as a channel and is rejected by ResolveChannel as invalid_input.)
-func (c *DraftCreateCmd) splitRecipients() (channels, users []string, err error) {
-	for _, rec := range c.Recipients {
-		if _, matched, perr := slackurl.Parse(rec); matched && perr != nil {
-			return nil, nil, output.InvalidURL(rec, perr.Error())
-		}
-		switch classifyRecipient(rec) {
-		case recipientUser:
-			users = append(users, rec)
-		default:
-			channels = append(channels, rec)
-		}
-	}
-	return channels, users, nil
 }
 
 // resolveDestination turns the split recipients into a single draft
@@ -364,7 +311,7 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	// the session token.
 	sessionAuthMethod := cli.authMethod
 
-	channels, users, derr := c.splitRecipients()
+	channels, users, derr := splitRecipients(c.Recipients)
 	if derr != nil {
 		return derr
 	}
