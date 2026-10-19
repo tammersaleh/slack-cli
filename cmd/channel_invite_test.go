@@ -366,6 +366,60 @@ func TestChannelMembership_ChannelErrorFanOut(t *testing.T) {
 	}
 }
 
+// A channel error on a later user must not re-report users who already
+// succeeded in that channel, and must still include the user it hit. Pins
+// the users[i:] slice: range users (re-emits U01XYZ) and users[i+1:] (drops
+// U02MGR) both fail here.
+func TestChannelMembership_ChannelErrorFanOutMidChannel(t *testing.T) {
+	for _, v := range membershipVerbs {
+		t.Run(v.cmd, func(t *testing.T) {
+			m := newMembershipMock()
+			m.answers["C01ABC/U02MGR"] = v.channelErr
+			out, err := runWithMock(t, m.mux(), "channel", v.cmd, "C01ABC", "U01XYZ", "U02MGR", "U03BOB")
+			assertExitError(t, err)
+			assertCalls(t, m.callLog(), []string{
+				v.endpoint + " C01ABC/U01XYZ",
+				v.endpoint + " C01ABC/U02MGR",
+			})
+			rows, meta := rowsAndMeta(t, out)
+			if len(rows) != 3 {
+				t.Fatalf("got %d rows, want 3:\n%s", len(rows), out)
+			}
+			assertRow(t, rows[0], "C01ABC", "U01XYZ", "status", v.done)
+			assertRow(t, rows[1], "C01ABC", "U02MGR", "error", v.channelErr)
+			assertRow(t, rows[2], "C01ABC", "U03BOB", "error", v.channelErr)
+			if meta["error_count"] != float64(2) {
+				t.Errorf("error_count = %v, want 2", meta["error_count"])
+			}
+		})
+	}
+}
+
+// A fatal error's trailer keeps the pair errors counted before it.
+func TestChannelMembership_FatalTrailerKeepsErrorCount(t *testing.T) {
+	for _, v := range membershipVerbs {
+		t.Run(v.cmd, func(t *testing.T) {
+			m := newMembershipMock()
+			m.answers["C01ABC/U01XYZ"] = v.pairErr
+			m.fatalAfter = 1
+			m.fatalCode = "invalid_auth"
+			r := runWithMockFull(t, m.mux(), "channel", v.cmd, "C01ABC", "U01XYZ", "U02MGR")
+			var oErr *output.Error
+			if !errors.As(r.err, &oErr) || oErr.Err != "invalid_auth" {
+				t.Fatalf("expected fatal invalid_auth, got %T: %v", r.err, r.err)
+			}
+			rows, meta := rowsAndMeta(t, r.stdout)
+			if len(rows) != 1 {
+				t.Fatalf("got %d rows, want 1:\n%s", len(rows), r.stdout)
+			}
+			assertRow(t, rows[0], "C01ABC", "U01XYZ", "error", v.pairErr)
+			if meta["error_count"] != float64(1) || meta["has_more"] != true || meta["error"] != "invalid_auth" {
+				t.Errorf("meta = %v, want error_count:1 has_more:true error:invalid_auth", meta)
+			}
+		})
+	}
+}
+
 // not_in_channel is the target user on kick (idempotent) and the caller on
 // invite (channel error). Same code, different disposition.
 func TestChannelMembership_NotInChannelIsEndpointSpecific(t *testing.T) {
