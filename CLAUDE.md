@@ -196,6 +196,13 @@ step 9 (retrospective), then starts the next feature's agent. Give the agent
 the SPEC.md section, the plan file path, and the sibling-repo pointers up
 front so it starts cold without re-discovery.
 
+A `fork` sub-agent cannot spawn agents, so it cannot run the mandatory
+`feature-dev:code-reviewer` pass itself (seen 2026-10-19: it substituted a
+Codex review and pushed). Either run the feature in a `general-purpose` agent,
+or have the main thread run the reviewer on the pushed range and ship any
+fixes as a follow-up commit. The reviewer found two test gaps that Codex had
+not.
+
 ## Bug reports and todos
 
 Both directories are untracked scratch space holding work orders, not
