@@ -91,16 +91,28 @@ func TestCall_ContextCancelledBeforeCall(t *testing.T) {
 	}
 }
 
+// attrTracer keeps each event's attributes so payloads can be asserted.
+type attrTracer struct {
+	kinds []string
+	attrs []map[string]any
+}
+
+func (a *attrTracer) Event(kind string, attrs map[string]any) {
+	a.kinds = append(a.kinds, kind)
+	a.attrs = append(a.attrs, attrs)
+}
+
 // Call emits "call" events, not "page" events: it has no items or cursor, and
 // a --trace reader sorting writes from pagination needs to tell them apart.
+// The retry event's attempt is the request that was rate limited.
 func TestCall_TraceEvents(t *testing.T) {
-	rec := &recordingTracer{}
+	rec := &attrTracer{}
 	ctx := WithTracer(context.Background(), rec)
 	calls := 0
 	err := Call(ctx, testEndpoint, func() error {
 		calls++
 		if calls == 1 {
-			return &slack.RateLimitedError{RetryAfter: time.Millisecond}
+			return &slack.RateLimitedError{RetryAfter: 2 * time.Millisecond}
 		}
 		return nil
 	})
@@ -108,13 +120,71 @@ func TestCall_TraceEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"call", "retry", "call"}
-	if len(rec.events) != len(want) {
-		t.Fatalf("events = %v, want %v", rec.events, want)
+	if len(rec.kinds) != len(want) {
+		t.Fatalf("events = %v, want %v", rec.kinds, want)
 	}
 	for i := range want {
-		if rec.events[i] != want[i] {
-			t.Errorf("events = %v, want %v", rec.events, want)
-			break
+		if rec.kinds[i] != want[i] {
+			t.Fatalf("events = %v, want %v", rec.kinds, want)
 		}
+	}
+	first := rec.attrs[0]
+	if first["endpoint"] != testEndpoint || first["attempt"] != 1 || first["error"] != "slack rate limit exceeded, retry after 2ms" {
+		t.Errorf("first call attrs = %v", first)
+	}
+	if _, ok := first["latency_ms"]; !ok {
+		t.Errorf("first call attrs missing latency_ms: %v", first)
+	}
+	for _, k := range []string{"items", "has_more"} {
+		if _, ok := first[k]; ok {
+			t.Errorf("call event carries pagination field %s: %v", k, first)
+		}
+	}
+	retry := rec.attrs[1]
+	if retry["endpoint"] != testEndpoint || retry["attempt"] != 1 || retry["wait_ms"] != int64(2) {
+		t.Errorf("retry attrs = %v", retry)
+	}
+	last := rec.attrs[2]
+	if last["attempt"] != 2 || last["error"] != "" {
+		t.Errorf("second call attrs = %v", last)
+	}
+}
+
+// Retry-After: 0 still waits the one-second floor, as FetchPage does.
+func TestCall_RateLimitZeroRetryAfterStillWaits(t *testing.T) {
+	calls := 0
+	start := time.Now()
+	err := Call(context.Background(), testEndpoint, func() error {
+		calls++
+		if calls == 1 {
+			return &slack.RateLimitedError{RetryAfter: 0}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("got %d calls, want 2", calls)
+	}
+	if time.Since(start) < 500*time.Millisecond {
+		t.Errorf("retried after %v, want at least the 1s floor", time.Since(start))
+	}
+}
+
+// Cancelling during the retry wait returns promptly with the context error.
+func TestCall_RateLimitContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	err := Call(ctx, testEndpoint, func() error {
+		calls++
+		cancel()
+		return &slack.RateLimitedError{RetryAfter: time.Hour}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("got %d calls, want 1", calls)
 	}
 }

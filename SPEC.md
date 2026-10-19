@@ -131,18 +131,20 @@ carries `ts`, `kind`, and kind-specific attributes. Current kinds:
 
 - `page` - one per paginated page fetch (`endpoint`, `attempt`, `items`,
   `latency_ms`, `has_more`, `error`)
+- `call` - one per single-shot write through the shared retry (`endpoint`,
+  `attempt`, `latency_ms`, `error`); `channel invite` and `channel kick`
 - `retry` - emitted before each rate-limit sleep (`endpoint`, `attempt`,
-  `wait_ms`)
+  `wait_ms`); `attempt` is the request that was rate limited
 - `internal_api` - one per internal API POST (`endpoint`, `latency_ms`,
   `bytes`, `error`)
 
 ```json
 {"ts":"2024-03-01T00:00:00.000Z","kind":"page","endpoint":"conversations.list","attempt":1,"items":200,"latency_ms":182,"has_more":true,"error":""}
-{"ts":"2024-03-01T00:00:00.183Z","kind":"retry","endpoint":"conversations.list","attempt":2,"wait_ms":3000}
+{"ts":"2024-03-01T00:00:00.183Z","kind":"retry","endpoint":"conversations.list","attempt":1,"wait_ms":3000}
 ```
 
-Tracing does not yet cover slack-go bot token calls (e.g. `conversations.history`);
-only paginated helpers and internal-API calls are instrumented.
+Tracing does not cover slack-go bot token calls made outside the paginated
+helpers and `api.Call` (e.g. `conversations.history` in `message get`).
 
 ## Global Flags
 

@@ -115,6 +115,8 @@ Method docs confirmed for `conversations.kick`: `cant_kick_from_general`, `cant_
 
 `missing_scope` classifies exit 1 in `api.ClassifyError` (not in `authErrors`); the fatal test asserts that rather than the exit 2 the plan text assumed.
 
+Code review (Codex, 2026-10-19) on the branch: accepted - trace docs for the new `call` kind and the `retry.attempt` meaning (SPEC's example said 2, the code has always emitted the rate-limited attempt, 1), a trace test that asserts payloads, kick mirrors for dedupe, a command-level rate-limit-exhaustion test (exit 3, trailer `rate_limited`), a `--quiet` test, and `Call` tests for the one-second floor and cancellation during the wait. Rejected - reclassifying `missing_scope` to exit 2 (pre-existing CLI-wide behavior, SPEC contradiction filed as `todo/missing-scope-exits-1-not-2.md`); dropping kong's `required:""` so a bare `slack channel invite` returns JSON `invalid_input` (every other positional command uses the kong usage error, and SPEC never promised otherwise); fixing resolver error flattening (`channel_not_found` for a rate limit during `#name` resolution - pre-existing, already `todo/resolver-errors-are-reported-as-channel-not-found.md`).
+
 Codex review of this plan (2026-10-19) produced the `api.Call` primitive, the three-tier error dispositions, the two-scope decision, the shared recipients file, and the fatal-trailer contract. Rejected: unverified error codes it proposed for the allowlists (`invitee_cant_see_channel`, `org_user_not_in_team`, `no_external_invite_permission`, `not_supported`), pending a docs check by the implementer.
 
 ## Steps

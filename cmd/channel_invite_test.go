@@ -21,13 +21,16 @@ type membershipMock struct {
 	// rateLimitOnce, when set, answers the first request for that pair with a
 	// 429 carrying Retry-After and then lets it through.
 	rateLimitOnce map[string]bool
+	// rateLimitAlways answers every request for that pair with a 429, which
+	// is how a run exhausts the retry budget. Those requests are not logged.
+	rateLimitAlways map[string]bool
 	// fatalAfter, when > 0, answers every call past that many with fatalCode.
 	fatalAfter int
 	fatalCode  string
 }
 
 func newMembershipMock() *membershipMock {
-	return &membershipMock{answers: map[string]string{}, rateLimitOnce: map[string]bool{}}
+	return &membershipMock{answers: map[string]string{}, rateLimitOnce: map[string]bool{}, rateLimitAlways: map[string]bool{}}
 }
 
 func (m *membershipMock) mux() *http.ServeMux {
@@ -47,7 +50,7 @@ func (m *membershipMock) handle(endpoint, userParam string) http.HandlerFunc {
 		pair := r.PostForm.Get("channel") + "/" + r.PostForm.Get(userParam)
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if m.rateLimitOnce[pair] {
+		if m.rateLimitOnce[pair] || m.rateLimitAlways[pair] {
 			delete(m.rateLimitOnce, pair)
 			w.Header().Set("Retry-After", "0")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -228,15 +231,58 @@ func TestChannelMembership_OneCallPerPairInOrder(t *testing.T) {
 
 // Repeated inputs collapse to one call; first-seen order wins.
 func TestChannelMembership_Dedupe(t *testing.T) {
-	m := newMembershipMock()
-	_, err := runWithMock(t, m.mux(), "channel", "invite", "C01ABC", "U01XYZ", "C01ABC", "U01XYZ", "C02DEF")
-	if err != nil {
-		t.Fatal(err)
+	for _, v := range membershipVerbs {
+		t.Run(v.cmd, func(t *testing.T) {
+			m := newMembershipMock()
+			_, err := runWithMock(t, m.mux(), "channel", v.cmd, "C01ABC", "U01XYZ", "C01ABC", "U01XYZ", "C02DEF")
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCalls(t, m.callLog(), []string{
+				v.endpoint + " C01ABC/U01XYZ",
+				v.endpoint + " C02DEF/U01XYZ",
+			})
+		})
 	}
-	assertCalls(t, m.callLog(), []string{
-		"conversations.invite C01ABC/U01XYZ",
-		"conversations.invite C02DEF/U01XYZ",
-	})
+}
+
+// Rate-limit exhaustion is fatal with exit 3: rows so far stay, the trailer
+// names rate_limited, and no further pair is attempted.
+func TestChannelMembership_RateLimitExhaustedIsFatal(t *testing.T) {
+	m := newMembershipMock()
+	m.rateLimitAlways["C02DEF/U01XYZ"] = true
+	r := runWithMockFull(t, m.mux(), "channel", "invite", "C01ABC", "C02DEF", "C03GHI", "U01XYZ")
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) || oErr.Err != "rate_limited" || oErr.Code != output.ExitRateLimit {
+		t.Fatalf("expected rate_limited exit %d, got %v", output.ExitRateLimit, r.err)
+	}
+	if oErr.Endpoint != "conversations.invite" {
+		t.Errorf("endpoint = %q, want conversations.invite", oErr.Endpoint)
+	}
+	assertCalls(t, m.callLog(), []string{"conversations.invite C01ABC/U01XYZ"})
+	rows, meta := rowsAndMeta(t, r.stdout)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1:\n%s", len(rows), r.stdout)
+	}
+	assertRow(t, rows[0], "C01ABC", "U01XYZ", "status", "invited")
+	if meta["has_more"] != true || meta["error"] != "rate_limited" {
+		t.Errorf("meta = %v, want has_more:true error:rate_limited", meta)
+	}
+}
+
+// --quiet keeps the exit code of a pair error with nothing on stdout, and
+// still makes every call.
+func TestChannelMembership_QuietKeepsExitCode(t *testing.T) {
+	m := newMembershipMock()
+	m.answers["C01ABC/U01XYZ"] = "cant_invite"
+	r := runWithMockFull(t, m.mux(), "channel", "invite", "--quiet", "C01ABC", "U01XYZ", "U02MGR")
+	assertExitError(t, r.err)
+	if r.stdout != "" || r.stderr != "" {
+		t.Errorf("expected no output under --quiet, got stdout %q stderr %q", r.stdout, r.stderr)
+	}
+	if len(m.callLog()) != 2 {
+		t.Errorf("expected both pairs attempted, got %v", m.callLog())
+	}
 }
 
 // The idempotent answer is a status, not an error: exit 0, no error_count.
@@ -344,8 +390,9 @@ func TestChannelMembership_NotInChannelIsEndpointSpecific(t *testing.T) {
 	assertRow(t, rows[1], "C01ABC", "U02MGR", "error", "not_in_channel")
 }
 
-// Fatal codes abort after the rows already earned: stderr error, exit code
-// from the classification, trailer has_more:true with the code and no cursor.
+// Fatal codes abort after the rows already earned: the returned error is the
+// classified *output.Error (which main prints to stderr) with its exit code,
+// and the trailer reads has_more:true with the code and no cursor.
 func TestChannelMembership_FatalAbortsRun(t *testing.T) {
 	cases := []struct {
 		code     string
