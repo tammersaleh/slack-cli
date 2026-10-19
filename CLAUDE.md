@@ -150,7 +150,10 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    and be re-launched, not written as a one-hour loop. The artifact is a
    **cask**, not a formula: it lives at `Casks/slack-cli.rb` in the tap (not
    `Formula/`), and the version line is `version "x.y.z"`. Don't waste time
-   grepping `Formula/`. Then install and verify against the real artifact,
+   grepping `Formula/`. raw.githubusercontent.com caches the cask for minutes after
+   the tap commit lands (seen 2026-10-19: still `5.2.0` after the release run
+   had succeeded); `gh api repos/tammersaleh/homebrew-tap/contents/Casks/slack-cli.rb -q .content | base64 -d`
+   reads the real file. Then install and verify against the real artifact,
    never your local build:
    - Binary change (`feat:`/`fix:`): `brew upgrade --cask tammersaleh/tap/slack-cli`
      (plain `brew upgrade slack-cli` can no-op if the cask tap hasn't synced;
