@@ -1,10 +1,10 @@
 # slack-cli Specification
 
-A read-only, non-interactive CLI for Slack, built in Go. Designed for agents and automation.
+A non-interactive CLI for Slack, built in Go. Designed for agents and automation. Reads nearly everything; writes are limited to the operations named in the design principles below, and it never posts a message.
 
 ## Design Principles
 
-- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only, no channel mutations).
+- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, channel membership (`channel invite`, `channel kick`), draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only).
 - **Agent-first**: JSONL output. No interactive prompts. Deterministic, scriptable.
 - **Thin wrapper**: One API page per call by default. The caller controls data volume. The single exception is `channel list --query`, which searches every page of your own conversations because a partial client-side search reports "not found" for something that exists; it is bounded and cheap, and every other path still requires `--all`.
 - **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, `aws`.
@@ -628,6 +628,118 @@ Errors:
 - `not_authed` (exit 2): No token.
 
 Slack API: `admin.roles.entity.listAssignments` (internal)
+
+#### slack channel invite
+
+Adds users to channels via `conversations.invite`. Recipients are variadic and
+classified syntactically: `@name`, an email, a `U…`/`W…` id, or a user-profile
+URL is a user; everything else (`#name`, bare name, `C…` id, channel URL) is a
+channel. At least one channel and at least one user are required; order does not
+matter.
+
+```
+slack channel invite <recipient>...
+```
+
+```
+$ slack channel invite @alice '#eng-a' '#eng-b'      # one person, many channels
+$ slack channel invite '#eng-a' @alice @bob           # many people, one channel
+```
+
+Every channel and user resolves before the first write. A resolution failure
+aborts the command with no rows and no API writes: a malformed URL is
+`invalid_input`, otherwise `channel_not_found` / `user_not_found` naming the
+input. Ids and URLs pass through without an existence check. Repeated inputs
+dedupe by resolved id, first-seen order.
+
+One `conversations.invite` call per (channel, user) pair, sequential, channels
+in input order and users in input order within each channel, with the standard
+rate-limit retry. One row per pair, emitted as it completes:
+
+```
+$ slack channel invite @alice '#eng-a' '#eng-b'
+{"channel_id":"C01ABC","user_id":"U01XYZ","status":"invited"}
+{"channel_id":"C02DEF","user_id":"U01XYZ","status":"already_in_channel"}
+{"_meta":{"has_more":false}}
+```
+
+`channel_id` and `user_id` carry the enrichment names (`channel_name`,
+`user_name`). `status` is `invited` or `already_in_channel`. The idempotent
+outcome is a status, not an error, so re-running the same command is safe and
+exits 0.
+
+Every Slack error code has one of three dispositions:
+
+| disposition | codes |
+|---|---|
+| idempotent: `status`, exit 0 | `already_in_channel` |
+| pair error: one `error` row, continue | `cant_invite_self`, `cant_invite`, `user_is_restricted`, `ura_max_channels`, `user_not_found`, `invitee_cant_see_channel`, `org_user_not_in_team`, `no_external_invite_permission`, `app_cannot_join_channel` |
+| channel error: an `error` row for every remaining user in that channel with no further calls, then the next channel | `not_in_channel` (the caller is not a member), `is_archived`, `channel_not_found`, `method_not_supported_for_channel_type` |
+| fatal: abort the run | everything else, including codes Slack has not invented yet |
+
+```
+$ slack channel invite @alice @bob '#eng-a' '#archived'
+{"channel_id":"C01ABC","user_id":"U01XYZ","status":"invited"}
+{"channel_id":"C01ABC","user_id":"U02MGR","error":"cant_invite","detail":"cant_invite"}
+{"channel_id":"C03GHI","user_id":"U01XYZ","error":"is_archived","detail":"is_archived"}
+{"channel_id":"C03GHI","user_id":"U02MGR","error":"is_archived","detail":"is_archived"}
+{"_meta":{"has_more":false,"error_count":3}}
+```
+
+Pair and channel errors count in `error_count` and the command exits 1 with
+nothing on stderr. A fatal error (auth, `missing_scope`, `no_permission`,
+rate-limit exhaustion, network, timeout, an unknown code) writes the classified
+error to stderr with its own exit code and ends stdout with
+`{"_meta":{"has_more":true,"error":"<code>","error_count":N}}`. Rows already
+emitted are authoritative; `has_more:true` means some requested pairs have no
+row. There is no cursor: rerun the same command, which is idempotent. Unknown
+codes are fatal rather than pair-local because treating a systemic failure as
+per-pair would repeat it across every pair.
+
+Scopes: `channels:manage` and `groups:write` on a bot token (both also cover
+`conversations.kick`). OAuth tokens issued before these were requested answer
+`missing_scope`; re-run `slack auth login`. A desktop session token already has
+them, on both the workspace and the org context (verified live on Enterprise
+Grid, private channel included).
+
+Errors:
+
+- `invalid_input` (exit 1): No channel recipient, no user recipient, or a malformed Slack URL. No API call is made.
+- `channel_not_found` / `user_not_found` (exit 1): A recipient did not resolve. No write is made.
+- `not_authed` (exit 2): No token.
+
+Slack API: `conversations.invite`
+
+#### slack channel kick
+
+Removes users from channels via `conversations.kick`. Same grammar, resolution,
+ordering, row shape, and trailer contract as `channel invite`.
+
+```
+slack channel kick <recipient>...
+```
+
+```
+$ slack channel kick @alice '#eng-a' '#eng-b'
+{"channel_id":"C01ABC","user_id":"U01XYZ","status":"kicked"}
+{"channel_id":"C02DEF","user_id":"U01XYZ","status":"not_in_channel"}
+{"_meta":{"has_more":false}}
+```
+
+`status` is `kicked` or `not_in_channel`. Note `not_in_channel` describes the
+target user here and the caller on `invite`, which is why the two commands
+classify it differently.
+
+| disposition | codes |
+|---|---|
+| idempotent: `status`, exit 0 | `not_in_channel` |
+| pair error: one `error` row, continue | `cant_kick_self`, `user_not_found`, `not_supported` |
+| channel error: an `error` row for every remaining user in that channel, then the next channel | `channel_not_found`, `cant_kick_from_general`, `method_not_supported_for_channel_type` |
+| fatal: abort the run | everything else (`restricted_action` is workspace policy and `no_permission` describes the caller, so both abort) |
+
+Errors: as `channel invite`.
+
+Slack API: `conversations.kick`
 
 ### message
 

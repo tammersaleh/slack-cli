@@ -36,6 +36,8 @@ func TestSkill_Frontmatter(t *testing.T) {
 		"slack message list",
 		"slack search messages",
 		"slack channel list",
+		"slack channel invite",
+		"slack channel kick",
 		"slack user info",
 		"slack user manager-chain",
 		"slack saved list",

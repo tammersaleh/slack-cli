@@ -173,6 +173,8 @@ slack channel list [--limit N] [--type all|public|private|mpim|im] [--query STR]
 slack channel info <channel>...
 slack channel members <channel> [--limit N]
 slack channel managers <channel>                       # "Managed by" users (session token)
+slack channel invite <recipient>...                    # add users to channels
+slack channel kick <recipient>...                      # remove users from channels
 ```
 
 Defaults to conversations you're in, all types (including group DMs and DMs).
@@ -210,7 +212,18 @@ slack channel list --query ext-                        # find customer channels
 slack channel list --type private                      # private channels only
 slack channel list --include-non-member --query ext-   # slow; channels you haven't joined
 slack channel info https://acme.slack.com/archives/C01ABC --fields id,name,topic
+slack channel invite @alice '#eng-a' '#eng-b' '#eng-c'   # one person, many channels
+slack channel kick '#eng-a' @alice @bob                  # many people, one channel
 ```
+
+`invite` and `kick` take mixed recipients: `@name`, an email, a `U…` id, or a
+profile URL is a person; everything else is a channel. Every recipient resolves
+before the first write, so a typo changes nothing. One row per (channel, user)
+pair with `status` (`invited`/`kicked`, or `already_in_channel`/`not_in_channel`
+when nothing needed doing - exit 0, safe to re-run) or `error` (exit 1, the run
+continues). A systemic error aborts with `has_more:true` in the trailer; rerun
+the same command to finish. Both work with a desktop session token, private
+channels included.
 
 ### Users
 

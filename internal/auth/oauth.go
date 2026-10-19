@@ -29,7 +29,8 @@ const (
 	// before this must re-run 'slack auth login'.
 	botScopes = "channels:read,groups:read,im:read,mpim:read," +
 		"channels:history,groups:history,im:history,mpim:history," +
-		"users:read,users.profile:read,reactions:read"
+		"users:read,users.profile:read,reactions:read," +
+		"channels:manage,groups:write"
 
 	// Scopes requested for the user token.
 	userScopes = "search:read"
