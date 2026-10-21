@@ -281,10 +281,15 @@ curl -sX POST 'https://slack.com/api/drafts.list' \
   | jq '.drafts[] | {id, is_deleted, last_updated_ts, last_updated_client}'
 ```
 
-`is_deleted` flips to `true` within a few seconds; `last_updated_ts`
-moves forward to the time Desktop wrote the tombstone; and
-`last_updated_client` switches to `"Slack SSB Mac (Atom)"` - the
-signature of Desktop writing to the server, not us.
+`is_deleted` flips to `true` within a few seconds and `last_updated_ts`
+moves forward to the time Desktop wrote the tombstone.
+`last_updated_client` is not evidence of who wrote: with a
+desktop-extracted session token the CLI's own writes are stamped
+`"Slack SSB Mac (Atom)"` too (verified 2026-10-21 on a fresh CLI create
+whose `last_updated_ts` equalled its creation time). The server derives
+the stamp from the token's client, not from the request. Only
+`last_updated_ts` moving after the CLI's last write shows a second
+writer.
 
 Swap the `section` block for a `rich_text` one and the draft survives
 the same navigation indefinitely.
@@ -436,6 +441,20 @@ Reconciliation survives on renderable content - a non-empty `rich_text`
 block OR a table attachment. An attachments-only table draft (empty
 `blocks`) does NOT tombstone: opening the Drafts panel repeatedly left
 `is_deleted` false.
+
+The CLI's own create path was verified live 2026-10-21 (self-DM, session
+token, Desktop running): `draft create --markdown --table`, the same with
+an eight-row five-column TSV and a body holding a mention, links, bold and
+a list, and a table-only `draft create --table` with no stdin. In every
+case the `drafts.create` response echoed `attachments`, `drafts.list`
+returned the attachment immediately and again 30 to 50 seconds later, and
+`is_deleted` stayed unset. A report the same day of a `--markdown --table`
+draft to a private channel coming back with no `attachments` could not be
+reproduced; the create response in that run was hidden by `--fields
+id,channel`, and the draft was later rewritten by another writer (its
+`last_updated_ts` moved after the CLI's last write) with the attachment
+intact. If it recurs, read the draft back right after create with no
+`--fields`, then again after opening the destination channel in Desktop.
 
 CLI support: `drafts.create`/`update` carry an `attachments` form param.
 The CLI accepts a stdin object `{"blocks":[...],"attachments":[...]}`, or
@@ -592,9 +611,10 @@ Diagnostic steps, in order:
    rule; our validation is now unnecessarily strict. If both ghost,
    the rule tightened further and we need a new experiment.
 
-3. Check `last_updated_client` on a ghosted draft. `"Slack SSB Mac
-   (Atom)"` means Desktop did the write. Anything else means the
-   server tombstoned it itself, which would be a different bug class.
+3. Check `last_updated_ts` on a ghosted draft against the CLI's last
+   write. A later value means another client wrote the tombstone.
+   `last_updated_client` cannot tell the CLI from Desktop when the token
+   came from Desktop (see above).
 
 4. If Desktop stopped reconciling block content and started keying on
    something else, try: `is_from_composer=true` on create; different
