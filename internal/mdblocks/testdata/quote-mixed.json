@@ -1,0 +1,13 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Intro.\n"}]},
+ {"type":"rich_text_quote","elements":[
+   {"type":"text","text":"Quoted "},
+   {"type":"text","text":"lead","style":{"bold":true}},
+   {"type":"text","text":" line."}]},
+ {"type":"rich_text_list","style":"bullet","indent":0,"border":1,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"one"}]},
+   {"type":"rich_text_section","elements":[{"type":"text","text":"two"}]}]},
+ {"type":"rich_text_quote","elements":[{"type":"text","text":"Closing thought."}]},
+ {"type":"rich_text_preformatted","border":1,"elements":[{"type":"text","text":"echo hi"}]},
+ {"type":"rich_text_section","elements":[{"type":"text","text":"After."}]}
+]}]

@@ -376,7 +376,7 @@ Supported:
 - `- ` / `* ` bullets and `1.` ordered lists, nested to three levels by indentation. An ordered list may start at any number; numbering continues across a nested list.
 - `**bold**`, `*italic*`, `~~strike~~` (two tildes, GFM), `` `code` ``. Single `*` is italic, Markdown semantics - not Slack mrkdwn, where it is bold.
 - Fenced and indented code blocks. The fence language tag is dropped.
-- `> ` quotes holding paragraphs only.
+- `> ` quotes holding paragraphs, lists, and code blocks. A quoted list or code block becomes a sibling `rich_text_list` / `rich_text_preformatted` with `border: 1`, which Slack renders under the same left bar as the quote text. The compose box ignored `offset` on a bordered ordered list (rendered `1.` for `offset: 2`), so a quoted ordered list may lose its start number.
 - `[text](https://url)`, bare URLs, `<https://url>`, emails. Links must be absolute http, https, or mailto. Link titles and formatting inside the link text are dropped (Slack `link` elements hold plain text).
 - `:emoji:` and `:emoji::skin-tone-3:`.
 - `<@U01XYZ>` / `<@W01XYZ>` user mentions, `<#C01ABC>` / `<#C01ABC|name>` channel mentions (the label is dropped), `@here` / `@channel` / `@everyone`.
@@ -389,14 +389,14 @@ line number:
 `@name` mentions (resolve the id first with `slack user info @name` and write
 `<@Uxxx>`), horizontal rules, images, HTML, pipe tables (use `--table`), a
 list nested more than three deep, a list item with more than one paragraph,
-a quote holding a list, code block, or nested quote, a mention or emoji
+a quote inside a quote, a mention or emoji
 inside link text, a relative or non-http(s)/mailto link, and an empty list
 item, quote, or code block (Slack rejects an empty text inline).
 
 Verified live 2026-10-16 through the drafts API: every construct above round-trips
 through `drafts.create` and `drafts.list` byte for byte and survives the
 reconciliation window. Desktop compose-box rendering of italic/strike,
-ordered-list `offset`, and whether the trailing `\n` after a heading or
+unbordered ordered-list `offset` (bordered: rendered `1.`, 2026-11-03), and whether the trailing `\n` after a heading or
 paragraph shows as a blank line or a single line break was not inspected by
 the CLI author; check the draft in the client the first time you rely on one
 of those.
@@ -505,7 +505,7 @@ rich_text_section (each one is a list item).
 
 - `style` is `bullet` or `ordered`.
 - `indent` is 0, 1, 2 for nesting depth.
-- `border` is 0 (none) or 1 (thin left border).
+- `border` is 0 (none) or 1 (thin left border). `border: 1` is how Slack represents a list inside a blockquote: the list is a sibling of the `rich_text_quote`, never nested in it (nesting is `invalid_message`), and it renders under the same left bar as the quote text.
 
 Nesting: a rich_text_list cannot contain another rich_text_list in its
 `elements`. To nest, emit SEPARATE rich_text_list blocks with
@@ -527,14 +527,18 @@ level 1 as hollow `○`, level 2 as filled square `■`.
 ```
 
 **rich_text_quote** - blockquote, renders with a left border. Same
-`elements` shape as rich_text_section.
+`elements` shape as rich_text_section. It cannot hold a list or code
+block; emit those as sibling `rich_text_list` / `rich_text_preformatted`
+containers with `border: 1`.
 
 ```json
 {"type":"rich_text_quote","elements":[{"type":"text","text":"quoted passage"}]}
 ```
 
 **rich_text_preformatted** - code block. `elements` is inline (usually a
-single `text` element). `border` 0 or 1.
+single `text` element). `border` 0 or 1; 1 renders as a code block inside
+a blockquote, under the quote bar (API-accepted and rendered; whether the
+composer itself emits it was not checked).
 
 ```json
 {"type":"rich_text_preformatted","elements":[{"type":"text","text":"go run main.go"}]}

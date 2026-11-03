@@ -1,0 +1,8 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_section","elements":[{"type":"text","text":"Intro\n"}]},
+ {"type":"rich_text_list","style":"bullet","indent":0,"border":1,"elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},
+ {"type":"rich_text_quote","elements":[{"type":"text","text":"after the list"}]},
+ {"type":"rich_text_quote","elements":[{"type":"text","text":"second quote"}]},
+ {"type":"rich_text_section","elements":[{"type":"text","text":"After"}]}
+]}]

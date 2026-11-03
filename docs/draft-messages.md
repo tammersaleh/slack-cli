@@ -64,6 +64,36 @@ Drafts panel was opened during it is not known, so "not tombstoned" is
 necessary rather than sufficient evidence. The CLI author's claim is
 limited to the API round-trip.
 
+### Quoted lists and code (2026-11-03)
+
+Slack has no list-in-quote nesting: a `rich_text_list` inside
+`rich_text_quote.elements` is `invalid_message` at `drafts.create`. The
+composer serializes a quoted list as a sibling `rich_text_list` with
+`border: 1` and no `rich_text_quote` at all. `--markdown` now emits that
+shape for `> - item`, and `rich_text_preformatted` with `border: 1` for a
+code block inside a quote.
+
+Measured 2026-11-02 (self-DM, session token, Enterprise Grid org) with a
+probe draft holding quote paragraph, bordered bullet list at indent 0 and 1,
+bordered ordered list with `offset: 2`, a second quote paragraph, a
+bordered preformatted block, and a trailing section: `drafts.create`
+accepted it and `drafts.list` returned every `border`, `indent`, and
+`offset` unchanged, immediately and after 30s, `is_deleted` unset.
+
+Desktop compose box, inspected 2026-11-03:
+
+| Check | Result |
+|---|---|
+| quote paragraph, bordered lists, second quote paragraph, bordered code block | one continuous left bar; the quote's last line does not glue into the first bullet |
+| `rich_text_preformatted` with `border: 1` | renders as a code block inside the bar (whether the composer itself emits this shape for a quoted code block was not checked) |
+| bordered `indent: 1` item | renders nested (hollow bullet) under the bordered parent |
+| ordered item with `offset: 2` | renders as `1.`, not `3.`; the compose box ignores `offset`, at least on a bordered list |
+
+The `offset` finding also answers the open row in the table above for
+bordered lists. An unbordered ordered list's `offset` rendering is still
+not inspected. The converter keeps emitting `offset` since the API stores
+it and the sent message may honor it.
+
 ## Endpoints
 
 All four endpoints are POST against `https://slack.com/api/<method>`,

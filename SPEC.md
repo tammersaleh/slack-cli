@@ -1736,7 +1736,7 @@ Slack tokens. Every conversion is deterministic.
 | `N. ` list | `rich_text_list` `style:ordered`, `offset: N-1`; a later segment of the same list continues the count |
 | nested list (indent) | a separate `rich_text_list` with `indent` 1 or 2, in source order; the parent list splits around it |
 | fenced or indented code | `rich_text_preformatted`; fence language tag dropped |
-| `> ` quote | `rich_text_quote`; paragraphs join with `\n\n` |
+| `> ` quote | `rich_text_quote`; consecutive paragraphs join with `\n\n`. A list or code block inside the quote becomes a sibling `rich_text_list` / `rich_text_preformatted` with `border: 1`, splitting the quote text around it. Slack has no list-in-quote nesting; the bordered list is the composer's own shape (read back from a Desktop-authored draft 2026-11-02), the bordered code block is API-accepted and renders under the quote bar but composer emission was not checked. The compose box rendered a bordered ordered list's `offset` as `1.` (2026-11-03), so a quoted ordered list may lose its start number |
 | `**x**` `*x*` `~~x~~` `` `x` `` | text `style` bold / italic / strike / code, merged across nesting |
 | `[t](url)`, bare URL, `<url>`, email | `link` with `url`, `text` when it differs, inherited bold/italic/strike; title and formatting inside the label dropped |
 | `:name:`, `:name::skin-tone-N:` | `emoji` |
@@ -1760,7 +1760,7 @@ Rejected with `invalid_markdown` (exit 1), detail prefixed `line N:`:
 
 - `@name` and `<@name>` where the name is not a `U`/`W` id - "mention people as `<@Uxxx>`". Symbolic resolution is deferred until name collisions resolve deterministically (see `todo/at-name-resolution-picks-a-random-user-when-names-collide.md`).
 - Horizontal rule, image, HTML block, inline HTML, pipe table (points at `--table`).
-- A list nested deeper than indent 2, a list item holding more than one paragraph, a quote holding anything but paragraphs.
+- A list nested deeper than indent 2, a list item holding more than one paragraph, a quote inside a quote, a quote holding anything but paragraphs, lists, and code blocks.
 - A mention, channel, emoji, or image inside link text (Slack `link` elements hold text only).
 - An empty `-` list item, an item whose only content is a nested list, an empty `>` quote, or an empty code block: `drafts.create` rejects an empty text inline with `invalid_message` (verified live 2026-10-16), so these can be neither kept nor dropped.
 - A link whose URL is not absolute `http`, `https`, or `mailto`.
@@ -1784,7 +1784,8 @@ Verified live 2026-10-16 (self-DM, session token, Enterprise Grid): a draft
 holding every construct in the table round-tripped through `drafts.create`
 and `drafts.list` with server blocks byte-identical to the payload sent, and
 was not tombstoned after 25s. Not inspected: Desktop compose-box rendering
-of italic and strike, of `offset` on an ordered list, and of the trailing
+of italic and strike, of `offset` on an unbordered ordered list (bordered:
+rendered `1.`, 2026-11-03), and of the trailing
 `\n` after a heading or paragraph as a blank line versus a line break.
 
 ```

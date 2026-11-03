@@ -1,0 +1,4 @@
+[{"type":"rich_text","elements":[
+ {"type":"rich_text_quote","elements":[{"type":"text","text":"Lead:"}]},
+ {"type":"rich_text_preformatted","border":1,"elements":[{"type":"text","text":"indented\nblock"}]}
+]}]

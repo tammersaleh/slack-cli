@@ -126,18 +126,9 @@ func (c *converter) block(n ast.Node) error {
 		}
 		c.push(section(ensureTrailingNewline(elems)))
 	case *ast.List:
-		return c.list(v, 0)
+		return c.list(v, 0, false)
 	case *ast.FencedCodeBlock, *ast.CodeBlock:
-		// The fence language tag has nowhere to live in
-		// rich_text_preformatted and is dropped.
-		code := c.codeLines(v)
-		if code == "" {
-			return c.errAt(n, "an empty code block has no rich_text equivalent; Slack rejects an empty text inline")
-		}
-		c.push(map[string]any{
-			"type":     "rich_text_preformatted",
-			"elements": []map[string]any{{"type": "text", "text": code}},
-		})
+		return c.preformatted(v, false)
 	case *ast.Blockquote:
 		return c.quote(v)
 	case *ast.ThematicBreak:
@@ -162,12 +153,34 @@ func section(elems []map[string]any) map[string]any {
 	return map[string]any{"type": "rich_text_section", "elements": elems}
 }
 
+// preformatted emits a fenced or indented code block as one
+// rich_text_preformatted. The fence language tag has nowhere to live and is
+// dropped. border marks a code block inside a quote (see quote).
+func (c *converter) preformatted(n ast.Node, border bool) error {
+	code := c.codeLines(n)
+	if code == "" {
+		return c.errAt(n, "an empty code block has no rich_text equivalent; Slack rejects an empty text inline")
+	}
+	container := map[string]any{
+		"type":     "rich_text_preformatted",
+		"elements": []map[string]any{{"type": "text", "text": code}},
+	}
+	if border {
+		container["border"] = 1
+	}
+	c.push(container)
+	return nil
+}
+
 // list emits a Markdown list as one or more rich_text_list containers at the
 // given indent. A rich_text_list cannot hold a nested list, so a nested list
 // splits its parent: the items before it flush as one container, the nested
 // list follows at indent+1, and the items after it open a new container. An
-// ordered list's later segments continue the numbering via offset.
-func (c *converter) list(l *ast.List, indent int) error {
+// ordered list's later segments continue the numbering via offset. border
+// marks a list inside a quote: Slack has no list-in-quote nesting, so a
+// quoted list is a sibling rich_text_list with border 1 (see quote). Every
+// container the list emits, including nested splits, carries it.
+func (c *converter) list(l *ast.List, indent int, border bool) error {
 	if indent > maxIndent {
 		return c.errAt(l, "lists nest at most %d levels deep", maxIndent+1)
 	}
@@ -186,6 +199,9 @@ func (c *converter) list(l *ast.List, indent int) error {
 		if l.IsOrdered() {
 			container["style"] = "ordered"
 			container["offset"] = max(l.Start-1, 0) + emitted
+		}
+		if border {
+			container["border"] = 1
 		}
 		c.push(container)
 		emitted += len(items)
@@ -216,7 +232,7 @@ func (c *converter) list(l *ast.List, indent int) error {
 					return c.errAt(child, "a list item needs its own text before a nested list; Slack rejects an empty item")
 				}
 				flush()
-				if err := c.list(v, indent+1); err != nil {
+				if err := c.list(v, indent+1, border); err != nil {
 					return err
 				}
 			default:
@@ -228,28 +244,60 @@ func (c *converter) list(l *ast.List, indent int) error {
 	return nil
 }
 
-// quote emits a blockquote as one rich_text_quote. Only paragraphs are
-// allowed inside; they join with a blank line.
+// quote emits a blockquote as a run of sibling containers in source order.
+// Consecutive paragraphs join into one rich_text_quote with a blank line
+// between them. A list or code block inside the quote cannot nest in
+// rich_text_quote (Slack answers invalid_message). A quoted list is a
+// sibling rich_text_list with border 1, the shape the composer itself
+// stores (read back from a Desktop-authored draft 2026-11-02). A quoted
+// code block is a sibling rich_text_preformatted with border 1: accepted by
+// the API and rendered under the quote bar (2026-11-03), though whether the
+// composer emits that shape was not checked. Nested quotes have no shape
+// and are rejected.
 func (c *converter) quote(q *ast.Blockquote) error {
 	var elems []map[string]any
-	for child := q.FirstChild(); child != nil; child = child.NextSibling() {
-		p, ok := child.(*ast.Paragraph)
-		if !ok {
-			return c.errAt(child, "a quote may hold paragraphs only, not %s; nested lists, code, and quotes are not supported", child.Kind())
+	flush := func() {
+		if len(elems) == 0 {
+			return
 		}
-		inner, err := c.inlines(p, style{})
-		if err != nil {
-			return err
-		}
-		if len(elems) > 0 {
-			elems = appendText(elems, "\n\n", style{})
-		}
-		elems = append(elems, inner...)
+		c.push(map[string]any{"type": "rich_text_quote", "elements": mergeText(elems)})
+		elems = nil
 	}
-	if len(elems) == 0 {
+	emitted := false
+	for child := q.FirstChild(); child != nil; child = child.NextSibling() {
+		switch v := child.(type) {
+		case *ast.Paragraph:
+			inner, err := c.inlines(v, style{})
+			if err != nil {
+				return err
+			}
+			if len(elems) > 0 {
+				elems = appendText(elems, "\n\n", style{})
+			}
+			elems = append(elems, inner...)
+			emitted = true
+		case *ast.List:
+			flush()
+			if err := c.list(v, 0, true); err != nil {
+				return err
+			}
+			emitted = true
+		case *ast.FencedCodeBlock, *ast.CodeBlock:
+			flush()
+			if err := c.preformatted(v, true); err != nil {
+				return err
+			}
+			emitted = true
+		case *ast.Blockquote:
+			return c.errAt(child, "a quote inside a quote has no rich_text equivalent; flatten it to one level")
+		default:
+			return c.errAt(child, "a quote may hold paragraphs, lists, and code blocks only, not %s", child.Kind())
+		}
+	}
+	if !emitted {
 		return c.errAt(q, "an empty quote has no rich_text equivalent; Slack rejects an empty text inline")
 	}
-	c.push(map[string]any{"type": "rich_text_quote", "elements": mergeText(elems)})
+	flush()
 	return nil
 }
 
@@ -609,24 +657,41 @@ func (c *converter) lineOf(n ast.Node) int {
 	// (an empty first list item starts where the list starts). Asking the
 	// parent for its own first offset would be wrong - that descends into a
 	// later sibling of this node.
+	// Inside a blockquote the "> " markers are structure, not content, so
+	// the scan treats them as blank too. Nothing but blank lines and markers
+	// can sit between the previous sibling's end and a node inside the
+	// quote, so a literal ">" is never skipped here.
+	inQuote := false
+	for cur := n.Parent(); cur != nil; cur = cur.Parent() {
+		if _, ok := cur.(*ast.Blockquote); ok {
+			inQuote = true
+			break
+		}
+	}
 	for cur := n; cur != nil && cur.Kind() != ast.KindDocument; cur = cur.Parent() {
 		for prev := cur.PreviousSibling(); prev != nil; prev = prev.PreviousSibling() {
 			if end, ok := lastOffset(prev); ok {
-				end = c.skipBlank(end)
+				end = c.skipBlank(end, inQuote)
 				if _, fenced := prev.(*ast.FencedCodeBlock); fenced {
 					// A fenced block's Lines() exclude the fences, so the
 					// first non-blank line after them is the closing fence.
-					end = c.skipBlank(c.skipLine(end))
+					end = c.skipBlank(c.skipLine(end), inQuote)
 				}
 				return c.lineOfOffset(end)
 			}
 		}
 	}
-	return c.lineOfOffset(c.skipBlank(0))
+	return c.lineOfOffset(c.skipBlank(0, inQuote))
 }
 
-func (c *converter) skipBlank(off int) int {
-	for off < len(c.src) && (c.src[off] == ' ' || c.src[off] == '\t' || c.src[off] == '\n' || c.src[off] == '\r') {
+func (c *converter) skipBlank(off int, quoteMarkers bool) int {
+	for off < len(c.src) {
+		switch b := c.src[off]; {
+		case b == ' ' || b == '\t' || b == '\n' || b == '\r':
+		case quoteMarkers && b == '>':
+		default:
+			return off
+		}
 		off++
 	}
 	return off

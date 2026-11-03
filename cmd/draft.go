@@ -216,8 +216,9 @@ is Block Kit JSON - either a bare array of top-level blocks, or an object
 Markdown subset: paragraphs, headings (rendered bold, level dropped),
 bullet and ordered lists nested to three levels, **bold**, *italic* (single
 star is italic, not Slack-mrkdwn bold), ~~strike~~, ` + "`code`" + `, fenced and
-indented code blocks, > quotes, [text](https://url), bare URLs, :emoji:,
-<@U01XYZ>, <#C01ABC>, @here/@channel/@everyone. Heading levels, code-fence
+indented code blocks, > quotes (holding paragraphs, lists, and code),
+[text](https://url), bare URLs, :emoji:, <@U01XYZ>, <#C01ABC>,
+@here/@channel/@everyone. Heading levels, code-fence
 language tags, link titles, formatting inside link text, and <#C01ABC|label>
 labels are dropped. Anything
 else - @name mentions (use <@Uxxx>), ---, images, HTML, pipe tables (use
@@ -957,7 +958,7 @@ func readDraftPayload(cli *CLI, markdown bool) (draftPayload, error) {
 }
 
 // markdownHint summarizes the Markdown subset for the invalid_markdown error.
-const markdownHint = "Supported: paragraphs, headings (rendered bold), bullet/ordered lists nested to 3 levels, **bold**, *italic*, ~~strike~~, `code`, fenced code, > quotes, [text](https://url), :emoji:, <@Uxxx>, <#Cxxx>, @here. Use --print-payload to inspect the conversion."
+const markdownHint = "Supported: paragraphs, headings (rendered bold), bullet/ordered lists nested to 3 levels, **bold**, *italic*, ~~strike~~, `code`, fenced code, > quotes (may hold lists and code), [text](https://url), :emoji:, <@Uxxx>, <#Cxxx>, @here. Use --print-payload to inspect the conversion."
 
 // parseDraftPayload accepts either a bare blocks array or a {blocks,
 // attachments} object and shape-validates whatever is present.
