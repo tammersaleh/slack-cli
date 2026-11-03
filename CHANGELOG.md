@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.5.0](https://github.com/tammersaleh/slack-cli/compare/v5.4.0...v5.5.0) (2026-11-03)
+
+
+### Features
+
+* **draft:** accept lists and code inside --markdown quotes ([19811c0](https://github.com/tammersaleh/slack-cli/commit/19811c0c81062081036bf98ca76a11b184b37b6c))
+
 ## [5.4.0](https://github.com/tammersaleh/slack-cli/compare/v5.3.0...v5.4.0) (2026-10-19)
 
 
