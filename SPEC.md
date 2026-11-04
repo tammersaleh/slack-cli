@@ -1474,6 +1474,92 @@ Errors:
 
 Slack API: `files.info`, then `lists.columns.create` (`list_id`, `type`, `name`, `options`), `lists.columns.update` (`list_id`, `id`, `name` or `options`), or `lists.columns.delete` (`list_id`, `id`). All internal; `id` is the column id, not its key.
 
+#### slack list record
+
+```
+slack list record add <list> [COLUMN=VALUE...]
+slack list record update <list> <record-id> [COLUMN=VALUE...]
+```
+
+Both commands take assignments as positional `COLUMN=VALUE` pairs, split on
+the first `=`, or as one JSON object on stdin (`{"Status":"Done"}`) for
+values that hold `=`, newlines, booleans, numbers, arrays, or `null`. The two
+forms are mutually exclusive (and the object must be the only thing on stdin),
+and at least one assignment is required (Slack creates an empty record without
+complaint). `COLUMN` resolves like
+`<column>` elsewhere: exact key or id, else a unique case-insensitive display
+name (`ambiguous_column`). Two assignments naming one column are
+`invalid_input`.
+
+Every assignment is validated before the first call, because
+`lists.records.create` silently drops a key that is not in the schema and
+stores a select value that is not one of the choices:
+
+- `text`, `rich_text`: a string.
+- `select`: one choice, matched by value, then exact label, then case-insensitive label; otherwise `invalid_choice`.
+- `multi_select`: on `update`, comma-separated choices positionally or a JSON array on stdin (use the array when a label holds a comma); duplicates naming one choice collapse. On `add` it is `invalid_input` (the create API takes one scalar; sending one of several is unverified).
+- `checkbox`: `true` or `false` (a JSON bool on stdin).
+- `number`: a decimal number (JSON number syntax), finite. Sent as typed, so `3.50` stays `3.50`.
+- `date`: a real calendar date `YYYY-MM-DD`.
+- `user`: `@name`, email, `U…` id, or profile URL, resolved before the write (`user_not_found` makes no call).
+- `channel`: `#name`, `C…` id, or channel URL, resolved before the write (`channel_not_found`). A name resolves on the workspace (`T`) credential, because on Enterprise Grid the org token the other list calls use cannot list channels; ids and URLs need no workspace credential, and a name without one is `not_authed`.
+- `email`: one address.
+- `link`: an `http(s)` URL.
+- `created_by`, `created_time`, `message`, `todo_*`, and unknown types cannot be written (`invalid_input`).
+
+An empty positional value (`Status=`) or a JSON `null` clears the cell. On
+`update` that is allowed for `select`, `multi_select`, and `user` columns (the
+shapes verified live) and `invalid_input` for every other type until clearing
+them is measured. On `add` an empty value is `invalid_input`: omit the column.
+
+`add` sends one `lists.records.create` with `fields` as `[{key, value}]`,
+addressed by column **key**, with scalar values (string, bool, or number).
+The row is the server's `record` rendered exactly like a `list records` row,
+so unassigned columns appear as `null`. If the create succeeds but its
+response holds no readable record, the row is partial (`{"list_id","error",
+"detail"}`) with the classified exit code and no stderr error, since the
+record exists.
+
+```
+$ slack list record add F01ABC "Name=Ship it" Status=Done Owner=@alice Due=2026-12-01 Shipped=true
+{"id":"Rec01AAAAAAA","created_by":"U01XYZ","updated_by":"U01XYZ","date_created":1709251200,"updated_timestamp":"1709251300","position":"1709251200.00001","fields":{"Name":"Ship it","Status":["Done"],"Owner":["U01XYZ"],"Due":"2026-12-01","Shipped":true,"Link":null}}
+{"_meta":{"has_more":false}}
+```
+
+`update` sends one `lists.cells.update` with `cells` as
+`[{row_id, column_id, <typed>}]`, every assignment in one call, addressed by
+column **id**. The typed shapes: `rich_text` is a one-section block array,
+`select` an array of choice values (`[]` clears), `checkbox` a bool, and
+`number`, `date`, `user`, `email`, `channel` one-element arrays (`user: []`
+clears); `link` is `[{"original_url": …}]` (snake_case on write, `originalUrl`
+on read). `cells.update` echoes only the changed cells, so the command then
+reads `lists.records.info` and emits the complete record. If that re-read
+fails after the write succeeded, the result is a partial row
+`{"id","list_id","error","detail"}` with the classified exit code and no
+stderr error - the write landed.
+
+```
+$ slack list record update F01ABC Rec01AAAAAAA Status="To do" Owner=
+{"id":"Rec01AAAAAAA","created_by":"U01XYZ","updated_by":"U01XYZ","date_created":1709251200,"updated_timestamp":"1709251400","position":"1709251200.00001","fields":{"Name":"Ship it","Status":["To do"],"Owner":[],"Due":"2026-12-01","Shipped":true,"Link":null}}
+{"_meta":{"has_more":false}}
+```
+
+`<record-id>` must match `^Rec[A-Z0-9]{8,}$`; Slack schema-validates it
+before any lookup, so the CLI rejects a malformed id locally with no call.
+
+Errors:
+
+- `invalid_input` (exit 1): Bad pair, both input forms, no assignments, duplicate column, a value of the wrong shape for its type, a clear where clearing is unsupported, a malformed record id, or a URL of the wrong kind. No write is made.
+- `column_not_found` / `ambiguous_column` (exit 1): As for `list column`. No write is made.
+- `invalid_choice` (exit 1): A select value matching no choice. No write is made.
+- `user_not_found` / `channel_not_found` (exit 1): A user or channel column value did not resolve. No write is made.
+- `file_not_found` / `not_a_list` (exit 1): As for `list info`.
+- `record_not_found` (exit 1): `update` named a record Slack does not have.
+- `invalid_arguments`, `invalid_option_id` (exit 1): Slack rejected a payload; `detail` carries `response_metadata.messages`.
+- `session_token_required` (exit 2): Bot token.
+
+Slack API: `files.info`, then `lists.records.create` (`list_id`, `fields`) or `lists.cells.update` (`list_id`, `cells`) followed by `lists.records.info` (`list_id`, `id`). All internal.
+
 ### pin (Phase 2)
 
 #### slack pin list

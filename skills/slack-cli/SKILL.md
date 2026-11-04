@@ -297,6 +297,8 @@ slack list column add <list> SPEC...
 slack list column rename <list> <column> <name>
 slack list column set-choices <list> <column> CHOICE...   # whole set; matching labels keep their value and color
 slack list column delete <list> <column>
+slack list record add <list> COLUMN=VALUE...                # or pipe {"Column":value} JSON on stdin
+slack list record update <list> <record-id> COLUMN=VALUE...  # empty value / null clears select and user cells
 ```
 
 `SPEC` is `NAME:TYPE[:CHOICE,CHOICE...]` (types: text, rich_text, select,
@@ -308,6 +310,15 @@ order, sets the icon; a failure after creation emits a partial row with
 `failed_step` and a `hint` holding the commands that finish the list. The
 list is never deleted - check the row, finish with `list column add` /
 `list update --icon`.
+
+`record add` and `record update` take `COLUMN=VALUE` pairs (split on the
+first `=`) or one JSON object on stdin, never both. Values: text as a string,
+select by label or value (`invalid_choice` otherwise), checkbox `true`/`false`,
+number, date `YYYY-MM-DD`, user `@name`/email/id, channel `#name`/id, email,
+`http(s)` URL. Everything is validated before the call because Slack silently
+drops unknown columns and stores unknown select values. `multi_select` only on
+`update` (comma-separated, or a JSON array when a label holds a comma). The
+row is the full server record, same shape as `list records`.
 
 ### Reactions
 

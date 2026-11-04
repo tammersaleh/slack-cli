@@ -213,13 +213,20 @@ func (c *CLI) ClassifyError(err error) *output.Error {
 // NewResolver creates a channel/user name resolver from the API client.
 // The resolver is also stored on CLI for use by NewPrinter's enrichment.
 func (c *CLI) NewResolver(client *api.Client) *resolve.Resolver {
+	r := c.newResolver(client)
+	c.resolver = r
+	return r
+}
+
+// newResolver builds a resolver on client without making it the printer's
+// enrichment resolver, for commands that resolve one kind of input on a
+// second client.
+func (c *CLI) newResolver(client *api.Client) *resolve.Resolver {
 	cacheDir := ""
 	if dir, err := os.UserConfigDir(); err == nil {
 		cacheDir = filepath.Join(dir, "slack-cli", "cache")
 	}
-	r := resolve.NewResolver(client, c.teamID, cacheDir)
-	c.resolver = r
-	return r
+	return resolve.NewResolver(client, c.teamID, cacheDir)
 }
 
 // toMap converts any struct to a map[string]any via JSON round-trip.

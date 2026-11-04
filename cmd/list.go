@@ -10,6 +10,7 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
+	"github.com/tammersaleh/slack-cli/internal/resolve"
 )
 
 // Slack Lists. Every command here rides the session client and form-encoded
@@ -26,6 +27,7 @@ type ListCmd struct {
 	Create  ListCreateCmd  `cmd:"" help:"Create a list, optionally with columns and an icon."`
 	Update  ListUpdateCmd  `cmd:"" help:"Change a list's title, description, or icon."`
 	Column  ListColumnCmd  `cmd:"" help:"Add, rename, re-choice, or delete columns."`
+	Record  ListRecordCmd  `cmd:"" help:"Add or update records."`
 }
 
 type ListInfoCmd struct {
@@ -81,11 +83,12 @@ func fetchListFile(ctx context.Context, cli *CLI, client *api.Client, id string)
 // client, the printer, the list's files.info object, and a context honoring
 // --timeout. Callers must defer cancel.
 type listSession struct {
-	client *api.Client
-	p      *output.Printer
-	file   *listFile
-	ctx    context.Context
-	cancel context.CancelFunc
+	client   *api.Client
+	resolver *resolve.Resolver
+	p        *output.Printer
+	file     *listFile
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // newListSession builds the session client, printer, and context. file is
@@ -95,10 +98,10 @@ func newListSession(cli *CLI) (*listSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	cli.NewResolver(client) // populate resolver for output enrichment
+	r := cli.NewResolver(client) // output enrichment, and user/channel names in record writes
 	p := cli.NewPrinter()
 	ctx, cancel := cli.Context()
-	return &listSession{client: client, p: p, ctx: ctx, cancel: cancel}, nil
+	return &listSession{client: client, resolver: r, p: p, ctx: ctx, cancel: cancel}, nil
 }
 
 // openListSession resolves the list argument, builds the session client, and

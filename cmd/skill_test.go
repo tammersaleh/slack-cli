@@ -54,6 +54,8 @@ func TestSkill_Frontmatter(t *testing.T) {
 		"slack list column rename",
 		"slack list column set-choices",
 		"slack list column delete",
+		"slack list record add",
+		"slack list record update",
 	} {
 		if !strings.Contains(out, cmd) {
 			t.Errorf("expected %q in skill output", cmd)

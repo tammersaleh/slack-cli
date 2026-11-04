@@ -916,6 +916,25 @@ func printPayload(cli *CLI, payload draftPayload) error {
 	return p.PrintMeta(output.Meta{})
 }
 
+// readPipedStdin returns everything piped on stdin, or nil when stdin is a
+// terminal. In tests cli.in is set to a reader and is always read.
+func readPipedStdin(cli *CLI) ([]byte, error) {
+	if cli.in == nil {
+		info, err := os.Stdin.Stat()
+		if err != nil {
+			return nil, &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
+		}
+		if (info.Mode() & os.ModeCharDevice) != 0 {
+			return nil, nil
+		}
+	}
+	raw, err := io.ReadAll(cli.Stdin())
+	if err != nil {
+		return nil, &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
+	}
+	return raw, nil
+}
+
 // readDraftPayload reads and shape-validates the stdin payload, if any. Returns
 // an empty payload when stdin is a TTY or nothing is piped. Shape validation
 // runs here; the renderable-content rule is applied by the caller (create
@@ -924,20 +943,9 @@ func printPayload(cli *CLI, payload draftPayload) error {
 // blocks array first; the result goes through the same shape validation as
 // caller-supplied JSON.
 func readDraftPayload(cli *CLI, markdown bool) (draftPayload, error) {
-	// In tests, cli.in is overridden with a bytes.Reader - always try to read.
-	// In production, skip the read if stdin is a terminal.
-	if cli.in == nil {
-		info, err := os.Stdin.Stat()
-		if err != nil {
-			return draftPayload{}, &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
-		}
-		if (info.Mode() & os.ModeCharDevice) != 0 {
-			return draftPayload{}, nil
-		}
-	}
-	raw, err := io.ReadAll(cli.Stdin())
+	raw, err := readPipedStdin(cli)
 	if err != nil {
-		return draftPayload{}, &output.Error{Err: "stdin_error", Detail: err.Error(), Code: output.ExitGeneral}
+		return draftPayload{}, err
 	}
 	if strings.TrimSpace(string(raw)) == "" {
 		return draftPayload{}, nil
