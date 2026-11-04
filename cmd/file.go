@@ -224,21 +224,40 @@ func (c *FileDownloadCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "file_error", Detail: err.Error(), Code: output.ExitGeneral}
 	}
 
-	if err := client.Bot().GetFileContext(ctx, file.URLPrivateDownload, f); err != nil {
+	cw := &countingWriter{w: f}
+	if err := client.Bot().GetFileContext(ctx, file.URLPrivateDownload, cw); err != nil {
 		f.Close()
 		_ = os.Remove(outPath)
 		return cli.ClassifyError(err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(outPath)
+		return &output.Error{Err: "file_error", Detail: err.Error(), Code: output.ExitGeneral}
+	}
 
+	// size is files.info's claim; bytes_written is what landed on disk. They
+	// differ for Slack Lists, which report size 0 for a multi-hundred-KB body.
 	if err := p.PrintItem(map[string]any{
-		"input": c.File,
-		"id":    file.ID,
-		"name":  file.Name,
-		"size":  file.Size,
-		"path":  outPath,
+		"input":         c.File,
+		"id":            file.ID,
+		"name":          file.Name,
+		"size":          file.Size,
+		"bytes_written": cw.n,
+		"path":          outPath,
 	}); err != nil {
 		return err
 	}
 	return p.PrintMeta(output.Meta{})
+}
+
+// countingWriter counts the bytes passed through to w.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }

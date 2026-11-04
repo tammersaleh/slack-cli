@@ -1151,11 +1151,13 @@ slack file download <file-id-or-url> [flags]
 
 ```
 $ slack file download F01ABC
-{"input":"F01ABC","id":"F01ABC","name":"Q1-report.pdf","size":1048576,"path":"./Q1-report.pdf"}
+{"input":"F01ABC","id":"F01ABC","name":"Q1-report.pdf","size":1048576,"bytes_written":1048576,"path":"./Q1-report.pdf"}
 {"_meta":{"has_more":false}}
 ```
 
-With `--output=-`, raw file bytes go to stdout and JSONL metadata is suppressed.
+`size` is what `files.info` reports; `bytes_written` is what the command actually wrote to `path`. They differ when Slack's metadata is wrong - every Slack List reports `size: 0` while its export body is hundreds of KB.
+
+With `--output=-`, raw file bytes go to stdout and JSONL metadata is suppressed, so no `bytes_written` is reported.
 
 Errors:
 

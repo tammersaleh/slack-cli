@@ -346,6 +346,9 @@ func TestFileDownload_ToDisk(t *testing.T) {
 	if item["path"] != outPath {
 		t.Errorf("expected path=%q, got %q", outPath, item["path"])
 	}
+	if got := item["bytes_written"]; got != float64(len(content)) {
+		t.Errorf("bytes_written = %v, want %d", got, len(content))
+	}
 }
 
 func TestFileDownload_ToStdout(t *testing.T) {
@@ -398,5 +401,72 @@ func TestFileDownload_NoDownloadURL(t *testing.T) {
 	_, err := runWithMock(t, mux, "file", "download", "F01ABC")
 	if err == nil {
 		t.Fatal("expected error for no download URL")
+	}
+}
+
+// TestFileDownload_BytesWrittenDiffersFromSize pins that size is what files.info
+// claims and bytes_written is what was actually copied. Slack reports size: 0
+// for every Slack List while the download body is hundreds of KB.
+func TestFileDownload_BytesWrittenDiffersFromSize(t *testing.T) {
+	content := "a body much longer than the size slack claims"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/files.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"file": map[string]any{
+				"id":                   "F01ABC",
+				"name":                 "list.csv",
+				"size":                 0,
+				"url_private_download": "http://" + r.Host + "/download/list.csv",
+			},
+			"comments": []any{},
+			"paging":   map[string]any{"count": 0, "total": 0, "page": 1, "pages": 1},
+		})
+	})
+	mux.HandleFunc("/download/list.csv", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(content))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	isolateTestEnv(t)
+	t.Setenv("SLACK_TOKEN", "xoxb-test")
+	t.Setenv("SLACK_API_URL", srv.URL+"/api/")
+
+	outPath := filepath.Join(t.TempDir(), "list.csv")
+
+	var cli cmd.CLI
+	var outBuf, errBuf bytes.Buffer
+	parser, err := kong.New(&cli, kong.Name("slack"), kong.Exit(func(int) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kctx, err := parser.Parse([]string{"file", "download", "F01ABC", "-o", outPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli.SetOutput(&outBuf, &errBuf)
+	if err := kctx.Run(&cli); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("file not written: %v", err)
+	}
+	if string(data) != content {
+		t.Errorf("expected content %q, got %q", content, string(data))
+	}
+
+	lines := nonEmptyLines(outBuf.String())
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (result + meta), got %d:\n%s", len(lines), outBuf.String())
+	}
+	item := parseJSON(t, lines[0])
+	if got := item["size"]; got != float64(0) {
+		t.Errorf("size = %v, want 0 (Slack's claim, passed through)", got)
+	}
+	if got := item["bytes_written"]; got != float64(len(content)) {
+		t.Errorf("bytes_written = %v, want %d", got, len(content))
 	}
 }
