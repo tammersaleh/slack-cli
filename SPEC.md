@@ -1312,6 +1312,168 @@ Errors:
 
 Slack API: `search.files`
 
+#### slack list create
+
+Creates a list, then adds each `--column` in order, then sets the icon. All
+input is validated before the first call: non-blank name, every spec parsed,
+known types, choices only on select types, no duplicate labels or colliding
+values, icon shape.
+
+```
+slack list create <name> [flags]
+  --description  List description
+  --icon         Icon emoji name, rocket or :rocket: (Slack stores it with colons)
+  --column SPEC  Column to add, NAME:TYPE[:CHOICE,CHOICE...]; repeatable, applied in order
+```
+
+`SPEC` is `NAME:TYPE[:CHOICE,CHOICE...]`. Types: `text`, `rich_text`,
+`select`, `multi_select`, `date`, `user`, `checkbox`, `number`, `link`,
+`email`, `channel`. Choices are only valid for `select` and `multi_select`.
+Each choice's `value` is the slugified label (lowercase, non-alphanumeric runs
+collapsed to `_`; a label with no ASCII alphanumerics gets `choice_N`), its
+`color` comes round-robin from Slack's palette (blue, green, yellow, red,
+purple, orange, cyan, pink, indigo, brown, gray). Labels must be unique and so
+must their slugs (`To do` and `to-do` collide). A column name cannot contain a
+colon.
+
+```
+$ slack list create "Launch tasks" --description "Everything before launch" --icon rocket --column "Owner:user" --column "Status:select:To do,Done"
+{"id":"F01ABC","title":"Launch tasks","description":"Everything before launch","icon":":rocket:","user":"U01XYZ","created":1709251200,"updated":1709251200,"permalink":"https://acme.slack.com/lists/T01ABC/F01ABC","limits":{"row_count":0,"archived_row_count":0}}
+{"_meta":{"has_more":false}}
+```
+
+The row is the server's final list object (same shape as `list info`), never
+an echo of the flags. A failure after `lists.create` means the list exists
+with some of the work done. The command emits a partial row on stdout and
+exits with the classified error's code but no stderr error (an
+`*output.ExitError`, not `_meta.error`, which would claim a truncated stream):
+
+```
+$ slack list create "Launch tasks" --icon rocket --column "Owner:user" --column "Status:select:a"
+{"id":"F01ABC","error":"invalid_arguments","detail":"invalid_arguments: [ERROR] ...","failed_step":"column","failed_column":"Status","hint":"The list was created. Finish it with: slack list column add F01ABC 'Status:select:a' ; slack list update F01ABC --icon rocket"}
+{"_meta":{"has_more":false}}
+```
+
+`failed_step` is `column` (with `failed_column`) or `icon`. The hint lists
+the specs not yet added, failed one first, and the icon if one was given.
+A response the command cannot read after `lists.create` is a partial row
+too (`parse_error`), never a stderr error that would lose the id. The list
+is never deleted on failure.
+
+Errors:
+
+- `invalid_input` (exit 1): Blank name, unparseable spec, unknown type, choices on a non-select type, duplicate or colliding choice labels, blank or malformed icon. No call is made.
+- `invalid_arguments` (exit 1): Slack rejected a payload; `detail` carries Slack's `response_metadata.messages`.
+- `session_token_required` (exit 2): Bot token.
+
+Slack API: `lists.create` (`name`, `description`), then `lists.columns.create` (`list_id`, `type`, `name`, `options` JSON for select types) per column, then `lists.update` (`id`, `icon`). All internal.
+
+#### slack list update
+
+```
+slack list update <list> [flags]
+  --name         New title (must not be blank)
+  --description  New description; "" clears it
+  --icon         Icon emoji name, rocket or :rocket:
+```
+
+At least one flag is required. Only the flags given are sent; the others are
+untouched. The row is the returned list object, same shape as `list info`.
+
+```
+$ slack list update F01ABC --name "Launch tasks (Q2)" --icon :wrench:
+{"id":"F01ABC","title":"Launch tasks (Q2)","description":"Everything before launch","icon":":wrench:","user":"U01XYZ","created":1709251200,"updated":1709337700,"permalink":"https://acme.slack.com/lists/T01ABC/F01ABC","limits":{"row_count":53,"archived_row_count":2}}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `invalid_input` (exit 1): No flags, blank `--name`, blank `--icon`, or a URL of the wrong kind. No call is made.
+- `list_not_found` (exit 1): Slack's own code for an unknown id.
+- `session_token_required` (exit 2): Bot token.
+
+Slack API: `lists.update` (`id`, any of `name`, `description`, `icon`)
+
+#### slack list column
+
+Column commands read the schema from `files.info` first, so `<column>` can be
+a column key, a column id, or a display name. An exact id or key match wins;
+otherwise the name is compared case-insensitively and must match exactly one
+column (`ambiguous_column` names the candidates). Resolution failures make no
+write.
+
+```
+slack list column add <list> SPEC...
+slack list column rename <list> <column> <name>
+slack list column set-choices <list> <column> CHOICE...
+slack list column delete <list> <column>
+```
+
+`add` makes one `lists.columns.create` call per spec in order, emitting one
+row per column as the server returned it (`list schema`'s shape plus
+`list_id`). Every spec is validated before the first call. A failure stops
+the command there: the columns already added have their rows, the failed
+spec gets `{"list_id","name","type","error","detail"}`, and the exit is the
+classified error's code without a stderr error. A response the command
+cannot read (no list object, or no single new column id in it) is reported
+the same way as `parse_error`, since the column may or may not exist.
+
+```
+$ slack list column add F01ABC "Tags:multi_select:a,b" "Notes:rich_text"
+{"list_id":"F01ABC","column_id":"Col01KKK","key":"Col01KKL","name":"Tags","type":"multi_select","is_primary_column":false,"format":"multi_select","choices":[{"value":"a","label":"a","color":"blue"},{"value":"b","label":"b","color":"green"}]}
+{"list_id":"F01ABC","column_id":"Col01LLL","key":"Col01LLM","name":"Notes","type":"rich_text","is_primary_column":false}
+{"_meta":{"has_more":false}}
+```
+
+`rename` sends only `name`; id, key, type, and choices are untouched. Slack
+allows two columns with the same name.
+
+```
+$ slack list column rename F01ABC Status State
+{"list_id":"F01ABC","column_id":"Col01CCC","key":"Col01BBB","name":"State","type":"select","is_primary_column":false,"format":"single_select","choices":[{"value":"todo","label":"To do","color":"gray"},{"value":"done","label":"Done","color":"green"}]}
+{"_meta":{"has_more":false}}
+```
+
+`set-choices` replaces the whole choice set of a `select` or `multi_select`
+column. The current choices are read from the schema; a label matching an
+existing choice exactly (case-sensitive) keeps that choice's `value` and
+`color`, so records holding it stay valid. Every other label is a new choice
+with a slug value and a palette color by position. A renamed label is
+remove-plus-add and gets a new value - the command cannot infer renames.
+Duplicate labels, and a new slug colliding with another value (new or
+preserved), are `invalid_input` with no write. Other option keys Slack holds
+(`default_value`, and anything not modeled here) are sent back unchanged,
+except a `default_value` naming a removed choice, which is dropped. This is a
+read-then-replace: another editor's change between the schema read and the
+write is overwritten, and the endpoint offers nothing atomic (same as
+`section rename`). What Slack does to records holding a removed value is
+unverified.
+
+```
+$ slack list column set-choices F01ABC Status Done Blocked "To do"
+{"list_id":"F01ABC","column_id":"Col01CCC","key":"Col01BBB","name":"Status","type":"select","is_primary_column":false,"format":"single_select","choices":[{"value":"done","label":"Done","color":"green"},{"value":"blocked","label":"Blocked","color":"green"},{"value":"todo","label":"To do","color":"gray"}]}
+{"_meta":{"has_more":false}}
+```
+
+`delete` removes the column. `lists.columns.delete` answers a bare `{ok}`, so
+the row is the column as resolved before the call plus `status`.
+
+```
+$ slack list column delete F01ABC Owner
+{"list_id":"F01ABC","column_id":"Col01DDD","key":"Col01DDK","name":"Owner","type":"user","status":"deleted"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `invalid_input` (exit 1): Bad spec (`add`), blank name (`rename`), a non-select column or bad labels (`set-choices`), or a URL of the wrong kind. No write is made.
+- `column_not_found` / `ambiguous_column` (exit 1): `<column>` matched zero or several columns. No write is made.
+- `file_not_found` / `not_a_list` (exit 1): As for `list info`.
+- `invalid_arguments` (exit 1): Slack rejected a payload; `detail` carries `response_metadata.messages`.
+- `session_token_required` (exit 2): Bot token.
+
+Slack API: `files.info`, then `lists.columns.create` (`list_id`, `type`, `name`, `options`), `lists.columns.update` (`list_id`, `id`, `name` or `options`), or `lists.columns.delete` (`list_id`, `id`). All internal; `id` is the column id, not its key.
+
 ### pin (Phase 2)
 
 #### slack pin list

@@ -290,6 +290,25 @@ labels, user columns arrays of ids, text columns Slack's rendered mrkdwn. The
 are never returned. `list_schema_mismatch` means the list changed mid-read -
 rerun. Row order is not promised.
 
+```
+slack list create <name> [--description D] [--icon rocket] [--column SPEC]...
+slack list update <list> [--name N] [--description D] [--icon E]
+slack list column add <list> SPEC...
+slack list column rename <list> <column> <name>
+slack list column set-choices <list> <column> CHOICE...   # whole set; matching labels keep their value and color
+slack list column delete <list> <column>
+```
+
+`SPEC` is `NAME:TYPE[:CHOICE,CHOICE...]` (types: text, rich_text, select,
+multi_select, date, user, checkbox, number, link, email, channel; choices only
+for select types). `<column>` is a key, column id, or display name;
+`ambiguous_column` means use the id. Rows are the server's returned state.
+`list create` validates everything first, then creates, adds columns in
+order, sets the icon; a failure after creation emits a partial row with
+`failed_step` and a `hint` holding the commands that finish the list. The
+list is never deleted - check the row, finish with `list column add` /
+`list update --icon`.
+
 ### Reactions
 
 ```

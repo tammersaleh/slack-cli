@@ -367,3 +367,29 @@ func TestClassifyError_NetworkTimeoutIsNotAContextTimeout(t *testing.T) {
 		t.Errorf("got err=%q code=%d, want network_error/%d", cliErr.Err, cliErr.Code, output.ExitNetwork)
 	}
 }
+
+func TestSlackErrorDetail_CarriesResponseMetadataMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []string
+		want     string
+	}{
+		{"none", nil, "invalid_arguments"},
+		{"one", []string{"[ERROR] missing required field: name"}, "invalid_arguments: [ERROR] missing required field: name"},
+		{"several", []string{"[ERROR] a", "[ERROR] b"}, "invalid_arguments: [ERROR] a; [ERROR] b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := slack.SlackErrorResponse{Err: "invalid_arguments", ResponseMetadata: slack.ResponseMetadata{Messages: tt.messages}}
+			if got := ClassifyError(err).Detail; got != tt.want {
+				t.Errorf("Detail = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	// Auth-class errors keep the messages too; the code is what decides the exit.
+	authErr := slack.SlackErrorResponse{Err: "invalid_auth", ResponseMetadata: slack.ResponseMetadata{Messages: []string{"[ERROR] token expired"}}}
+	got := ClassifyError(authErr)
+	if got.Code != output.ExitAuth || got.Detail != "invalid_auth: [ERROR] token expired" {
+		t.Errorf("auth error = %+v", got)
+	}
+}

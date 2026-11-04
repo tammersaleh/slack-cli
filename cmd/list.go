@@ -23,6 +23,9 @@ type ListCmd struct {
 	Schema  ListSchemaCmd  `cmd:"" help:"Show a list's columns, one row per column."`
 	Records ListRecordsCmd `cmd:"" help:"Read a list's records with column values keyed by column name."`
 	Find    ListFindCmd    `cmd:"" help:"Find lists by title (one row per match, never picks one)."`
+	Create  ListCreateCmd  `cmd:"" help:"Create a list, optionally with columns and an icon."`
+	Update  ListUpdateCmd  `cmd:"" help:"Change a list's title, description, or icon."`
+	Column  ListColumnCmd  `cmd:"" help:"Add, rename, re-choice, or delete columns."`
 }
 
 type ListInfoCmd struct {
@@ -85,6 +88,19 @@ type listSession struct {
 	cancel context.CancelFunc
 }
 
+// newListSession builds the session client, printer, and context. file is
+// nil; commands that address an existing list go through openListSession.
+func newListSession(cli *CLI) (*listSession, error) {
+	client, err := cli.NewSessionClient()
+	if err != nil {
+		return nil, err
+	}
+	cli.NewResolver(client) // populate resolver for output enrichment
+	p := cli.NewPrinter()
+	ctx, cancel := cli.Context()
+	return &listSession{client: client, p: p, ctx: ctx, cancel: cancel}, nil
+}
+
 // openListSession resolves the list argument, builds the session client, and
 // reads files.info. The URL check runs first so a wrong-kind URL costs no
 // credential lookup and no API call.
@@ -93,20 +109,16 @@ func openListSession(cli *CLI, input string) (*listSession, error) {
 	if idErr != nil {
 		return nil, idErr
 	}
-	client, err := cli.NewSessionClient()
+	s, err := newListSession(cli)
 	if err != nil {
 		return nil, err
 	}
-	cli.NewResolver(client) // populate resolver for output enrichment
-	p := cli.NewPrinter()
-	ctx, cancel := cli.Context()
-
-	file, err := fetchListFile(ctx, cli, client, id)
+	s.file, err = fetchListFile(s.ctx, cli, s.client, id)
 	if err != nil {
-		cancel()
+		s.cancel()
 		return nil, err
 	}
-	return &listSession{client: client, p: p, file: file, ctx: ctx, cancel: cancel}, nil
+	return s, nil
 }
 
 func (c *ListInfoCmd) Run(cli *CLI) error {
@@ -116,19 +128,7 @@ func (c *ListInfoCmd) Run(cli *CLI) error {
 	}
 	defer s.cancel()
 
-	file := s.file
-	row := map[string]any{
-		"id":          file.ID,
-		"title":       file.Title,
-		"description": file.Metadata.Description,
-		"icon":        file.Metadata.Icon,
-		"user":        file.User,
-		"created":     file.Created,
-		"updated":     file.Updated,
-		"permalink":   file.Permalink,
-		"limits":      file.Limits,
-	}
-	if err := s.p.PrintItem(row); err != nil {
+	if err := s.p.PrintItem(listInfoRow(s.file)); err != nil {
 		return err
 	}
 	return s.p.PrintMeta(output.Meta{})

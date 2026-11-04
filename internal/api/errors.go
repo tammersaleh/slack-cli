@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -143,6 +144,16 @@ func (e *RateLimitExhaustedError) Unwrap() error { return e.Err }
 // cannot reintroduce free text. That is the point of the arrangement: the
 // recognizers exist to name failures worth branching on, not to keep the field
 // clean, so a shape added by a future dependency is already contained.
+// slackErrorDetail is the error string plus any response_metadata.messages
+// Slack attached ("[ERROR] missing required field: name"). The internal
+// lists.* methods put their only argument documentation there.
+func slackErrorDetail(e slack.SlackErrorResponse) string {
+	if len(e.ResponseMetadata.Messages) == 0 {
+		return e.Error()
+	}
+	return e.Error() + ": " + strings.Join(e.ResponseMetadata.Messages, "; ")
+}
+
 func ClassifyError(err error) *output.Error {
 	var rlExhausted *RateLimitExhaustedError
 	if errors.As(err, &rlExhausted) {
@@ -170,7 +181,7 @@ func ClassifyError(err error) *output.Error {
 		if authErrors[slackErr.Err] {
 			return &output.Error{
 				Err:    slackErr.Err,
-				Detail: slackErr.Error(),
+				Detail: slackErrorDetail(slackErr),
 				Code:   output.ExitAuth,
 			}
 		}
@@ -182,7 +193,7 @@ func ClassifyError(err error) *output.Error {
 		}
 		return &output.Error{
 			Err:    slackErr.Err,
-			Detail: slackErr.Error(),
+			Detail: slackErrorDetail(slackErr),
 			Code:   output.ExitGeneral,
 		}
 	}

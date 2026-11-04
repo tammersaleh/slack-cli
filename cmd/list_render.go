@@ -25,10 +25,37 @@ type listColumn struct {
 }
 
 // listColumnOptions is the subset of column options the CLI reads. Plain
-// columns carry null options; select columns carry format and choices.
+// columns carry null options; select columns carry format and choices. Every
+// other key (default_value, and whatever Slack adds) is kept raw in Extra so
+// set-choices can send the options object back whole instead of stripping
+// keys this code does not model.
 type listColumnOptions struct {
-	Format  string       `json:"format"`
-	Choices []listChoice `json:"choices"`
+	Format  string
+	Choices []listChoice
+	Extra   map[string]json.RawMessage
+}
+
+func (o *listColumnOptions) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*o = listColumnOptions{Extra: map[string]json.RawMessage{}}
+	for k, v := range raw {
+		switch k {
+		case "format":
+			if err := json.Unmarshal(v, &o.Format); err != nil {
+				return err
+			}
+		case "choices":
+			if err := json.Unmarshal(v, &o.Choices); err != nil {
+				return err
+			}
+		default:
+			o.Extra[k] = v
+		}
+	}
+	return nil
 }
 
 type listChoice struct {

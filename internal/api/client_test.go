@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/slack-go/slack"
 )
 
 func TestNew(t *testing.T) {
@@ -334,5 +337,38 @@ func TestPostInternal_DoesNotMutateInput(t *testing.T) {
 
 	if _, hasToken := body["token"]; hasToken {
 		t.Error("PostInternal should not mutate the input map")
+	}
+}
+
+// Both internal POST paths must hand response_metadata.messages to the
+// caller on the typed error: for the lists.* methods those strings are the
+// only argument documentation that exists.
+func TestPostInternal_ErrorCarriesResponseMetadataMessages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":false,"error":"invalid_arguments","response_metadata":{"messages":["[ERROR] missing required field: name"]}}`))
+	}))
+	defer srv.Close()
+	c := New("xoxc-test", WithAPIURL(srv.URL+"/api/"))
+
+	for name, call := range map[string]func() error{
+		"PostInternal": func() error {
+			_, err := c.PostInternal(context.Background(), "lists.create", map[string]any{})
+			return err
+		},
+		"PostInternalForm": func() error {
+			_, err := c.PostInternalForm(context.Background(), "lists.create", nil)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			var slackErr slack.SlackErrorResponse
+			if !errors.As(err, &slackErr) {
+				t.Fatalf("expected SlackErrorResponse, got %T: %v", err, err)
+			}
+			if slackErr.Err != "invalid_arguments" || len(slackErr.ResponseMetadata.Messages) != 1 || slackErr.ResponseMetadata.Messages[0] != "[ERROR] missing required field: name" {
+				t.Errorf("error = %+v", slackErr)
+			}
+		})
 	}
 }

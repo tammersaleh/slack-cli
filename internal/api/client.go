@@ -171,16 +171,13 @@ func (c *Client) PostInternal(ctx context.Context, method string, body map[strin
 	}
 	data = json.RawMessage(body2)
 
-	var envelope struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
+	var envelope internalEnvelope
 	if unmarshalErr := json.Unmarshal(data, &envelope); unmarshalErr != nil {
 		err = fmt.Errorf("parsing response: %w", unmarshalErr)
 		return nil, err
 	}
 	if !envelope.OK {
-		err = slack.SlackErrorResponse{Err: envelope.Error}
+		err = envelope.slackError()
 		return nil, err
 	}
 
@@ -235,16 +232,13 @@ func (c *Client) PostInternalForm(ctx context.Context, method string, params map
 	}
 	data = json.RawMessage(body2)
 
-	var envelope struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
+	var envelope internalEnvelope
 	if unmarshalErr := json.Unmarshal(data, &envelope); unmarshalErr != nil {
 		err = fmt.Errorf("parsing response: %w", unmarshalErr)
 		return nil, err
 	}
 	if !envelope.OK {
-		err = slack.SlackErrorResponse{Err: envelope.Error}
+		err = envelope.slackError()
 		return nil, err
 	}
 
@@ -273,4 +267,23 @@ func (c *Client) AuthTest(ctx context.Context) (*AuthTestResult, error) {
 		User:   resp.User,
 		UserID: resp.UserID,
 	}, nil
+}
+
+// internalEnvelope is the ok/error wrapper every internal API answer carries.
+// response_metadata.messages ("[ERROR] missing required field: X") is the
+// only argument documentation the internal methods have, so it rides along
+// on the error for ClassifyError to fold into the detail.
+type internalEnvelope struct {
+	OK               bool   `json:"ok"`
+	Error            string `json:"error"`
+	ResponseMetadata struct {
+		Messages []string `json:"messages"`
+	} `json:"response_metadata"`
+}
+
+func (e internalEnvelope) slackError() error {
+	return slack.SlackErrorResponse{
+		Err:              e.Error,
+		ResponseMetadata: slack.ResponseMetadata{Messages: e.ResponseMetadata.Messages},
+	}
 }
