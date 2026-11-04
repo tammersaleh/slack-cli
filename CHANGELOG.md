@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.0](https://github.com/tammersaleh/slack-cli/compare/v5.5.0...v5.6.0) (2026-11-04)
+
+
+### Features
+
+* **slackurl:** accept /lists/ URLs as file links ([fcc6589](https://github.com/tammersaleh/slack-cli/commit/fcc6589fa40ac834a2c7b28e96dd0975cc538a20))
+
 ## [5.5.0](https://github.com/tammersaleh/slack-cli/compare/v5.4.0...v5.5.0) (2026-11-03)
 
 
