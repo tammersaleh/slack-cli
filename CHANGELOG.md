@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.0](https://github.com/tammersaleh/slack-cli/compare/v5.8.0...v5.9.0) (2026-11-04)
+
+
+### Features
+
+* **list:** add list record add and update ([3f26645](https://github.com/tammersaleh/slack-cli/commit/3f26645e5b08e3473530ef9f048c6088ee4c0bfe))
+
 ## [5.8.0](https://github.com/tammersaleh/slack-cli/compare/v5.7.0...v5.8.0) (2026-11-04)
 
 
