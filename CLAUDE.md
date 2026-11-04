@@ -210,6 +210,17 @@ or have the main thread run the reviewer on the pushed range and ship any
 fixes as a follow-up commit. The reviewer found two test gaps that Codex had
 not.
 
+Two mechanics seen 2026-11-04 running five feature agents in sequence: the
+`feature-dev:code-reviewer` a `general-purpose` agent spawns runs as a
+background task whose completion notification can land in the **main**
+session, not the spawning agent, which then idles "waiting for the reviewer".
+Tell the agent up front that the main thread will relay the verdict, and relay
+it (findings plus nits) when the notification arrives. And `rebase.autostash`
+is on in this repo's git config, so an agent that rebases onto a moved main
+will stash and restore the main thread's uncommitted plan-file edit; have it
+cherry-pick onto `origin/main` in a throwaway worktree instead, or confirm the
+plan file's diff survived.
+
 ## Bug reports and todos
 
 Both directories are untracked scratch space holding work orders, not
