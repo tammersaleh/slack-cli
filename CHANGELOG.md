@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.1](https://github.com/tammersaleh/slack-cli/compare/v5.9.0...v5.9.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **file:** report bytes written by file download ([0351ac0](https://github.com/tammersaleh/slack-cli/commit/0351ac0aa3d3d2dfcfa15c45fc27dde4685457ef))
+
 ## [5.9.0](https://github.com/tammersaleh/slack-cli/compare/v5.8.0...v5.9.0) (2026-11-04)
 
 
