@@ -1164,6 +1164,154 @@ Errors:
 
 Slack API: `files.info` (to get download URL), then HTTP GET
 
+### list
+
+Slack Lists. A list is a file (`filetype: list`), so `<list>` is an `F…` id, a
+`/lists/<team>/<F…>` URL, or a `/files/…/<F…>` URL. Every list command uses the
+session (`xoxc-`) token and form-encoded internal calls: `files.info` is read as
+raw JSON because slack-go's `File` drops `list_metadata` and `list_limits`, and
+`lists.records.list` is undocumented. On Enterprise Grid the org (`E`) token
+serves all of them, so there is no two-client split; a bot token fails
+`session_token_required` (exit 2) before any call.
+
+Column values are keyed by column display name. Keys are assigned in schema
+order: a name already taken gets `_2`, `_3`, ... by probing for an unused key,
+so with columns `Foo`, `Foo_2`, `Foo` the third is `Foo_3`. A nameless column is
+keyed by its column id.
+
+#### slack list info
+
+```
+slack list info <list>
+```
+
+```
+$ slack list info F01ABC
+{"id":"F01ABC","title":"Launch tasks","description":"Everything before launch","icon":":rocket:","user":"U01XYZ","created":1709251200,"updated":1709337600,"permalink":"https://acme.slack.com/lists/T01ABC/F01ABC","limits":{"row_count":53,"row_count_limit":5000,"archived_row_count":2,"over_row_maximum":false,"column_count":7,"column_count_limit":30,"view_count":1,"view_count_limit":50}}
+{"_meta":{"has_more":false}}
+```
+
+`limits` is Slack's `list_limits` block passed through. `archived_row_count`
+is the only signal that the list holds rows `list records` will never show.
+
+Errors:
+
+- `file_not_found` (exit 1): No file matching the id.
+- `not_a_list` (exit 1): The id names a file that is not a Slack List.
+- `session_token_required` (exit 2): Bot token.
+
+Slack API: `files.info`
+
+#### slack list schema
+
+One row per column, in schema order. `format` and `choices` appear only when
+the column carries them (`select` and `multi_select` columns have both).
+
+```
+slack list schema <list>
+```
+
+```
+$ slack list schema F01ABC
+{"column_id":"Col01AAA","key":"name","name":"Name","type":"text","is_primary_column":true,"format":"text"}
+{"column_id":"Col01CCC","key":"Col01BBB","name":"Status","type":"select","is_primary_column":false,"format":"single_select","choices":[{"value":"todo","label":"To do","color":"gray"},{"value":"done","label":"Done","color":"green"}]}
+{"column_id":"Col01DDD","key":"Col01DDK","name":"Owner","type":"user","is_primary_column":false}
+{"_meta":{"has_more":false}}
+```
+
+`column_id` is what record fields join on. `key` is what the write API
+addresses columns by; the primary text column's key is `name`.
+
+Slack API: `files.info`
+
+#### slack list records
+
+```
+slack list records <list> [flags]
+  --limit      Page size (default: 100; Slack rejects 1, so --limit 1 is invalid_input)
+  --cursor     Continue from previous page
+  --all        Fetch all pages
+  --view       Read through a view (view_id)
+  --raw        Add raw_fields holding the original field objects
+```
+
+```
+$ slack list records F01ABC --limit 2
+{"id":"Rec01AAA","created_by":"U01XYZ","updated_by":"U01XYZ","date_created":1709251200,"updated_timestamp":"1709251300","position":"1709251200.12345","fields":{"Name":"Ship it","Status":["Done"],"Owner":["U01XYZ"],"Due":"2026-05-21","Shipped":null,"Link":["https://example.com"]}}
+{"id":"Rec01BBB","created_by":"U02MGR","updated_by":"U01XYZ","date_created":1709251260,"updated_timestamp":"1709251400","position":"1709251260.00001","thread_ts":"1709251261.000100","fields":{"Name":"Write the announcement","Status":["To do"],"Owner":[],"Due":null,"Shipped":false,"Link":[]}}
+{"_meta":{"has_more":true,"next_cursor":"bGlzdF9pZDo","row_count":53,"archived_row_count":2}}
+```
+
+Record metadata sits at the top level (`id`, `created_by`, `updated_by`,
+`date_created`, `updated_timestamp`, `position`, and `thread_ts` when the record
+has one). Column values sit under `fields`; every schema column is present and
+`null` when the record has no value. `--fields` filters the top level only.
+
+The schema is read once from `files.info` before the first page and every page
+is joined against it. Rendering by column type:
+
+| column type | value |
+|---|---|
+| `text`, `rich_text` | Slack's rendered mrkdwn string (`<@U…>` mentions, `• ` bullets); the block array is only in `--raw` |
+| `select`, `multi_select` | array of choice labels; a value with no matching choice is emitted as-is |
+| `user`, `created_by`, `todo_assignee` | array of user ids |
+| `channel` | array of channel ids |
+| `date` | `YYYY-MM-DD` string |
+| `created_time` | epoch seconds |
+| `checkbox`, `todo_completed` | bool |
+| `number` | number |
+| `email` | array of addresses |
+| `link` | array of URLs |
+| `message` | `[{permalink, channel_id, ts, thread_ts}]` (`thread_ts` is `0000000000.000000` for a non-reply); the standard timestamp enrichment adds `ts_iso` and `thread_ts_iso` beside them |
+| anything else | the raw field object minus `key` and `column_id` |
+
+The trailer carries `row_count` and `archived_row_count` from Slack's limits
+block. Archived records never appear in the stream, so a caller comparing rows
+emitted to `row_count` should expect the difference to be `archived_row_count`.
+
+Record order within a walk is not promised. It was not creation order or
+position order on the lists measured, and whether `--view` changes it is
+unverified.
+
+Errors:
+
+- `invalid_input` (exit 1): `--limit 1`, `--all` with `--cursor`, or a URL of the wrong kind.
+- `file_not_found` / `not_a_list` (exit 1): As for `list info`.
+- `list_schema_mismatch` (exit 1): A record carried a `column_id` the schema does not have, meaning the list was edited between the schema read and that page. The page is dropped, the trailer carries `has_more:false` and the error with no resume cursor; rerun the command.
+- `invalid_cursor` (exit 1): Slack rejected `--cursor`.
+- `session_token_required` (exit 2): Bot token.
+
+Slack API: `files.info`, then `lists.records.list` (internal; `list_id`, `limit`, `cursor`, optional `view_id`)
+
+#### slack list find
+
+Finds lists by title with `search.files` and the query `type:list "<title>"`.
+A `"` inside the title becomes a space, since Slack search cannot escape one.
+Titles are not unique - three lists sharing one title is normal - so this emits
+one row per match and never picks one. The caller chooses an `id` to pass to the
+other list commands.
+
+```
+slack list find <title> [flags]
+  --limit      Page size (default: 20, max: 100)
+  --cursor     Continue from previous page (page number)
+  --all        Fetch all pages
+```
+
+```
+$ slack list find "Launch tasks"
+{"id":"F01ABC","title":"Launch tasks","user":"U01XYZ","created":1709251200,"permalink":"https://acme.slack.com/lists/T01ABC/F01ABC"}
+{"id":"F02DEF","title":"Launch tasks","user":"U02MGR","created":1709164800,"permalink":"https://acme.slack.com/lists/T01ABC/F02DEF"}
+{"_meta":{"has_more":false}}
+```
+
+Errors:
+
+- `invalid_input` (exit 1): Blank title, `--limit` over 100, or `--all` with `--cursor`.
+- `session_token_required` (exit 2): Bot token.
+
+Slack API: `search.files`
+
 ### pin (Phase 2)
 
 #### slack pin list

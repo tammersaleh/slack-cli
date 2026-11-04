@@ -1,6 +1,6 @@
 ---
 name: slack-cli
-description: "Read and manage Slack: messages, threads, channels, users, files, search, saved items, drafts, sidebar sections. Load this BEFORE running any `slack` command - the CLI has its own grammar (`slack thread list`, `slack message get`, `slack channel list --query`), NOT Slack Web-API method names (no `conversations.replies`, `channel find`, `message read`)."
+description: "Read and manage Slack: messages, threads, channels, users, files, search, saved items, drafts, sidebar sections, Slack Lists. Load this BEFORE running any `slack` command - the CLI has its own grammar (`slack thread list`, `slack message get`, `slack channel list --query`), NOT Slack Web-API method names (no `conversations.replies`, `channel find`, `message read`)."
 argument-hint: ""
 allowed-tools:
   - Bash(slack *)
@@ -270,6 +270,25 @@ slack file list [--limit N] [--channel CH] [--user UID] [--types images,pdfs]
 slack file info <file-id-or-url>...
 slack file download <file-id-or-url> [-o path]
 ```
+
+### Lists (requires session token)
+
+A Slack List is a file; pass its `F…` id or `/lists/<team>/<F…>` URL.
+
+```
+slack list find <title>                  # one row per matching list; titles collide, so pick an id yourself
+slack list info <list>                   # title, description, icon, limits (archived_row_count = hidden rows)
+slack list schema <list>                 # one row per column: column_id, key, name, type, choices
+slack list records <list> [--limit N] [--all] [--view VIEW_ID] [--raw]
+```
+
+`list records` rows put record metadata at the top level and column values
+under `fields`, keyed by column display name (duplicates get `_2`, `_3`).
+Every column is present, `null` when unset. Select columns are arrays of
+labels, user columns arrays of ids, text columns Slack's rendered mrkdwn. The
+`_meta` trailer carries `row_count` and `archived_row_count`; archived records
+are never returned. `list_schema_mismatch` means the list changed mid-read -
+rerun. Row order is not promised.
 
 ### Reactions
 

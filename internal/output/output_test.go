@@ -491,3 +491,24 @@ func TestFilterFields_DoesNotSynthesizeMarkers(t *testing.T) {
 		t.Errorf("expected only id, got %v", got)
 	}
 }
+
+// TestPrintItem_NumbersRoundTripVerbatim pins that the printer's re-decode
+// keeps numbers as written. A float64 detour would emit 3.5 for 3.50 and lose
+// precision on integers above 2^53; list records relies on neither happening.
+func TestPrintItem_NumbersRoundTripVerbatim(t *testing.T) {
+	var out bytes.Buffer
+	p := &Printer{Out: &out, Err: &bytes.Buffer{}}
+
+	if err := p.PrintItem(map[string]any{
+		"decimal": json.Number("3.50"),
+		"big":     json.Number("9007199254740993"),
+		"nested":  map[string]any{"n": json.Number("1.0")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := `{"big":9007199254740993,"decimal":3.50,"nested":{"n":1.0}}` + "\n"
+	if out.String() != want {
+		t.Errorf("got %q, want %q", out.String(), want)
+	}
+}

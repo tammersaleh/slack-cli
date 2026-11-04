@@ -47,6 +47,7 @@ type CLI struct {
 	Draft     DraftCmd     `cmd:"" aliases:"drafts" help:"Stage draft messages (requires session token)."`
 	Emoji     EmojiCmd     `cmd:"" aliases:"emojis" help:"Custom emoji."`
 	File      FileCmd      `cmd:"" aliases:"files" help:"File operations."`
+	List      ListCmd      `cmd:"" aliases:"lists" help:"Slack Lists (requires session token)."`
 	Message   MessageCmd   `cmd:"" aliases:"messages" help:"Read messages."`
 	Pin       PinCmd       `cmd:"" aliases:"pins" help:"Pinned items."`
 	Presence  PresenceCmd  `cmd:"" help:"User presence."`

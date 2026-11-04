@@ -1,6 +1,7 @@
 package output
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"strings"
@@ -60,6 +61,12 @@ type Meta struct {
 	// client-side filter was active. A pointer because false is meaningful and
 	// must still be emitted.
 	FilterExhaustive *bool `json:"filter_exhaustive,omitempty"`
+	// RowCount and ArchivedRowCount come from the limits block of a Slack
+	// List walk (list records). Archived records never appear in the stream,
+	// so ArchivedRowCount is the only signal that the list holds rows the
+	// output does not. Pointers so zero is emitted when Slack reported it.
+	RowCount         *int `json:"row_count,omitempty"`
+	ArchivedRowCount *int `json:"archived_row_count,omitempty"`
 }
 
 type metaWrapper struct {
@@ -87,8 +94,13 @@ func (p *Printer) PrintItem(v any) error {
 		return err
 	}
 
+	// Decode numbers as json.Number so a value round-trips exactly as the
+	// command built it: a float64 detour would turn 3.50 into 3.5 and lose
+	// precision above 2^53 (list records emits Slack's numbers verbatim).
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
+	if err := dec.Decode(&m); err != nil {
 		// Not an object - write as-is.
 		raw = append(raw, '\n')
 		_, err := p.Out.Write(raw)
