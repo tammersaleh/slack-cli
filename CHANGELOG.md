@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.0](https://github.com/tammersaleh/slack-cli/compare/v5.6.0...v5.7.0) (2026-11-04)
+
+
+### Features
+
+* **list:** add list info, schema, records, find ([57d85e2](https://github.com/tammersaleh/slack-cli/commit/57d85e2688ae02e85c27dccbba5ccdbeda2647aa))
+
 ## [5.6.0](https://github.com/tammersaleh/slack-cli/compare/v5.5.0...v5.6.0) (2026-11-04)
 
 
