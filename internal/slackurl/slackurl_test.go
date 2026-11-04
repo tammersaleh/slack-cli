@@ -66,6 +66,24 @@ func TestParse_Valid(t *testing.T) {
 			want: Ref{Kind: KindFile, FileID: "F0456WXYZ", UserID: "U0123ABCD"},
 		},
 		{
+			// A Slack List is a file. The team segment is the org id in the URL a
+			// user copies and the workspace id in the permalink Slack returns, so
+			// only the file id is reliable and both forms must agree.
+			name: "list with workspace team id",
+			in:   "https://acme.slack.com/lists/T01ABC/F01ABC",
+			want: Ref{Kind: KindFile, FileID: "F01ABC"},
+		},
+		{
+			name: "list with enterprise org id",
+			in:   "https://acme.slack.com/lists/E01ABC/F01ABC",
+			want: Ref{Kind: KindFile, FileID: "F01ABC"},
+		},
+		{
+			name: "list with trailing segments",
+			in:   "https://acme.slack.com/lists/T01ABC/F01ABC/items",
+			want: Ref{Kind: KindFile, FileID: "F01ABC"},
+		},
+		{
 			// url.Parse percent-decodes the path before splitPath sees it, so a
 			// copied profile URL carrying the @ as %40 still resolves: the
 			// segment reads as "@W…" and TrimPrefix strips it.
@@ -134,6 +152,8 @@ func TestParse_BadURL(t *testing.T) {
 		{"client unsupported id", "https://app.slack.com/client/T0123ABCD/B0456WXYZ"},
 		{"files missing file id", "https://acme.slack.com/files/U0123ABCD"},
 		{"files bad file id prefix", "https://acme.slack.com/files/U0123ABCD/X0456WXYZ/report.pdf"},
+		{"lists missing file id", "https://acme.slack.com/lists/T01ABC"},
+		{"lists bad file id prefix", "https://acme.slack.com/lists/T01ABC/X01ABC"},
 	}
 	for _, tt := range inputs {
 		t.Run(tt.name, func(t *testing.T) {

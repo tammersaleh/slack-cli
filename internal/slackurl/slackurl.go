@@ -98,6 +98,8 @@ func Parse(s string) (Ref, bool, error) {
 		return parseUser(segs)
 	case "files":
 		return parseFiles(segs)
+	case "lists":
+		return parseLists(segs)
 	default:
 		return Ref{}, true, fmt.Errorf("unsupported Slack URL route %q", segs[0])
 	}
@@ -194,6 +196,21 @@ func parseFiles(segs []string) (Ref, bool, error) {
 		ref.UserID = uploader
 	}
 	return ref, true, nil
+}
+
+// parseLists handles /lists/<team>/<file>/... . A Slack List is a file, so
+// the result is a KindFile ref. The team segment is ignored: it is the org id
+// in the URL a user copies from the client and the workspace id in the
+// permalink Slack returns, so only the file id is reliable.
+func parseLists(segs []string) (Ref, bool, error) {
+	if len(segs) < 3 {
+		return Ref{}, true, fmt.Errorf("lists URL missing file id")
+	}
+	file := segs[2]
+	if !fileIDRE.MatchString(file) {
+		return Ref{}, true, fmt.Errorf("not a file id: %q", file)
+	}
+	return Ref{Kind: KindFile, FileID: file}, true, nil
 }
 
 // tsFromPSegment converts a `p1713300000123456` segment to `1713300000.123456`.

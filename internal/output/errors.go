@@ -73,7 +73,7 @@ func InvalidURL(input, detail string) *Error {
 	return &Error{
 		Err:    "invalid_input",
 		Detail: detail,
-		Hint:   "Accepted forms: a Slack ID/name, or a Slack URL of the right kind (channel/message link for channels, profile link for users, file link for files).",
+		Hint:   "Accepted forms: a Slack ID/name, or a Slack URL of the right kind (channel/message link for channels, profile link for users, file or list link for files).",
 		Input:  input,
 		Code:   ExitGeneral,
 	}

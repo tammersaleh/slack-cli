@@ -93,7 +93,8 @@ permalink` mints one on demand, so the usual loop is *discover → take the
 A message permalink fills both the channel and the timestamp at once for
 `message get`, `reaction list`, and `thread list`, and several may target
 different channels in a single call; a link to any reply resolves to its parent
-thread. `file info`/`download` take file links.
+thread. `file info`/`download` take file links, including Slack List links
+(`/lists/<team>/<F…>` - a list is a file).
 
 IDs (`C…`/`U…`/`F…`), `#channel`/`@user` names, and emails work anywhere a URL
 does - reach for them when you don't have a link (see Channel and User

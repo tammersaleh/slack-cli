@@ -1121,7 +1121,7 @@ Slack API: `files.list`
 
 #### slack file info
 
-Accepts a bare file ID or a Slack file URL (`/files/<uploader>/<F-id>/…`).
+Accepts a bare file ID or a Slack file URL (`/files/<uploader>/<F-id>/…`). A Slack List URL (`/lists/<team>/<F-id>`) is also accepted, since lists are files.
 
 ```
 slack file info <file-id-or-url>...
