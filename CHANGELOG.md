@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.8.0](https://github.com/tammersaleh/slack-cli/compare/v5.7.0...v5.8.0) (2026-11-04)
+
+
+### Features
+
+* **list:** add list create, update, and column commands ([aad992e](https://github.com/tammersaleh/slack-cli/commit/aad992e134908b9121d6f5576fc8a7d97b4cc8d7))
+
 ## [5.7.0](https://github.com/tammersaleh/slack-cli/compare/v5.6.0...v5.7.0) (2026-11-04)
 
 
