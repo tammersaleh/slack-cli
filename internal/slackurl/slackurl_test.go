@@ -79,6 +79,13 @@ func TestParse_Valid(t *testing.T) {
 			want: Ref{Kind: KindFile, FileID: "F01ABC"},
 		},
 		{
+			// Pins that the team segment is ignored, not validated: a value that
+			// is not a T/E id must still parse.
+			name: "list with arbitrary team segment",
+			in:   "https://acme.slack.com/lists/not-a-team/F01ABC",
+			want: Ref{Kind: KindFile, FileID: "F01ABC"},
+		},
+		{
 			name: "list with trailing segments",
 			in:   "https://acme.slack.com/lists/T01ABC/F01ABC/items",
 			want: Ref{Kind: KindFile, FileID: "F01ABC"},
