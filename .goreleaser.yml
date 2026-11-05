@@ -27,7 +27,7 @@ release:
   mode: append
 
 homebrew_casks:
-  - name: slack-cli
+  - name: tammersaleh-slack-cli
     binaries:
       - slack
     repository:

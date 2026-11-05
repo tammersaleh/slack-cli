@@ -13,7 +13,7 @@ a `_meta` trailer: `{"_meta":{"has_more":false}}`. A trailer carrying an
 `error` field means the output above it is incomplete - see Pagination.
 
 Requires the `slack` binary on PATH. If `command not found`, install it:
-`brew install tammersaleh/tap/slack-cli` (macOS) or
+`brew install tammersaleh/tap/tammersaleh-slack-cli` (macOS) or
 `go install github.com/tammersaleh/slack-cli/cmd/slack@latest`.
 
 Auth is pre-configured. If you get `not_authed`, tell the user to run

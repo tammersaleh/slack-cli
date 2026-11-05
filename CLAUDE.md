@@ -133,14 +133,14 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    sub-agent to wait for the release and upgrade, so the main session isn't
    blocked babysitting CI. The sub-agent polls `gh release list` /
    `gh run list` until the new tag cuts, then runs
-   `brew upgrade --cask tammersaleh/tap/slack-cli` and reports the installed
+   `brew upgrade --cask tammersaleh/tap/tammersaleh-slack-cli` and reports the installed
    `slack version`; the main session then exercises the new behavior.
    Practical note (learned 2026-07-09): a general-purpose sub-agent is a
    poor poller - it repeatedly misreads its own role and bails early with
    "I'll wait for the notification" instead of looping. A background `Bash`
    poll loop (`run_in_background`) that re-invokes the main session on exit
    works reliably: loop `gh release view vX.Y.Z` with `sleep 90` until the
-   tag cuts, then a second loop on the tap's raw `Casks/slack-cli.rb` until
+   tag cuts, then a second loop on the tap's raw `Casks/tammersaleh-slack-cli.rb` until
    `version "X.Y.Z"` appears (the cask artifact lags the git tag by minutes -
    `brew upgrade` says "already installed" until then), then upgrade and
    verify in the main session. The
@@ -154,16 +154,16 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    `gh pr update-branch N` - CI reruns and auto-merge completes. The Bash
    tool caps a command at 10 minutes, so a poll loop must fit inside that
    and be re-launched, not written as a one-hour loop. The artifact is a
-   **cask**, not a formula: it lives at `Casks/slack-cli.rb` in the tap (not
+   **cask**, not a formula: it lives at `Casks/tammersaleh-slack-cli.rb` in the tap (not
    `Formula/`), and the version line is `version "x.y.z"`. Don't waste time
    grepping `Formula/`. raw.githubusercontent.com caches the cask for minutes after
    the tap commit lands (seen 2026-10-19: still `5.2.0` after the release run
-   had succeeded); `gh api repos/tammersaleh/homebrew-tap/contents/Casks/slack-cli.rb -q .content | base64 -d`
+   had succeeded); `gh api repos/tammersaleh/homebrew-tap/contents/Casks/tammersaleh-slack-cli.rb -q .content | base64 -d`
    reads the real file. Then install and verify against the real artifact,
    never your local build:
-   - Binary change (`feat:`/`fix:`): `brew upgrade --cask tammersaleh/tap/slack-cli`
-     (plain `brew upgrade slack-cli` can no-op if the cask tap hasn't synced;
-     poll the tap's `Casks/slack-cli.rb` for the new `version` first), confirm
+   - Binary change (`feat:`/`fix:`): `brew upgrade --cask tammersaleh/tap/tammersaleh-slack-cli`
+     (plain `brew upgrade tammersaleh-slack-cli` can no-op if the cask tap hasn't synced;
+     poll the tap's `Casks/tammersaleh-slack-cli.rb` for the new `version` first), confirm
      `slack version` is the version just cut, and exercise the new behavior
      with the installed `slack`. Note Slack rate-limits quickly under repeated
      manual calls - a `{"error":"ratelimited"}` row is the expected systemic
@@ -253,6 +253,15 @@ lands, it opens a release PR which auto-merges once CI passes. The
 merged PR cuts a tag + GitHub Release; GoReleaser builds binaries and
 pushes an updated Formula to `tammersaleh/homebrew-tap`. Nobody runs
 `git tag` by hand - and nobody clicks Merge on the release PR either.
+
+The cask token is `tammersaleh-slack-cli`, not `slack-cli`: homebrew/cask
+ships its own `slack-cli` (Slack's platform CLI, binary also `slack`), and
+Homebrew resolves an installed cask by bare token, so even a qualified
+`brew install --cask tammersaleh/tap/slack-cli` was attributed to
+homebrew/cask and `brew bundle` twice replaced 5.9.1 with the official
+4.13.0 (2026-11-04/05, exit 0, noticed only when `slack message` was an
+unknown command). The tap carries `cask_renames.json` for the old token.
+The binary stays `slack`.
 
 This means commit type is not a style choice. It is the entire release
 trigger. A `feat:` or `fix:` commit pushed to main ships as a new

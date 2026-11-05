@@ -7,7 +7,7 @@ Read-only CLI for Slack. Designed for agents and automation.
 macOS (Homebrew tap):
 
 ```bash
-brew install tammersaleh/tap/slack-cli
+brew install tammersaleh/tap/tammersaleh-slack-cli
 ```
 
 Or from source (any platform):
