@@ -260,8 +260,11 @@ Homebrew resolves an installed cask by bare token, so even a qualified
 `brew install --cask tammersaleh/tap/slack-cli` was attributed to
 homebrew/cask and `brew bundle` twice replaced 5.9.1 with the official
 4.13.0 (2026-11-04/05, exit 0, noticed only when `slack message` was an
-unknown command). The tap carries `cask_renames.json` for the old token.
-The binary stays `slack`.
+unknown command). The tap carries `cask_renames.json` for the old token. Installing the new
+token on a machine that had the old one leaves an empty
+`Caskroom/slack-cli/.metadata` shell whose receipt names homebrew/cask;
+`rm -rf` it before `brew bundle cleanup`, or cleanup uninstalls it through
+the core cask definition. The binary stays `slack`.
 
 This means commit type is not a style choice. It is the entire release
 trigger. A `feat:` or `fix:` commit pushed to main ships as a new
