@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.9.2](https://github.com/tammersaleh/slack-cli/compare/v5.9.1...v5.9.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **homebrew:** rename cask to tammersaleh-slack-cli ([65a88df](https://github.com/tammersaleh/slack-cli/commit/65a88df79e41a3ae53bfd41c317ab4da62608536))
+
 ## [5.9.1](https://github.com/tammersaleh/slack-cli/compare/v5.9.0...v5.9.1) (2026-11-04)
 
 
