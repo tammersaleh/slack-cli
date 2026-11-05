@@ -1,6 +1,6 @@
 ---
 name: slack-cli
-description: "Read and manage Slack: messages, threads, channels, users, files, search, saved items, drafts, sidebar sections, Slack Lists. Load this BEFORE running any `slack` command - the CLI has its own grammar (`slack thread list`, `slack message get`, `slack channel list --query`), NOT Slack Web-API method names (no `conversations.replies`, `channel find`, `message read`)."
+description: "Read and manage Slack: messages, threads, channels, users, files, search, saved items, drafts, sidebar sections, Slack Lists, and handing Tammer a table he can paste into Slack. Load this BEFORE running any `slack` command - the CLI has its own grammar (`slack thread list`, `slack message get`, `slack channel list --query`), NOT Slack Web-API method names (no `conversations.replies`, `channel find`, `message read`)."
 argument-hint: ""
 allowed-tools:
   - Bash(slack *)
@@ -848,6 +848,20 @@ When an error has a `hint` field, follow it. Example:
 slack message list '#ext-acm' 2>&1 >/dev/null | jq -r '.hint'
 # → "Run 'slack channel list --query ext-acm' to find ... or '--include-non-member' ..."
 slack channel list --query ext-acm
+```
+
+### Hand Tammer a table to paste into Slack
+
+Slack renders a native table only from tab-separated text pasted into the
+message box. Markdown pipe tables paste as literal garbage, and `column -t`
+or box drawing is a code block, not a table. Build TSV (header row, one row
+per record, no padding in cells), pipe it to the clipboard, verify the tabs
+survived, and tell him to Cmd-V into the message box. Show the same table as
+markdown in chat so he can read it. One TSV block is one table. Keep emoji and
+wide glyphs in the last column. Never stage or post it yourself.
+
+```
+printf 'Person\tCount\nWilly\t3\n' | pbcopy && pbpaste | cat -A
 ```
 
 ## Enrichment
