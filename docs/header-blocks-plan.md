@@ -61,8 +61,8 @@ Every statement that drafts strip or lack headings goes. Files: `SPEC.md` (draft
 4. [x] Green: converter (`heading`/`plainText`/`blocks`, commit 79aadbd).
 5. [x] Refactor (`codeSpanText` shared by inline and heading paths), `mise run check` green.
 6. [x] Docs: SPEC, SKILL, draft-messages, help text, CLAUDE.md, markdown-drafts-plan.
-7. [ ] Code review (feature-dev:code-reviewer), fix, re-review.
-8. [ ] Commit `feat(draft): accept header blocks and convert Markdown headings to them`, push, wait for release, brew upgrade, verify live in self-DM with `--markdown`.
+7. [x] Code review (feature-dev:code-reviewer): nine findings (stale hint strings, float level coverage, vacuous detail assertions, missing --markdown header e2e, Setext error line attribution, plan wording), all fixed in 40ed9c9 and 472ea60; re-review clean.
+8. [ ] Merged and pushed as separate feat/docs/test commits (a39762f, 79aadbd, 7a8ede0, 40ed9c9, 472ea60). Still to do in the main session: wait for release, brew upgrade, verify live in self-DM with `--markdown`.
 
 ## Discoveries during implementation
 
