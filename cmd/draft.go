@@ -793,7 +793,7 @@ func (p draftPayload) blocksOrEmpty() string {
 }
 
 // hasRenderableContent reports whether a freshly-provided payload carries a
-// non-empty rich_text body, a header block, or a table attachment. A draft
+// non-empty rich_text body, a header or divider block, or a table attachment. A draft
 // with none of those gets tombstoned by Slack's reconciliation pass. Inputs
 // are already shape-valid.
 func (p draftPayload) hasRenderableContent() bool {
@@ -809,7 +809,7 @@ func (p draftPayload) hasRenderableContent() bool {
 func errNoRenderableContent() error {
 	return &output.Error{
 		Err:    "invalid_blocks",
-		Detail: "a draft needs a non-empty rich_text block, a header block, or a table attachment - Slack tombstones drafts with no renderable content.",
+		Detail: "a draft needs a non-empty rich_text block, a header block, a divider block, or a table attachment - Slack tombstones drafts with no renderable content.",
 		Hint:   skillHint,
 		Code:   output.ExitGeneral,
 	}
@@ -1034,10 +1034,12 @@ func firstJSONToken(raw []byte) byte {
 // validateBlockShapes is the local gate for a draft's top-level blocks. It
 // enforces:
 //
-//  1. Every top-level block is rich_text or header. Slack Desktop's Drafts
-//     compose editor silently strips every other top-level block type when
-//     the user opens the draft. A table belongs in an attachment (the only
-//     place a draft preserves it); data_table isn't draftable anywhere.
+//  1. Every top-level block is rich_text, header, or divider. Slack Desktop's
+//     Drafts compose editor silently strips every other top-level block type
+//     when the user opens the draft. A table belongs in an attachment (the
+//     only place a draft preserves it); data_table isn't draftable anywhere.
+//     A divider needs only its type (measured 2026-11-06,
+//     docs/divider-blocks-plan.md); every other field passes through.
 //
 //  2. A header carries plain_text with non-empty text and, when present, an
 //     integer level >= 1 - the shapes Slack stores (measured 2026-11-06,
@@ -1052,8 +1054,8 @@ func firstJSONToken(raw []byte) byte {
 //     them resets it: Desktop renders [section without "\n", header, list]
 //     as paragraph, heading, bullet with no glue (inspected 2026-11-06).
 //
-// It returns whether renderable content is present - a non-empty rich_text
-// or any header - so the caller can apply the renderable-content rule (a
+// It returns whether renderable content is present - a non-empty rich_text,
+// any header, or any divider - so the caller can apply the renderable-content rule (a
 // draft needs that or a table attachment, else reconciliation tombstones it).
 func validateBlockShapes(raw []byte) (hasBody bool, err error) {
 	var arr []map[string]any
@@ -1093,6 +1095,18 @@ func validateBlockShapes(raw []byte) (hasBody bool, err error) {
 			prevElem, prevSection = "", nil
 			continue
 		}
+		if t == "divider" {
+			// The composer's horizontal rule: a bare {"type":"divider"}
+			// between rich_text runs. A divider-only draft survives
+			// reconciliation and consecutive dividers are stored as two
+			// (measured 2026-11-06, docs/divider-blocks-plan.md), so it
+			// counts as renderable content and needs no fields beyond type.
+			// Whether Desktop treats it as an absorption boundary is pending
+			// a Desktop check, so the section-before-container state carries
+			// across it (the conservative reading).
+			hasBody = true
+			continue
+		}
 		if t != "rich_text" {
 			// table/data_table feel supported as top-level blocks (drafts.create
 			// returns ok and stores them) but the compose editor strips them on
@@ -1119,7 +1133,7 @@ func validateBlockShapes(raw []byte) (hasBody bool, err error) {
 			}
 			return false, &output.Error{
 				Err:    "invalid_blocks",
-				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text and header top-level blocks. Slack Desktop's Drafts compose editor strips every other block type when the user opens the draft.", i, t),
+				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text, header, and divider top-level blocks. Slack Desktop's Drafts compose editor strips every other block type when the user opens the draft.", i, t),
 				Hint:   skillHint,
 				Code:   output.ExitGeneral,
 			}
