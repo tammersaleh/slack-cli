@@ -765,10 +765,17 @@ func (c *converter) applyAbsorptionRule() {
 
 // lineOf finds the 1-based source line a node starts on: its first line
 // segment, else its first descendant text, else the first non-blank line
-// after the previous sibling (a thematic break owns no segment at all).
+// after the previous sibling.
 func (c *converter) lineOf(n ast.Node) int {
+	return c.lineOfOffset(c.startOffset(n))
+}
+
+// startOffset is the byte offset where n starts. A thematic break owns no
+// segment at all, so when it is the previous sibling its end is the end of
+// its own line, found by locating its start the same way.
+func (c *converter) startOffset(n ast.Node) int {
 	if off, ok := firstOffset(n); ok {
-		return c.lineOfOffset(off)
+		return off
 	}
 	// The node starts at the first non-blank byte after whatever precedes
 	// it: a previous sibling, or failing that an ancestor's previous sibling
@@ -788,18 +795,23 @@ func (c *converter) lineOf(n ast.Node) int {
 	}
 	for cur := n; cur != nil && cur.Kind() != ast.KindDocument; cur = cur.Parent() {
 		for prev := cur.PreviousSibling(); prev != nil; prev = prev.PreviousSibling() {
-			if end, ok := lastOffset(prev); ok {
-				end = c.skipBlank(end, inQuote)
-				if _, fenced := prev.(*ast.FencedCodeBlock); fenced {
-					// A fenced block's Lines() exclude the fences, so the
-					// first non-blank line after them is the closing fence.
-					end = c.skipBlank(c.skipLine(end), inQuote)
-				}
-				return c.lineOfOffset(end)
+			end, ok := lastOffset(prev)
+			if _, isBreak := prev.(*ast.ThematicBreak); isBreak && !ok {
+				end, ok = c.skipLine(c.startOffset(prev)), true
 			}
+			if !ok {
+				continue
+			}
+			end = c.skipBlank(end, inQuote)
+			if _, fenced := prev.(*ast.FencedCodeBlock); fenced {
+				// A fenced block's Lines() exclude the fences, so the
+				// first non-blank line after them is the closing fence.
+				end = c.skipBlank(c.skipLine(end), inQuote)
+			}
+			return end
 		}
 	}
-	return c.lineOfOffset(c.skipBlank(0, inQuote))
+	return c.skipBlank(0, inQuote)
 }
 
 func (c *converter) skipBlank(off int, quoteMarkers bool) int {

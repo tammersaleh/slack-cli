@@ -230,6 +230,13 @@ func TestConvert_Errors(t *testing.T) {
 		{"error inside the second list item", "- ok\n- see ![](https://example.com/i.png)\n", 2, "image"},
 		{"empty-label link on a later line", "a\nsee [](/docs)\n", 2, "link"},
 		{"block after a fenced code block", "```\ncode\n```\n\n![](https://example.com/i.png)\n", 5, "image"},
+		// A thematic break owns no source segment, so a segment-less node
+		// after one must still be attributed to its own line, not the rule's.
+		{"empty heading after a divider", "intro\n\n---\n\n#\n", 5, "empty heading"},
+		{"empty heading after a leading divider", "---\n\n#\n", 3, "empty heading"},
+		{"empty code block after a divider", "---\n\n```\n```\n", 3, "empty code block"},
+		{"empty quote after a divider", "a\n\n***\n\n>\n", 5, "empty quote"},
+		{"empty item after two dividers", "a\n\n---\n\n___\n\n-\n", 7, "empty list item"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
