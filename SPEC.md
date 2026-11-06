@@ -2105,21 +2105,23 @@ slack draft create <recipient>... [flags]
   --date-scheduled    Schedule send at Unix epoch (alternative to --at).
   --table             Build a table from a CSV/TSV file and attach it.
   --no-header         With --table, treat the first row as data, not a bold header.
-  --markdown          stdin is Markdown, converted to one rich_text block.
+  --markdown          stdin is Markdown, converted to header and rich_text blocks.
   --print-payload     With --markdown: print the converted payload, create nothing.
 
 Body on stdin. Block Kit JSON by default: either a bare array of top-level
 blocks, or an object {"blocks":[...],"attachments":[...]}. Top-level blocks
-must be rich_text; tables go in attachments[].blocks[] (or use --table).
+must be rich_text or header; tables go in attachments[].blocks[] (or use --table).
 With --markdown, stdin is Markdown (subset below). No plain-text shortcut.
 ```
 
 ##### Markdown input
 
-`--markdown` converts stdin through `internal/mdblocks` into exactly one
-top-level `rich_text` block (Desktop flattens adjacent `rich_text` blocks, so
-one is the only stable shape) and then runs the result through the same
-`validateBlockShapes` gate as caller-supplied JSON. Blank stdin with
+`--markdown` converts stdin through `internal/mdblocks` into a `header`
+block per heading and exactly one top-level `rich_text` block per run of
+content between headings (Desktop flattens adjacent `rich_text` blocks, so
+one per run is the only stable shape; a document with no heading is one
+block) and then runs the result through the same `validateBlockShapes` gate
+as caller-supplied JSON. Blank stdin with
 `--markdown` is "nothing provided" (so `--table` alone still makes an
 attachments-only draft); non-blank stdin that converts to nothing is
 `invalid_markdown`. The parser is goldmark (CommonMark) with the GFM
@@ -2129,7 +2131,7 @@ Slack tokens. Every conversion is deterministic.
 | Markdown | rich_text |
 |---|---|
 | paragraph | `rich_text_section`; soft and hard line breaks both become `\n`; terminated with `\n` when any container follows |
-| `# heading` (any level) | `rich_text_section`, all text bold, terminated by a `\n` text inline so a blank line follows; level dropped |
+| `# heading`, `## heading`, `### heading`, Setext | top-level `header` block, `level` 1, 2, 3, `text` `{"type":"plain_text","text":…,"emoji":true}`; `####` and deeper clamp to 3. Text is plain: bold, italic, strike, and code flatten to their text, `:name:` stays as text, a line break becomes a space. A link (including a bare URL or email), user or channel mention, or broadcast in a heading is `invalid_markdown` |
 | `- ` / `* ` list | `rich_text_list` `style:bullet` |
 | `N. ` list | `rich_text_list` `style:ordered`, `offset: N-1`; a later segment of the same list continues the count |
 | nested list (indent) | a separate `rich_text_list` with `indent` 1 or 2, in source order; the parent list splits around it |
@@ -2149,8 +2151,9 @@ link, emoji, user, channel, or broadcast). Before a list, quote, or code
 block that is the absorption rule; before another section it keeps the
 Markdown paragraph break from collapsing, since Slack's own composer
 encodes paragraph structure as `\n` inside text rather than as section
-boundaries. Whether it renders as a blank line or one line break in the
-compose box is pending a Desktop check. The converter does this itself;
+boundaries; before a `header` it is kept because `validateBlockShapes`
+does not treat a header as an absorption boundary. Whether it renders as a
+blank line or one line break in the compose box is pending a Desktop check. The converter does this itself;
 `validateBlockShapes` stays as the backstop, so `invalid_blocks` after a
 successful conversion means a converter defect.
 
@@ -2160,7 +2163,9 @@ Rejected with `invalid_markdown` (exit 1), detail prefixed `line N:`:
 - Horizontal rule, image, HTML block, inline HTML, pipe table (points at `--table`).
 - A list nested deeper than indent 2, a list item holding more than one paragraph, a quote inside a quote, a quote holding anything but paragraphs, lists, and code blocks.
 - A mention, channel, emoji, or image inside link text (Slack `link` elements hold text only).
-- An empty `-` list item, an item whose only content is a nested list, an empty `>` quote, or an empty code block: `drafts.create` rejects an empty text inline with `invalid_message` (verified live 2026-10-16), so these can be neither kept nor dropped.
+- An empty `-` list item, an item whose only content is a nested list, an empty `>` quote, or an empty code block: `drafts.create` rejects an empty text inline with `invalid_message` (verified live 2026-10-16), so these can be neither kept nor dropped. An empty heading likewise (a header with empty text is `invalid_message`, 2026-11-06).
+- A link, bare URL, email, `<@Uxxx>`, `<#Cxxx>`, or `@here`/`@channel`/`@everyone` inside a heading: `header` text is `plain_text` and cannot carry them, and dropping a URL or mention is content loss.
+- A heading inside a quote or a list item (a header block is top-level only).
 - A link whose URL is not absolute `http`, `https`, or `mailto`.
 
 Boundary rules: `:` is an emoji delimiter only when the character before the
@@ -2181,15 +2186,19 @@ are not shown.
 Verified live 2026-10-16 (self-DM, session token, Enterprise Grid): a draft
 holding every construct in the table round-tripped through `drafts.create`
 and `drafts.list` with server blocks byte-identical to the payload sent, and
-was not tombstoned after 25s. Not inspected: Desktop compose-box rendering
-of italic and strike, of `offset` on an unbordered ordered list (bordered:
-rendered `1.`, 2026-11-03), and of the trailing
-`\n` after a heading or paragraph as a blank line versus a line break.
+was not tombstoned after 25s. Header blocks were verified the same way on
+2026-11-06 (`docs/header-blocks-plan.md`): a header-only draft and a
+header / rich_text / header mix round-tripped modulo the server-assigned
+`block_id` and were alive after 60s. Not inspected: Desktop compose-box
+rendering of italic and strike, of `offset` on an unbordered ordered list
+(bordered: rendered `1.`, 2026-11-03), of `:name:` text inside a header, of
+`level` 4, and of the trailing `\n` after a paragraph (before a header or
+another paragraph) as a blank line versus a line break.
 
 ```
 $ cat body.md | slack draft create '#general' --markdown
 $ cat body.md | slack draft create '#general' --markdown --print-payload
-{"blocks":[{"type":"rich_text","elements":[...]}]}
+{"blocks":[{"type":"header","level":1,"text":{"type":"plain_text","text":"Status","emoji":true}},{"type":"rich_text","elements":[...]}]}
 {"_meta":{"has_more":false}}
 ```
 
@@ -2265,14 +2274,14 @@ Errors:
 - `user_not_found` (exit 1): One or more user recipients couldn't be resolved (the message lists every unresolved input).
 - `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset above; the detail names the line.
-- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body and no table attachment).
+- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text` or `header`, a `header` lacks `plain_text` text or has empty text or a `level` that isn't an integer of at least 1, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body, no `header`, and no table attachment).
 - `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, `--print-payload` without `--markdown` or with a schedule/thread flag, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
 - `not_authed` (exit 2): No session token, or - for a `#name`/bare-name
   channel recipient only - the selected workspace credential cannot be
   resolved.
 
-Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`; caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block or a table attachment). Slack's API accepts non-`rich_text` top-level blocks, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
+Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text` or `header`; a `header` has `text` `{"type":"plain_text","text":<non-empty>}` and, when present, an integer `level` of at least 1 (no upper bound - the composer emits 1 through 3 and the API stores 4; `emoji` and a server-assigned `block_id` pass through); caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block, a `header`, or a table attachment - a header-only draft survives reconciliation, measured 2026-11-06). A `header` is not an absorption boundary: a `rich_text_section` without a trailing `\n` followed by a header and then a list is still rejected, since whether Desktop flattens across a header is unverified. Slack's API accepts other top-level block types, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
 
 Slack API: `drafts.create`
 

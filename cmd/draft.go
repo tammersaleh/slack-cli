@@ -214,25 +214,29 @@ func (DraftCreateCmd) Help() string {
 is Block Kit JSON - either a bare array of top-level blocks, or an object
 {"blocks":[...],"attachments":[...]}.
 
-Markdown subset: paragraphs, headings (rendered bold, level dropped),
-bullet and ordered lists nested to three levels, **bold**, *italic* (single
-star is italic, not Slack-mrkdwn bold), ~~strike~~, ` + "`code`" + `, fenced and
-indented code blocks, > quotes (holding paragraphs, lists, and code),
-[text](https://url), bare URLs, :emoji:, <@U01XYZ>, <#C01ABC>,
-@here/@channel/@everyone. Heading levels, code-fence
-language tags, link titles, formatting inside link text, and <#C01ABC|label>
-labels are dropped. Anything
-else - @name mentions (use <@Uxxx>), ---, images, HTML, pipe tables (use
---table) - is rejected with invalid_markdown and a line number rather than
-dropped. --print-payload prints the converted payload and creates nothing.
+Markdown subset: paragraphs, headings (# ## ### become header blocks at
+level 1-3, the composer's big/medium/small; deeper clamps to 3; heading text
+is plain, so formatting flattens and a link or mention in a heading is
+rejected), bullet and ordered lists nested to three levels, **bold**,
+*italic* (single star is italic, not Slack-mrkdwn bold), ~~strike~~,
+` + "`code`" + `, fenced and indented code blocks, > quotes (holding
+paragraphs, lists, and code), [text](https://url), bare URLs, :emoji:,
+<@U01XYZ>, <#C01ABC>, @here/@channel/@everyone. Heading levels past 3,
+formatting inside headings and link text, code-fence language tags, link
+titles, and <#C01ABC|label> labels are dropped. Anything else - @name
+mentions (use <@Uxxx>), ---, images, HTML, pipe tables (use --table) - is
+rejected with invalid_markdown and a line number rather than dropped.
+--print-payload prints the converted payload and creates nothing.
 
   cat body.md | slack draft create '#general' --markdown
   cat body.md | slack draft create '#general' --markdown --print-payload | jq .blocks
 
-Top-level blocks must be rich_text - Slack's draft compose editor strips
-section / divider / header / context and bare table blocks when the user
-opens the draft. A table goes in an attachment instead: put a "table"
-block in attachments[].blocks[], or use --table to build one from CSV/TSV.
+Top-level blocks must be rich_text or header - Slack's draft compose
+editor strips section / divider / context and bare table blocks when the
+user opens the draft. A header is {"type":"header","level":1..3,
+"text":{"type":"plain_text","text":"...","emoji":true}}, the composer's own
+heading shape. A table goes in an attachment instead: put a "table" block
+in attachments[].blocks[], or use --table to build one from CSV/TSV.
 
 Recipients: one channel (#name, bare name, or Cxxx/Dxxx id), or one or
 more users (@name, email, or Uxxx id) for a DM / multi-person DM that need

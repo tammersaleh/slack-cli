@@ -11,23 +11,29 @@ below.
 
 ## TL;DR
 
-Use rich_text blocks, only rich_text blocks, and for multi-paragraph
-prose with bullets use a single `rich_text_section`. Everything else is
-a trap.
+Use rich_text blocks for prose, header blocks for headings, and nothing
+else. For multi-paragraph prose with bullets use sibling containers inside
+one `rich_text`. Everything else is a trap.
 
 ```json
-[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hello"}]}]}]
+[{"type":"header","level":1,"text":{"type":"plain_text","text":"Title","emoji":true}},
+ {"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"hello"}]}]}]
 ```
+
+The header block is the shape the compose editor stores for its big /
+medium / small headings (read back from a composer-authored draft
+2026-11-06); the matrix below predates it. See "Header blocks" under
+Markdown input.
 
 Two independent failure modes:
 
 1. **Tombstone.** Slack Desktop sets `is_deleted=true` on any
    server-side draft whose `blocks` array doesn't contain at least one
-   `rich_text` block with non-empty `elements`. Lands within seconds
-   of the user opening the Drafts panel.
+   `rich_text` block with non-empty `elements` or a `header` block.
+   Lands within seconds of the user opening the Drafts panel.
 2. **Strip.** Slack Desktop's Drafts compose editor (the panel the
    user opens to review and send) silently discards every top-level
-   block that is not `rich_text` when it renders the draft. A
+   block that is not `rich_text` or `header` when it renders the draft. A
    `[rich_text, section, divider]` array ships fine to the API but the
    user only sees the rich_text content. Not reversible - once
    rendered for edit, the stripped content never comes back.
@@ -38,8 +44,9 @@ fingerprint, and the `last_updated_client` stamp are all irrelevant.
 ## Markdown input
 
 `draft create --markdown` and `draft update --markdown` convert Markdown
-into the one-rich_text shape above via `internal/mdblocks` (goldmark), then
-run `validateBlockShapes` on the result. The subset, the mapping table, and
+into the shape above via `internal/mdblocks` (goldmark) - a `header` block
+per heading and one `rich_text` block per run of content between headings -
+then run `validateBlockShapes` on the result. The subset, the mapping table, and
 the rejection list live in SPEC.md under `slack draft create`.
 
 Verified 2026-10-16 against the live `drafts.*` API, self-DM, session
@@ -57,12 +64,61 @@ skin-toned emoji (`name: "wave::skin-tone-3"`).
 | `drafts.create` accepts the payload | ok, every probe |
 | `drafts.list` blocks after 25s vs payload sent | byte-identical (plus `block_id`) |
 | `is_deleted` after 25s | false, every probe |
-| Desktop compose box: italic, strike, `offset` numbering, whether the trailing `\n` after a heading or paragraph is a blank line or a line break | not inspected - the probe draft was left in the self-DM for a human to open |
+| Desktop compose box: italic, strike, `offset` numbering, whether the trailing `\n` after a paragraph is a blank line or a line break | not inspected - the probe draft was left in the self-DM for a human to open |
 
 The reconciliation window was observed with Desktop running; whether the
 Drafts panel was opened during it is not known, so "not tombstoned" is
 necessary rather than sufficient evidence. The CLI author's claim is
 limited to the API round-trip.
+
+### Header blocks (2026-11-06)
+
+The compose editor's formatting bar offers Big / Medium / Small headings.
+A composer-authored draft holding three of them and nothing else reads
+back as three top-level `header` blocks, no `rich_text` at all, not
+tombstoned:
+
+```json
+[{"type":"header","level":1,"text":{"type":"plain_text","text":"Big heading","emoji":true}},
+ {"type":"header","level":2,"text":{"type":"plain_text","text":"Medium heading","emoji":true}},
+ {"type":"header","level":3,"text":{"type":"plain_text","text":"Small heading","emoji":true}}]
+```
+
+`block_id` is server-assigned. Probes through the CLI's own session client
+(`PostInternalForm`, `is_from_composer: true`), self-DM, each read back
+byte-identical modulo `block_id` and alive after 60s unless noted:
+
+| payload | result |
+|---|---|
+| `[header L1, rich_text(section "para one\n"), header L2 with `:tada:`, rich_text(list, section), header L3]` | accepted, round-trips |
+| header without `level` | accepted, stored without `level` |
+| header `level: 4` | accepted, stored as 4 |
+| header `level: 0` | `invalid_message` |
+| header without `emoji` key | accepted, server adds `emoji: true` |
+| header only, no rich_text | accepted, alive after 60s (a header is renderable content) |
+| header `text.type: mrkdwn` | `invalid_message` |
+| header with empty `text.text` | `invalid_message` |
+| `[rich_text(section "no newline"), header, rich_text(list)]` | accepted, round-trips |
+
+So `validateBlockShapes` admits `header` beside `rich_text`, requires
+`plain_text` with non-empty text, requires `level` (when present) to be an
+integer of at least 1 with no upper bound, and counts a header as
+renderable content. It does not treat a header as an absorption boundary:
+the last probe proves storage, not rendering, so a section without a
+trailing `\n` followed by a header and then a list is still rejected until
+someone opens that draft in Desktop.
+
+The Markdown converter maps `#`/`##`/`###` to level 1/2/3 and clamps
+deeper headings to 3 (the composer offers three sizes). Header text is
+plain, so inline formatting flattens, `:name:` is written back as text,
+and a link, mention, channel, or broadcast inside a heading is
+`invalid_markdown`.
+
+Not inspected in Desktop: rendering of level 4, whether `:tada:` renders
+as an emoji inside a header, whether the trailing `\n` on a paragraph
+before a header adds a blank line, and whether Desktop flattens rich_text
+blocks across a header. The mixed, level-4, and no-newline-before-header
+probe drafts were left in the self-DM for that.
 
 ### Quoted lists and code (2026-11-03)
 
@@ -268,7 +324,7 @@ same `user_ids`, only blocks and the carrier vary:
 | section+mrkdwn        | workspace.ent     | SSB    | slack-cli  | no            |
 | section+plain_text    | workspace.ent     | SSB    | slack-cli  | no            |
 | divider only          | workspace.ent     | SSB    | slack-cli  | no            |
-| header only           | workspace.ent     | SSB    | slack-cli  | no            |
+| header only (2026-05) | workspace.ent     | SSB    | slack-cli  | no (superseded: yes on 2026-11-06, see Header blocks) |
 | context only          | workspace.ent     | SSB    | slack-cli  | no            |
 | [section, divider]    | workspace.ent     | SSB    | slack-cli  | no            |
 | [rich_text, section]  | workspace.ent     | SSB    | slack-cli  | yes           |
@@ -334,11 +390,12 @@ render correctly either.
 When the user opens a draft in Slack's Drafts compose editor (Desktop
 or `app.slack.com`), the client reads the `blocks` array and rebuilds
 a local representation for editing. That rebuild path only understands
-`rich_text`. Every other top-level block type - `section`, `divider`,
-`header`, `context` - is dropped. The draft is still alive on the
-server, but the user only sees the rich_text content. Any `section`
-they'd hoped to surface (headings, mrkdwn prose) is gone. It doesn't
-come back when the draft is subsequently sent.
+`rich_text` and, since the composer grew its own headings (2026-11-06),
+`header`. Every other top-level block type - `section`, `divider`,
+`context` - is dropped. The draft is still alive on the server, but the
+user only sees the rich_text and header content. Any `section` they'd
+hoped to surface (mrkdwn prose) is gone. It doesn't come back when the
+draft is subsequently sent.
 
 Same investigation surfaced a second quirk: multiple top-level
 `rich_text` blocks are **flattened** into one by the rebuild before
@@ -580,12 +637,16 @@ same way - block content, nothing else.
 
 ### Validation at the CLI boundary
 
-`validateBlocksShape` in `cmd/draft.go` rejects two shapes of draft
+`validateBlockShapes` in `cmd/draft.go` rejects three shapes of draft
 payload:
 
-1. Arrays with no non-empty `rich_text` block (would ghost).
-2. Arrays containing any non-`rich_text` top-level block (would ship
-   fine but get stripped by Desktop's compose editor).
+1. Arrays with no non-empty `rich_text` block and no `header` (would
+   ghost).
+2. Arrays containing a top-level block that is neither `rich_text` nor
+   `header` (would ship fine but get stripped by Desktop's compose
+   editor).
+3. A `header` whose text is not non-empty `plain_text`, or whose `level`
+   is not an integer of at least 1 (Slack answers `invalid_message`).
 
 Both errors return `invalid_blocks` with a message pointing the caller
 at the skill docs. The CLI never ships a draft that would ghost or

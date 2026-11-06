@@ -413,7 +413,8 @@ Ping <@U01XYZ> or @here. :tada:
 MD
 ```
 
-The CLI converts the Markdown to one `rich_text` block and runs it through
+The CLI converts the Markdown to a `header` block per heading and one
+`rich_text` block per run of content between headings, then runs it through
 the same shape validation as hand-written JSON. `--print-payload` prints the
 converted `{"blocks":[...]}` (plus `attachments` with `--table`) and creates
 nothing - use it to inspect a conversion. `--table` composes: Markdown body
@@ -422,7 +423,7 @@ plus a table attachment.
 Supported:
 
 - Paragraphs. A line break inside a paragraph (soft or hard) stays a line break. Every paragraph that has something after it ends with `\n`, so a Markdown paragraph break is at least a line break in Slack.
-- Headings: rendered as a **bold** line terminated with `\n`. The level is dropped.
+- Headings: `#`, `##`, `###` (and Setext) become `header` blocks at level 1, 2, 3 - the composer's big, medium, and small headings. `####` and deeper clamp to 3. Header text is plain text: bold, italic, strike, and code inside a heading flatten to their text, `:emoji:` stays as `:emoji:` text (the block carries `emoji: true`). A link, bare URL, email, `<@U…>`, `<#C…>`, or `@here` inside a heading is rejected - a header cannot carry them, so put them in the paragraph below.
 - `- ` / `* ` bullets and `1.` ordered lists, nested to three levels by indentation. An ordered list may start at any number; numbering continues across a nested list.
 - `**bold**`, `*italic*`, `~~strike~~` (two tildes, GFM), `` `code` ``. Single `*` is italic, Markdown semantics - not Slack mrkdwn, where it is bold.
 - Fenced and indented code blocks. The fence language tag is dropped.
@@ -432,41 +433,56 @@ Supported:
 - `<@U01XYZ>` / `<@W01XYZ>` user mentions, `<#C01ABC>` / `<#C01ABC|name>` channel mentions (the label is dropped), `@here` / `@channel` / `@everyone`.
 - Backslash escapes: `\*`, `\:`, `\@`, `\<` stay literal, as does anything inside a code span or code block.
 
-The only things dropped are the ones named above: heading level, fence
-language, link title, link-text formatting, and the `<#C|label>` label.
+The only things dropped are the ones named above: heading levels past 3,
+formatting inside a heading, fence language, link title, link-text
+formatting, and the `<#C|label>` label.
 Everything else outside the subset is rejected with `invalid_markdown` and a
 line number:
 `@name` mentions (resolve the id first with `slack user info @name` and write
 `<@Uxxx>`), horizontal rules, images, HTML, pipe tables (use `--table`), a
 list nested more than three deep, a list item with more than one paragraph,
 a quote inside a quote, a mention or emoji
-inside link text, a relative or non-http(s)/mailto link, and an empty list
-item, quote, or code block (Slack rejects an empty text inline).
+inside link text, a link or mention inside a heading, a relative or
+non-http(s)/mailto link, and an empty heading, list item, quote, or code
+block (Slack rejects an empty text inline).
 
 Verified live 2026-10-16 through the drafts API: every construct above round-trips
 through `drafts.create` and `drafts.list` byte for byte and survives the
-reconciliation window. Desktop compose-box rendering of italic/strike,
-unbordered ordered-list `offset` (bordered: rendered `1.`, 2026-11-03), and whether the trailing `\n` after a heading or
-paragraph shows as a blank line or a single line break was not inspected by
-the CLI author; check the draft in the client the first time you rely on one
-of those.
+reconciliation window; header blocks the same way on 2026-11-06 (a
+header-only draft and a header / rich_text / header mix, alive after 60s).
+Desktop compose-box rendering of italic/strike,
+unbordered ordered-list `offset` (bordered: rendered `1.`, 2026-11-03), of
+emoji inside a header, and whether the trailing `\n` after a paragraph (before
+a header or another paragraph) shows as a blank line or a single line break
+was not inspected by the CLI author; check the draft in the client the first
+time you rely on one of those.
 
 #### Block Kit for drafts
 
 stdin is either a bare array of top-level blocks (prose), or an object
 `{"blocks":[...],"attachments":[...]}`. Top-level blocks must be
-`rich_text` - Slack's draft compose editor strips every other top-level
-block type when the user opens the draft, so express `section`/`header`
-headings as bold `rich_text` instead. A draft needs renderable content:
-at least one `rich_text` block with non-empty `elements`, **or** a table
-attachment - one with neither is tombstoned. **Tables go in attachments,
+`rich_text` or `header` - Slack's draft compose editor strips every other
+top-level block type when the user opens the draft. A `header` is the
+composer's own heading shape:
+
+```json
+{"type":"header","level":1,"text":{"type":"plain_text","text":"Big heading","emoji":true}}
+```
+
+`level` 1, 2, 3 are the composer's big, medium, and small headings; the
+API also stores a higher level and an omitted one (rendering unverified).
+`text` must be `plain_text` with non-empty text - `mrkdwn` and an empty
+string are `invalid_message` server-side, so the CLI rejects them locally.
+A draft needs renderable content: at least one `rich_text` block with
+non-empty `elements`, a `header`, **or** a table attachment - one with none
+of those is tombstoned. **Tables go in attachments,
 not top-level blocks** (see Tabular data). The CLI rejects bad shapes up
 front with `invalid_blocks`.
 
 ##### Block types that look right but break
 
 Slack's public docs describe several block types you might reach for.
-For drafts specifically, only `rich_text` works. The CLI catches
+For drafts specifically, only `rich_text` and `header` work. The CLI catches
 the cases below at validation - you'll see `invalid_blocks` locally,
 not the Slack-side failure - but knowing the underlying reason makes
 the rejection less surprising and discourages bypassing the CLI:
@@ -494,18 +510,21 @@ the rejection less surprising and discourages bypassing the CLI:
   because the record is already marked deleted - a leaked draft
   that the user can't see and you can't clean up.
 - **Mixed top-level blocks** (`[rich_text, section, divider]`):
-  the Drafts compose editor silently strips every non-rich_text
-  block when the user opens the draft, so the user sees only the
-  rich_text content. Section-only or divider-only arrays - i.e.
-  no rich_text body at all - get tombstoned by the reconciliation
-  pass within seconds, same mechanism as the previous bullet.
+  the Drafts compose editor silently strips every block that is not
+  `rich_text` or `header` when the user opens the draft, so the user
+  sees only the rich_text content. Section-only or divider-only arrays -
+  i.e. no rich_text or header at all - get tombstoned by the
+  reconciliation pass within seconds, same mechanism as the previous
+  bullet.
 - **Multiple top-level `rich_text` blocks expecting paragraph
   breaks between them**: Desktop flattens adjacent rich_text blocks
-  into one before rendering. Always emit a single top-level
-  `rich_text` block; use multiple inner containers
-  (`rich_text_section`, `rich_text_list`,
-  `rich_text_preformatted`, `rich_text_quote`) for
-  structure.
+  into one before rendering. Emit one `rich_text` block per run of
+  content between `header` blocks (a single one when there are no
+  headings); use multiple inner containers (`rich_text_section`,
+  `rich_text_list`, `rich_text_preformatted`, `rich_text_quote`) for
+  structure. Whether a `header` between two rich_text blocks stops the
+  flattening is unverified, so the section terminator rule below still
+  applies across a header.
 - **`rich_text_section` whose text doesn't end with `\n`
   directly followed by `rich_text_list`,
   `rich_text_preformatted`, or `rich_text_quote`**:
@@ -515,8 +534,8 @@ the rejection less surprising and discourages bypassing the CLI:
   `invalid_blocks`. Fix: terminate the section with a text
   inline whose `text` ends with `\n` (e.g. append
   `{"type":"text","text":"\n"}`, or grow the last
-  text element). The check spans top-level rich_text boundaries because
-  Desktop flattens them first.
+  text element). The check spans top-level block boundaries, header
+  blocks included, because Desktop flattens rich_text blocks first.
 
 ##### rich_text (structured)
 
@@ -657,11 +676,19 @@ fallback that reads naturally.
 
 ##### Default pattern: one rich_text with sibling containers
 
-Use this for every draft. **One top-level `rich_text` block.**
-Inside it, use as many `rich_text_section` /
-`rich_text_list` / `rich_text_preformatted` /
-`rich_text_quote` containers as you need; they're siblings,
-not nested. This is the shape Slack's own compose editor produces.
+Use this for every draft. **One top-level `rich_text` block**, or one per
+run of content between `header` blocks. Inside it, use as many
+`rich_text_section` / `rich_text_list` / `rich_text_preformatted` /
+`rich_text_quote` containers as you need; they're siblings, not nested.
+This is the shape Slack's own compose editor produces. For a titled
+message, lead with a `header` block and follow with the `rich_text`:
+
+```json
+[{"type":"header","level":2,"text":{"type":"plain_text","text":"Deploy report","emoji":true}},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"All green."}]}
+ ]}]
+```
 
 **The one rule that catches agents out: when a section is directly
 followed by a list, preformatted, or quote, the section's last text
@@ -767,8 +794,10 @@ terminator rule above).
 ##### Validation
 
 The CLI checks: non-empty JSON array; every top-level block is a
-`rich_text` with a string `type`; at least one has a
-non-empty `elements` array; and a `rich_text_section`
+`rich_text` or a `header`; a `header` has `plain_text` text that is
+non-empty and, when `level` is present, an integer of at least 1; at least
+one `rich_text` has a non-empty `elements` array or a `header` is present;
+and a `rich_text_section`
 directly preceding `rich_text_list`, `rich_text_preformatted`,
 or `rich_text_quote` must terminate with a text inline whose
 `text` ends with `\n` (trailing empty text inlines
