@@ -2200,9 +2200,9 @@ the client), `:name:` text inside a header renders as the emoji, a
 paragraph with and without a trailing `\n` before a header looks
 identical, and a header between a paragraph and a list breaks absorption.
 Divider blocks were verified through the API the same day
-(`docs/divider-blocks-plan.md`): a divider-only draft, `[section without
-`\n`, divider, list]`, and `[divider, rich_text, divider, divider, header,
-divider]` all round-tripped modulo `block_id` and were alive after 100s;
+(`docs/divider-blocks-plan.md`): a divider-only draft, a section without a
+trailing newline followed by a divider and a list, and
+`[divider, rich_text, divider, divider, header, divider]` all round-tripped modulo `block_id` and were alive after 100s;
 Desktop rendering of dividers is pending a check.
 Not inspected: rendering of italic and strike, of `offset` on an
 unbordered ordered list (bordered: rendered `1.`, 2026-11-03), and of the
