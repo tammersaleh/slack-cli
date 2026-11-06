@@ -793,8 +793,9 @@ func (p draftPayload) blocksOrEmpty() string {
 }
 
 // hasRenderableContent reports whether a freshly-provided payload carries a
-// non-empty rich_text body or a table attachment. A draft with neither gets
-// tombstoned by Slack's reconciliation pass. Inputs are already shape-valid.
+// non-empty rich_text body, a header block, or a table attachment. A draft
+// with none of those gets tombstoned by Slack's reconciliation pass. Inputs
+// are already shape-valid.
 func (p draftPayload) hasRenderableContent() bool {
 	if p.hasBlocks {
 		if has, _ := validateBlockShapes([]byte(p.blocks)); has {
@@ -808,7 +809,7 @@ func (p draftPayload) hasRenderableContent() bool {
 func errNoRenderableContent() error {
 	return &output.Error{
 		Err:    "invalid_blocks",
-		Detail: "a draft needs a non-empty rich_text block or a table attachment - Slack tombstones drafts with no renderable content.",
+		Detail: "a draft needs a non-empty rich_text block, a header block, or a table attachment - Slack tombstones drafts with no renderable content.",
 		Hint:   skillHint,
 		Code:   output.ExitGeneral,
 	}
@@ -971,7 +972,7 @@ func readDraftPayload(cli *CLI, markdown bool) (draftPayload, error) {
 }
 
 // markdownHint summarizes the Markdown subset for the invalid_markdown error.
-const markdownHint = "Supported: paragraphs, headings (rendered bold), bullet/ordered lists nested to 3 levels, **bold**, *italic*, ~~strike~~, `code`, fenced code, > quotes (may hold lists and code), [text](https://url), :emoji:, <@Uxxx>, <#Cxxx>, @here. Use --print-payload to inspect the conversion."
+const markdownHint = "Supported: paragraphs, headings (# ## ### become header blocks; no links or mentions inside), bullet/ordered lists nested to 3 levels, **bold**, *italic*, ~~strike~~, `code`, fenced code, > quotes (may hold lists and code), [text](https://url), :emoji:, <@Uxxx>, <#Cxxx>, @here. Use --print-payload to inspect the conversion."
 
 // parseDraftPayload accepts either a bare blocks array or a {blocks,
 // attachments} object and shape-validates whatever is present.

@@ -180,7 +180,7 @@ func (c *converter) push(container map[string]any) {
 // or channel mention, a broadcast - is an error: dropping it is content
 // loss, where dropping bold is not. Levels past maxHeaderLevel clamp.
 func (c *converter) heading(h *ast.Heading) error {
-	text, err := c.plainText(h, h)
+	text, err := c.plainText(h)
 	if err != nil {
 		return err
 	}
@@ -196,8 +196,9 @@ func (c *converter) heading(h *ast.Heading) error {
 }
 
 // plainText flattens a heading's inline children to the string a plain_text
-// object can hold. at is the node errors are attributed to.
-func (c *converter) plainText(parent, at ast.Node) (string, error) {
+// object can hold. Errors name the offending inline's own line, which
+// matters for a Setext heading spanning several lines.
+func (c *converter) plainText(parent ast.Node) (string, error) {
 	var b strings.Builder
 	for n := parent.FirstChild(); n != nil; n = n.NextSibling() {
 		switch v := n.(type) {
@@ -209,7 +210,7 @@ func (c *converter) plainText(parent, at ast.Node) (string, error) {
 		case *ast.String:
 			b.Write(v.Value)
 		case *ast.Emphasis, *east.Strikethrough:
-			inner, err := c.plainText(v, at)
+			inner, err := c.plainText(v)
 			if err != nil {
 				return "", err
 			}
@@ -217,11 +218,11 @@ func (c *converter) plainText(parent, at ast.Node) (string, error) {
 		case *ast.CodeSpan:
 			b.WriteString(c.codeSpanText(v))
 		case *ast.Link, *ast.AutoLink:
-			return "", c.errAt(at, "a heading cannot hold a link (a header block is plain text); move the URL into the paragraph below")
+			return "", c.errAt(n, "a heading cannot hold a link (a header block is plain text); move the URL into the paragraph below")
 		case *ast.Image:
-			return "", c.errAt(at, "an image has no rich_text equivalent; link to it instead")
+			return "", c.errAt(n, "an image has no rich_text equivalent; link to it instead")
 		case *ast.RawHTML:
-			return "", c.errAt(at, "HTML is not supported in draft Markdown")
+			return "", c.errAt(n, "HTML is not supported in draft Markdown")
 		case *token:
 			switch v.kind {
 			case tokenEmoji:
@@ -238,7 +239,7 @@ func (c *converter) plainText(parent, at ast.Node) (string, error) {
 				}
 			}
 		default:
-			return "", c.errAt(at, "unsupported inline Markdown construct %s", n.Kind())
+			return "", c.errAt(n, "unsupported inline Markdown construct %s", n.Kind())
 		}
 	}
 	return b.String(), nil
