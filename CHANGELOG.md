@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.10.1](https://github.com/tammersaleh/slack-cli/compare/v5.10.0...v5.10.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **draft:** treat a header block as an absorption boundary ([470bb21](https://github.com/tammersaleh/slack-cli/commit/470bb2180e8c1a6be1aa6dc6aab3e1d0172581c5))
+
 ## [5.10.0](https://github.com/tammersaleh/slack-cli/compare/v5.9.2...v5.10.0) (2026-11-06)
 
 
