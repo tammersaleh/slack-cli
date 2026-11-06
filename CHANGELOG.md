@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.10.0](https://github.com/tammersaleh/slack-cli/compare/v5.9.2...v5.10.0) (2026-11-06)
+
+
+### Features
+
+* **draft:** accept header blocks in draft payloads ([a39762f](https://github.com/tammersaleh/slack-cli/commit/a39762f61bb2d9bd9f684e3c2ef1526fb849f475))
+* **draft:** convert Markdown headings to header blocks ([79aadbd](https://github.com/tammersaleh/slack-cli/commit/79aadbd2a4ed990d59db88dacd50e1767f7cb199))
+* **draft:** name header blocks in error hints and line-attribute heading errors ([40ed9c9](https://github.com/tammersaleh/slack-cli/commit/40ed9c9f6157e56813575eafdb9398ba183ef6f4))
+
 ## [5.9.2](https://github.com/tammersaleh/slack-cli/compare/v5.9.1...v5.9.2) (2026-11-05)
 
 
