@@ -44,7 +44,7 @@ Command: divider_alongside_rich_text rejection row becomes a passthrough asserti
 ## Steps
 
 1. [ ] Desktop check (Tammer). Pending at ship time; the absorption variant shipped is carry-across.
-2. [x] Red tests (bf88458). 3. [x] Green validator (ce61a55). 4. [x] Green converter (0990b2f). 5. [x] Docs (2c924ba). 6. [ ] Review, re-review. 7. [ ] Merge, push (`feat:`). 8. [ ] Release, install, verify live.
+2. [x] Red tests (bf88458). 3. [x] Green validator (ce61a55). 4. [x] Green converter (0990b2f). 5. [x] Docs (2c924ba). 6. [x] Review, re-review (four findings, all fixed; second pass clean). 7. [x] Merged and pushed (11bdd76, 6ff5e93, 131596f and docs/test commits). 8. [x] Released as 5.11.0 (release PR #94), installed, verified live.
 
 ## Discoveries during implementation
 
@@ -52,3 +52,7 @@ Command: divider_alongside_rich_text rejection row becomes a passthrough asserti
 - Two Markdown tests used `---` as their stand-in conversion error (`TestDraftCreate_MarkdownConversionErrorMakesNoCalls`, `TestDraftUpdate_MarkdownConversionErrorMakesNoCalls`); both now use an image.
 - `blocks()` breaks runs on `topLevelType` (header or divider) instead of a header-only comparison.
 - Code review (feature-dev:code-reviewer) found a real bug the plan missed: `lineOf`'s previous-sibling scan skipped a thematic break because it owns no source segment, so an empty heading, code block, quote, or list item after a divider reported the divider's line (`---\n\n#\n` said line 1, not 3). Unreachable before this branch since `---` was rejected. Fixed in 2ed2417 by `startOffset`, which treats a break's end as the end of its own line; five error rows pin it. The review also asked for `--markdown` command coverage (create, `--print-payload`, update), merged a duplicate generic-rejection test, and caught nested code spans in SPEC.md (29b86e9, 5d9f466).
+
+## Released
+
+5.11.0 installed via the cask 2026-11-06. Verified with the installed binary against the self-DM: `--markdown --print-payload` on a document with a heading, paragraph, `---`, heading, list, `* * *`, paragraph emits header, rich_text, divider, header, rich_text, divider, rich_text; `draft create --markdown` of the same body and a hand-written `[{"type":"divider"}]` payload both round-trip; `Title\n---` converts to a level-2 header. Both verification drafts were alive and unchanged 75s after creation.
