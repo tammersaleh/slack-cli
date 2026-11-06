@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -1028,21 +1029,27 @@ func firstJSONToken(raw []byte) byte {
 // validateBlockShapes is the local gate for a draft's top-level blocks. It
 // enforces:
 //
-//  1. Every top-level block is rich_text. Slack Desktop's Drafts compose
-//     editor silently strips every other top-level block type when the user
-//     opens the draft. A table belongs in an attachment (the only place a
-//     draft preserves it); data_table isn't draftable anywhere.
+//  1. Every top-level block is rich_text or header. Slack Desktop's Drafts
+//     compose editor silently strips every other top-level block type when
+//     the user opens the draft. A table belongs in an attachment (the only
+//     place a draft preserves it); data_table isn't draftable anywhere.
 //
-//  2. A rich_text_section directly before a rich_text_list,
+//  2. A header carries plain_text with non-empty text and, when present, an
+//     integer level >= 1 - the shapes Slack stores (measured 2026-11-06,
+//     docs/header-blocks-plan.md; level 0, mrkdwn, and empty text are
+//     invalid_message server-side, so they fail here with a named fix).
+//
+//  3. A rich_text_section directly before a rich_text_list,
 //     rich_text_preformatted, or rich_text_quote must terminate its element
 //     stream with a text inline whose `text` ends with "\n", or the following
-//     container absorbs it. The check spans top-level rich_text boundaries
-//     because Desktop flattens adjacent rich_text blocks before rendering.
+//     container absorbs it. The check spans top-level block boundaries,
+//     header included, because Desktop flattens adjacent rich_text blocks
+//     before rendering and whether a header interrupts that is unverified.
 //
-// It returns whether a non-empty rich_text body is present so the caller can
-// apply the renderable-content rule (a draft needs a body or a table
-// attachment, else reconciliation tombstones it).
-func validateBlockShapes(raw []byte) (hasRichTextBody bool, err error) {
+// It returns whether renderable content is present - a non-empty rich_text
+// or any header - so the caller can apply the renderable-content rule (a
+// draft needs that or a table attachment, else reconciliation tombstones it).
+func validateBlockShapes(raw []byte) (hasBody bool, err error) {
 	var arr []map[string]any
 	if err := json.Unmarshal(raw, &arr); err != nil {
 		return false, &output.Error{
@@ -1065,6 +1072,16 @@ func validateBlockShapes(raw []byte) (hasRichTextBody bool, err error) {
 				Detail: fmt.Sprintf("blocks[%d] is missing a string \"type\" field", i),
 				Code:   output.ExitGeneral,
 			}
+		}
+		if t == "header" {
+			if err := validateHeaderBlock(i, block); err != nil {
+				return false, err
+			}
+			// A header-only draft survives reconciliation (measured 2026-11-06),
+			// so a header counts as renderable content. It is not an
+			// absorption boundary: prevElem/prevSection carry across it.
+			hasBody = true
+			continue
 		}
 		if t != "rich_text" {
 			// table/data_table feel supported as top-level blocks (drafts.create
@@ -1092,14 +1109,14 @@ func validateBlockShapes(raw []byte) (hasRichTextBody bool, err error) {
 			}
 			return false, &output.Error{
 				Err:    "invalid_blocks",
-				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text top-level blocks. Slack Desktop's Drafts compose editor strips non-rich_text blocks when the user opens the draft.", i, t),
+				Detail: fmt.Sprintf("blocks[%d] is %q; drafts must contain only rich_text and header top-level blocks. Slack Desktop's Drafts compose editor strips every other block type when the user opens the draft.", i, t),
 				Hint:   skillHint,
 				Code:   output.ExitGeneral,
 			}
 		}
 		elems, _ := block["elements"].([]any)
 		if len(elems) > 0 {
-			hasRichTextBody = true
+			hasBody = true
 		}
 		for j, elem := range elems {
 			em, ok := elem.(map[string]any)
@@ -1126,7 +1143,40 @@ func validateBlockShapes(raw []byte) (hasRichTextBody bool, err error) {
 			prevElem, prevBlock, prevIdx = et, i, j
 		}
 	}
-	return hasRichTextBody, nil
+	return hasBody, nil
+}
+
+// validateHeaderBlock checks one top-level header block against the shape
+// the composer stores: text is a plain_text object with non-empty text, and
+// level, when present, is an integer >= 1. There is no upper bound: the
+// composer emits 1..3 and the API stores 4 (rendering of 4 unverified).
+// emoji and block_id pass through untouched.
+func validateHeaderBlock(i int, block map[string]any) error {
+	reject := func(detail string) error {
+		return &output.Error{
+			Err:    "invalid_blocks",
+			Detail: fmt.Sprintf("blocks[%d] is a header block %s", i, detail),
+			Hint:   skillHint,
+			Code:   output.ExitGeneral,
+		}
+	}
+	text, ok := block["text"].(map[string]any)
+	if !ok {
+		return reject(`without a "text" object; a header needs {"type":"plain_text","text":"..."}.`)
+	}
+	if tt, _ := text["type"].(string); tt != "plain_text" {
+		return reject(fmt.Sprintf(`whose text.type is %q; Slack accepts only "plain_text" in a header (mrkdwn is invalid_message).`, tt))
+	}
+	if s, ok := text["text"].(string); !ok || s == "" {
+		return reject("with empty text.text; Slack rejects an empty heading (invalid_message). Give it text or drop the block.")
+	}
+	if lvl, present := block["level"]; present {
+		f, ok := lvl.(float64)
+		if !ok || f != math.Trunc(f) || f < 1 {
+			return reject(fmt.Sprintf("with level %v; level must be an integer >= 1 (the composer uses 1, 2, and 3 for big, medium, and small).", lvl))
+		}
+	}
+	return nil
 }
 
 // validateAttachmentBlocks shape-checks CALLER-SUPPLIED attachments. Each

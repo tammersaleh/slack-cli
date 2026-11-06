@@ -789,8 +789,8 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"divider"}]`,
 		},
 		{
-			name:   "header_before_rich_text",
-			blocks: `[{"type":"header","text":{"type":"plain_text","text":"Hi"}},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]}]`,
+			name:   "context_before_rich_text",
+			blocks: `[{"type":"context","elements":[{"type":"plain_text","text":"Hi"}]},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]}]`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -820,6 +820,87 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 				t.Errorf("expected Hint to point at skill install, got %q", oe.Hint)
 			}
 		})
+	}
+}
+
+// A header block is the composer's own heading shape (measured 2026-11-06,
+// docs/header-blocks-plan.md): it survives the round-trip, so it ships
+// verbatim ahead of the rich_text body.
+func TestDraftCreate_HeaderBeforeRichTextPassesThrough(t *testing.T) {
+	blocks := `[{"type":"header","level":1,"text":{"type":"plain_text","text":"Hi","emoji":true}},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]}]`
+	var gotBlocks string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		form, _ := url.ParseQuery(string(body))
+		gotBlocks = form.Get("blocks")
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr01234", "date_created": 1709251200, "last_updated_ts": "1709251200.1200000",
+			"blocks": json.RawMessage(gotBlocks), "destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	if _, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC"); err != nil {
+		t.Fatalf("header before rich_text should be accepted, got %v", err)
+	}
+	if gotBlocks != blocks {
+		t.Errorf("blocks should ship verbatim\n got %s\nwant %s", gotBlocks, blocks)
+	}
+}
+
+// A header-only draft is renderable content on its own: the composer stores
+// three headings and nothing else, and the probe survived 60s.
+func TestDraftCreate_HeaderOnly(t *testing.T) {
+	blocks := `[{"type":"header","level":1,"text":{"type":"plain_text","text":"Only a heading","emoji":true}}]`
+	var gotBlocks string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		form, _ := url.ParseQuery(string(body))
+		gotBlocks = form.Get("blocks")
+		draftCreateResponder(t, map[string]any{
+			"id": "Dr01234", "date_created": 1709251200, "last_updated_ts": "1709251200.1200000",
+			"blocks": json.RawMessage(gotBlocks), "destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		})(w, r)
+	})
+
+	out, err := runWithMockSessionStdin(t, blocks, mux, "draft", "create", "C01ABC")
+	if err != nil {
+		t.Fatalf("header-only draft should be accepted, got %v", err)
+	}
+	if gotBlocks != blocks {
+		t.Errorf("blocks should ship verbatim, got %s", gotBlocks)
+	}
+	if item := parseJSON(t, nonEmptyLines(out)[0]); item["id"] != "Dr01234" {
+		t.Errorf("expected the created draft row, got %v", item)
+	}
+}
+
+// A schedule-only update round-trips the existing blocks through the
+// renderable-content gate; a header-only draft must clear it.
+func TestDraftUpdate_ScheduleOnlyPreservesHeaderOnlyDraft(t *testing.T) {
+	existing := map[string]any{
+		"id": "Dr01234", "client_msg_id": "uuid-existing", "date_created": 1709251200,
+		"last_updated_ts": "1709251200.12",
+		"blocks": []map[string]any{
+			{"type": "header", "block_id": "srv01", "level": 2, "text": map[string]any{"type": "plain_text", "text": "Only a heading", "emoji": true}},
+		},
+		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	var gotUpdate url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotUpdate, _ = url.ParseQuery(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "draft": existing})
+	})
+
+	if _, err := runWithMockSession(t, mux, "draft", "update", "Dr01234", "--at", "2026-06-01"); err != nil {
+		t.Fatalf("schedule-only update of a header-only draft should succeed, got %v", err)
+	}
+	if !strings.Contains(gotUpdate.Get("blocks"), `"header"`) || !strings.Contains(gotUpdate.Get("blocks"), `"srv01"`) {
+		t.Errorf("the header block should round-trip with its block_id, got %q", gotUpdate.Get("blocks"))
 	}
 }
 

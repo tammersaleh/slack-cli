@@ -29,7 +29,7 @@ func TestMarkdownGoldensPassValidateBlockShapes(t *testing.T) {
 			t.Errorf("%s: %v", filepath.Base(in), err)
 		}
 		if !hasBody {
-			t.Errorf("%s: converter output has no rich_text body", filepath.Base(in))
+			t.Errorf("%s: converter output has no renderable body (rich_text or header)", filepath.Base(in))
 		}
 	}
 }
