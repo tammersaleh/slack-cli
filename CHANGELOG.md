@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.11.0](https://github.com/tammersaleh/slack-cli/compare/v5.10.1...v5.11.0) (2026-11-06)
+
+
+### Features
+
+* **draft:** accept divider blocks in draft payloads ([11bdd76](https://github.com/tammersaleh/slack-cli/commit/11bdd7697b0af65f6542519365263da8c3660335))
+* **draft:** attribute Markdown errors after a divider to their own line ([131596f](https://github.com/tammersaleh/slack-cli/commit/131596fb6f4ca46ef45d6a4b334f05ecd1698ecc))
+* **draft:** convert Markdown thematic breaks to divider blocks ([6ff5e93](https://github.com/tammersaleh/slack-cli/commit/6ff5e939f1d291f455ac55c40c3b75b31d8b5f01))
+
 ## [5.10.1](https://github.com/tammersaleh/slack-cli/compare/v5.10.0...v5.10.1) (2026-11-06)
 
 
