@@ -70,3 +70,32 @@ func TestErrNoRenderableContent_NamesDivider(t *testing.T) {
 		t.Errorf("renderable-content rejection should name divider as an option, got %q", oe.Detail)
 	}
 }
+
+// Whether a divider is an absorption boundary in Desktop is pending a check
+// (docs/divider-blocks-plan.md). Until it lands, the validator carries the
+// section-before-container state across a divider, so
+// [section without "\n", divider, list] is rejected exactly like the same
+// section and list with nothing between them (the control case), while a
+// terminated section before a divider and a list passes.
+func TestValidateBlockShapes_DividerCarriesAbsorptionState(t *testing.T) {
+	unterminated := `{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"no newline"}]}]}`
+
+	if _, err := validateBlockShapes([]byte(`[` + headerSection + `,` + divider + `,` + headerList + `]`)); err != nil {
+		t.Fatalf("terminated section, divider, list should pass, got %v", err)
+	}
+
+	var oe *output.Error
+	_, err := validateBlockShapes([]byte(`[` + unterminated + `,` + divider + `,` + headerList + `]`))
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("unterminated section, divider, list: want invalid_blocks (pending Desktop check), got %v", err)
+	}
+	if !strings.Contains(oe.Detail, "blocks[0].elements[0]") {
+		t.Errorf("detail should name the section at blocks[0].elements[0], got %q", oe.Detail)
+	}
+
+	// Control: the same section and list with nothing between them.
+	_, err = validateBlockShapes([]byte(`[` + unterminated + `,` + headerList + `]`))
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("unterminated section directly before list: want invalid_blocks, got %v", err)
+	}
+}

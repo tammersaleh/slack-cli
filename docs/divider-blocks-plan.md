@@ -22,7 +22,7 @@ Desktop rendering: PENDING (the absorption-boundary probe `[section, divider, li
 
 - Allowed top-level types: `rich_text`, `header`, `divider`. A divider needs only `type`; every other field passes through (server validates).
 - A divider counts as renderable content (`hasBody`).
-- Absorption boundary: follow the Desktop check. Confirmed boundary: reset state like header. Not confirmed: carry state across (conservative).
+- Absorption boundary: follow the Desktop check. Confirmed boundary: reset state like header. Not confirmed: carry state across (conservative). Shipped: carry across, pending Desktop check (`TestValidateBlockShapes_DividerCarriesAbsorptionState`). When Desktop shows `[section without "\n", divider, list]` with no glue, reset `prevElem`/`prevSection` at a divider in `validateBlockShapes`, invert that test, and update SPEC.md, SKILL.md, docs/draft-messages.md, and the CLAUDE.md divider bullet.
 
 ### Converter
 
@@ -43,5 +43,11 @@ Command: divider_alongside_rich_text rejection row becomes a passthrough asserti
 
 ## Steps
 
-1. [ ] Desktop check (Tammer).
-2. [ ] Red tests. 3. [ ] Green validator. 4. [ ] Green converter. 5. [ ] Docs. 6. [ ] Review, re-review. 7. [ ] Merge, push (`feat:`). 8. [ ] Release, install, verify live.
+1. [ ] Desktop check (Tammer). Pending at ship time; the absorption variant shipped is carry-across.
+2. [x] Red tests (bf88458). 3. [x] Green validator (ce61a55). 4. [x] Green converter (0990b2f). 5. [x] Docs (2c924ba). 6. [ ] Review, re-review. 7. [ ] Merge, push (`feat:`). 8. [ ] Release, install, verify live.
+
+## Discoveries during implementation
+
+- The command-level tests need `package cmd_test` (the mock helpers live there) while the validator unit tests need `package cmd`, so dividers get two files: `cmd/draft_divider_test.go` and `cmd/draft_divider_cmd_test.go`.
+- Two Markdown tests used `---` as their stand-in conversion error (`TestDraftCreate_MarkdownConversionErrorMakesNoCalls`, `TestDraftUpdate_MarkdownConversionErrorMakesNoCalls`); both now use an image.
+- `blocks()` breaks runs on `topLevelType` (header or divider) instead of a header-only comparison.
