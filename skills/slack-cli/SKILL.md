@@ -450,12 +450,14 @@ Verified live 2026-10-16 through the drafts API: every construct above round-tri
 through `drafts.create` and `drafts.list` byte for byte and survives the
 reconciliation window; header blocks the same way on 2026-11-06 (a
 header-only draft and a header / rich_text / header mix, alive after 60s).
+Desktop compose box, inspected 2026-11-06: headings render at three sizes,
+`level` 4 as the small heading, `:emoji:` in a header as the emoji, and a
+paragraph before a header looks the same with or without its trailing `\n`.
 Desktop compose-box rendering of italic/strike,
-unbordered ordered-list `offset` (bordered: rendered `1.`, 2026-11-03), of
-emoji inside a header, and whether the trailing `\n` after a paragraph (before
-a header or another paragraph) shows as a blank line or a single line break
-was not inspected by the CLI author; check the draft in the client the first
-time you rely on one of those.
+unbordered ordered-list `offset` (bordered: rendered `1.`, 2026-11-03), and
+whether the trailing `\n` between two paragraphs shows as a blank line or a
+single line break was not inspected by the CLI author; check the draft in
+the client the first time you rely on one of those.
 
 #### Block Kit for drafts
 
@@ -470,7 +472,8 @@ composer's own heading shape:
 ```
 
 `level` 1, 2, 3 are the composer's big, medium, and small headings; the
-API also stores a higher level and an omitted one (rendering unverified).
+API also stores an omitted level and a higher one, which Desktop renders as
+the small heading (inspected 2026-11-06).
 `text` must be `plain_text` with non-empty text - `mrkdwn` and an empty
 string are `invalid_message` server-side, so the CLI rejects them locally.
 A draft needs renderable content: at least one `rich_text` block with
@@ -522,9 +525,9 @@ the rejection less surprising and discourages bypassing the CLI:
   content between `header` blocks (a single one when there are no
   headings); use multiple inner containers (`rich_text_section`,
   `rich_text_list`, `rich_text_preformatted`, `rich_text_quote`) for
-  structure. Whether a `header` between two rich_text blocks stops the
-  flattening is unverified, so the section terminator rule below still
-  applies across a header.
+  structure. A `header` between two rich_text blocks is a boundary: the
+  section terminator rule below does not apply across one (inspected
+  2026-11-06).
 - **`rich_text_section` whose text doesn't end with `\n`
   directly followed by `rich_text_list`,
   `rich_text_preformatted`, or `rich_text_quote`**:
@@ -534,8 +537,8 @@ the rejection less surprising and discourages bypassing the CLI:
   `invalid_blocks`. Fix: terminate the section with a text
   inline whose `text` ends with `\n` (e.g. append
   `{"type":"text","text":"\n"}`, or grow the last
-  text element). The check spans top-level block boundaries, header
-  blocks included, because Desktop flattens rich_text blocks first.
+  text element). The check spans adjacent rich_text blocks, because
+  Desktop flattens them first, but a `header` between them resets it.
 
 ##### rich_text (structured)
 

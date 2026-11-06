@@ -2189,11 +2189,15 @@ and `drafts.list` with server blocks byte-identical to the payload sent, and
 was not tombstoned after 25s. Header blocks were verified the same way on
 2026-11-06 (`docs/header-blocks-plan.md`): a header-only draft and a
 header / rich_text / header mix round-tripped modulo the server-assigned
-`block_id` and were alive after 60s. Not inspected: Desktop compose-box
-rendering of italic and strike, of `offset` on an unbordered ordered list
-(bordered: rendered `1.`, 2026-11-03), of `:name:` text inside a header, of
-`level` 4, and of the trailing `\n` after a paragraph (before a header or
-another paragraph) as a blank line versus a line break.
+`block_id` and were alive after 60s. Desktop compose box, inspected
+2026-11-06: headings at levels 1, 2, 3 render at three sizes, `level` 4
+renders as the small heading (the same as 3, so the `####` clamp matches
+the client), `:name:` text inside a header renders as the emoji, a
+paragraph with and without a trailing `\n` before a header looks
+identical, and a header between a paragraph and a list breaks absorption.
+Not inspected: rendering of italic and strike, of `offset` on an
+unbordered ordered list (bordered: rendered `1.`, 2026-11-03), and of the
+trailing `\n` between two paragraphs as a blank line versus a line break.
 
 ```
 $ cat body.md | slack draft create '#general' --markdown
@@ -2281,7 +2285,7 @@ Errors:
   channel recipient only - the selected workspace credential cannot be
   resolved.
 
-Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text` or `header`; a `header` has `text` `{"type":"plain_text","text":<non-empty>}` and, when present, an integer `level` of at least 1 (no upper bound - the composer emits 1 through 3 and the API stores 4; `emoji` and a server-assigned `block_id` pass through); caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block, a `header`, or a table attachment - a header-only draft survives reconciliation, measured 2026-11-06). A `header` is not an absorption boundary: a `rich_text_section` without a trailing `\n` followed by a header and then a list is still rejected, since whether Desktop flattens across a header is unverified. Slack's API accepts other top-level block types, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
+Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text` or `header`; a `header` has `text` `{"type":"plain_text","text":<non-empty>}` and, when present, an integer `level` of at least 1 (no upper bound - the composer emits 1 through 3, and the API stores 4, which Desktop renders as the small heading; `emoji` and a server-assigned `block_id` pass through); caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block, a `header`, or a table attachment - a header-only draft survives reconciliation, measured 2026-11-06). A `header` is an absorption boundary: a `rich_text_section` without a trailing `\n` followed by a header and then a list is accepted, since Desktop renders it as paragraph, heading, bullet with no glue (inspected 2026-11-06). The same section directly before a list, in one `rich_text` or across adjacent `rich_text` blocks, is still rejected. Slack's API accepts other top-level block types, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
 
 Slack API: `drafts.create`
 

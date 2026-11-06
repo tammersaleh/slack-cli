@@ -92,21 +92,21 @@ byte-identical modulo `block_id` and alive after 60s unless noted:
 |---|---|
 | `[header L1, rich_text(section "para one\n"), header L2 with `:tada:`, rich_text(list, section), header L3]` | accepted, round-trips |
 | header without `level` | accepted, stored without `level` |
-| header `level: 4` | accepted, stored as 4 |
+| header `level: 4` | accepted, stored as 4; Desktop renders it as the small heading, the same as 3 |
 | header `level: 0` | `invalid_message` |
 | header without `emoji` key | accepted, server adds `emoji: true` |
 | header only, no rich_text | accepted, alive after 60s (a header is renderable content) |
 | header `text.type: mrkdwn` | `invalid_message` |
 | header with empty `text.text` | `invalid_message` |
-| `[rich_text(section "no newline"), header, rich_text(list)]` | accepted, round-trips |
+| `[rich_text(section "no newline"), header, rich_text(list)]` | accepted, round-trips; Desktop renders paragraph, heading, bullet with no glue |
 
 So `validateBlockShapes` admits `header` beside `rich_text`, requires
 `plain_text` with non-empty text, requires `level` (when present) to be an
 integer of at least 1 with no upper bound, and counts a header as
-renderable content. It does not treat a header as an absorption boundary:
-the last probe proves storage, not rendering, so a section without a
-trailing `\n` followed by a header and then a list is still rejected until
-someone opens that draft in Desktop.
+renderable content. It treats a header as an absorption boundary: a
+section without a trailing `\n` followed by a header and then a list is
+accepted. 5.10.0 rejected it, because the probe proved storage, not
+rendering; the Desktop inspection below relaxed it the same day.
 
 The Markdown converter maps `#`/`##`/`###` to level 1/2/3 and clamps
 deeper headings to 3 (the composer offers three sizes). Header text is
@@ -114,11 +114,21 @@ plain, so inline formatting flattens, `:name:` is written back as text,
 and a link, mention, channel, or broadcast inside a heading is
 `invalid_markdown`.
 
-Not inspected in Desktop: rendering of level 4, whether `:tada:` renders
-as an emoji inside a header, whether the trailing `\n` on a paragraph
-before a header adds a blank line, and whether Desktop flattens rich_text
-blocks across a header. The mixed, level-4, and no-newline-before-header
-probe drafts were left in the self-DM for that.
+Desktop compose box, inspected 2026-11-06 on the probe drafts above and on
+a `--markdown` draft with headings at levels 1, 2, and 3 followed by
+paragraphs and a list:
+
+- The Markdown draft renders its three headings at three sizes, then the
+  paragraphs and the list.
+- `level: 4` renders as the small heading, visually the same as level 3.
+  The converter's clamp to 3 is what the client does anyway.
+- `:tada:` inside a header's plain_text renders as the emoji.
+- A paragraph with a trailing `\n` before a header and one without look
+  identical. The header supplies its own spacing.
+- `[rich_text(section "no newline"), header, rich_text(list)]` renders as
+  a paragraph, a heading, and a bullet. No glue. A header is a boundary
+  for section-before-container absorption, so the validator resets its
+  state at one.
 
 ### Quoted lists and code (2026-11-03)
 

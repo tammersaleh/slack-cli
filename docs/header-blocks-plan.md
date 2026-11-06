@@ -28,15 +28,15 @@ Probes sent through `drafts.create` with the CLI's own session client (`PostInte
 | header with empty `text.text` | `invalid_message` |
 | `[rich_text(section "no newline"), header, rich_text(list)]` | accepted, round-trips |
 
-Not measured (needs a human in Desktop): rendering of level 4, whether a trailing `\n` on the paragraph before a header adds a blank line, whether Desktop flattens rich_text blocks across a header (the absorption rule), and whether `:tada:` renders as an emoji in a header. Probe drafts left in the self-DM for that: the mixed one, the level-4 one, and the no-newline-before-header one.
+Inspected in Desktop 2026-11-06 (the mixed, level-4, and no-newline-before-header probe drafts, plus the `--markdown` verification draft): level 4 renders as the small heading, visually the same as level 3; a paragraph with and without a trailing `\n` before a header looks identical (the header supplies its own spacing); `[rich_text(section "no newline"), header, rich_text(list)]` renders as paragraph, heading, bullet with no glue, so a header is an absorption boundary; `:tada:` in a header renders as the emoji; the Markdown draft with levels 1, 2, 3 then paragraphs and a list renders correctly at three sizes. See "Desktop follow-up" below.
 
 ## Design
 
 ### Validator (`validateBlockShapes`, cmd/draft.go)
 
 - Top-level block types allowed: `rich_text` and `header`. Everything else keeps the current rejections (`table`, `data_table`, generic).
-- A `header` must have `text` as an object with `type: "plain_text"` and a non-empty string `text`. `level`, when present, must be a JSON integer >= 1 (Slack rejects 0; the composer emits 1..3; 4 is API-accepted with unverified rendering). `emoji` is optional and passed through. Failures are `invalid_blocks` naming the block index and the exact fix.
-- A header is NOT treated as a boundary for the absorption check. The previous-section state carries across a header, so `[rich_text(section without "\n"), header, rich_text(list)]` is still `invalid_blocks`. Whether Desktop flattens across a header is unverified (the probe only proves storage), and a wrong reject with an actionable message is cheaper than a wrong accept that glues content. Relax once the probe draft has been inspected in Desktop. The converter is unaffected: it terminates every section that has any successor.
+- A `header` must have `text` as an object with `type: "plain_text"` and a non-empty string `text`. `level`, when present, must be a JSON integer >= 1 (Slack rejects 0; the composer emits 1..3; 4 is API-accepted and renders as the small heading, inspected 2026-11-06). `emoji` is optional and passed through. Failures are `invalid_blocks` naming the block index and the exact fix.
+- A header IS a boundary for the absorption check (relaxed in the Desktop follow-up below; 5.10.0 shipped it as a non-boundary because the probe only proved storage). A valid header resets the previous-section state, so `[rich_text(section without "\n"), header, rich_text(list)]` passes. The rule still applies inside one `rich_text` and across adjacent `rich_text` blocks. The converter is unaffected: it terminates every section that has any successor.
 - The return value becomes "has renderable body": true for a non-empty `rich_text` or any `header`. Rename `hasRichTextBody` accordingly at the call sites.
 
 ### Converter (`internal/mdblocks`)
@@ -73,10 +73,14 @@ Every statement that drafts strip or lack headings goes. Files: `SPEC.md` (draft
 
 ## Decisions
 
-- Clamp `####`+ to level 3 rather than pass through: composer range is 1..3, level 4 rendering unverified. The validator has no upper bound (hand-written `level: 4` is server-accepted).
+- Clamp `####`+ to level 3 rather than pass through: composer range is 1..3, and Desktop renders a stored level 4 as the small heading anyway (inspected 2026-11-06). The validator has no upper bound (hand-written `level: 4` is server-accepted).
 - Codex review 2026-11-06: agreed on clamp and rejection; pushed back on dropping the newline before a header (kept) and on the header-as-absorption-boundary (made conservative). Additional tests it named: `cmd/draft_test.go` has a `header_before_rich_text` rejection row that becomes passthrough coverage; `cmd/skill_test.go` `TestSkill_DraftGuidance` pins "One top-level rich_text" wording; header-only create and a schedule-only update of a header-only draft; validator level cases zero/negative/fractional/string; converter cases header-only, consecutive, Setext, empty heading, H4/H6 clamp, emoji with skin tone.
 - Reject links/mentions in headings rather than flatten: dropping a URL is content loss; dropping bold inside a heading is not.
 
 ## Released
 
-5.10.0 cut by release PR #92 and installed via the cask 2026-11-06. Verified with the installed binary against the self-DM: `--markdown --print-payload` on a document with `#`, `## ... :tada:`, a list, `####`, and paragraphs emits header / rich_text alternation with levels 1, 2, 3; `draft create --markdown` of the same body and a hand-written header-only payload both round-trip and are alive after 90s; `level: 0` is `invalid_blocks` locally and `# See https://example.com` is `invalid_markdown` line 1. Drafts left in the self-DM for the Desktop checks: the Markdown one from this run, the mixed probe, the level-4 probe, and the no-newline-before-header probe.
+5.10.0 cut by release PR #92 and installed via the cask 2026-11-06. Verified with the installed binary against the self-DM: `--markdown --print-payload` on a document with `#`, `## ... :tada:`, a list, `####`, and paragraphs emits header / rich_text alternation with levels 1, 2, 3; `draft create --markdown` of the same body and a hand-written header-only payload both round-trip and are alive after 90s; `level: 0` is `invalid_blocks` locally and `# See https://example.com` is `invalid_markdown` line 1. The Markdown draft from this run, the mixed probe, the level-4 probe, and the no-newline-before-header probe were then inspected in Desktop.
+
+## Desktop follow-up (2026-11-06)
+
+Screenshots of the four drafts in the Desktop compose box settled every open question (results in "Not measured" above, now "Inspected"). One finding changed code: a header breaks section-before-container absorption, so `validateBlockShapes` now resets `prevElem`/`prevSection` at a valid header (`fix:` commit on branch `fix/header-absorption-boundary`), and `TestValidateBlockShapes_HeaderDoesNotResetAbsorption` became `TestValidateBlockShapes_HeaderResetsAbsorption`, which also pins that the same section and list with no header between them, in one `rich_text` or across two, is still rejected. The rest was documentation: CLAUDE.md, SPEC.md, `skills/slack-cli/SKILL.md`, `docs/draft-messages.md`, and this plan now state the findings instead of "unverified".
