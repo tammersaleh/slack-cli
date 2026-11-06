@@ -1047,9 +1047,10 @@ func firstJSONToken(raw []byte) byte {
 //  3. A rich_text_section directly before a rich_text_list,
 //     rich_text_preformatted, or rich_text_quote must terminate its element
 //     stream with a text inline whose `text` ends with "\n", or the following
-//     container absorbs it. The check spans top-level block boundaries,
-//     header included, because Desktop flattens adjacent rich_text blocks
-//     before rendering and whether a header interrupts that is unverified.
+//     container absorbs it. The check spans adjacent rich_text blocks,
+//     because Desktop flattens them before rendering, but a header between
+//     them resets it: Desktop renders [section without "\n", header, list]
+//     as paragraph, heading, bullet with no glue (inspected 2026-11-06).
 //
 // It returns whether renderable content is present - a non-empty rich_text
 // or any header - so the caller can apply the renderable-content rule (a
@@ -1083,9 +1084,13 @@ func validateBlockShapes(raw []byte) (hasBody bool, err error) {
 				return false, err
 			}
 			// A header-only draft survives reconciliation (measured 2026-11-06),
-			// so a header counts as renderable content. It is not an
-			// absorption boundary: prevElem/prevSection carry across it.
+			// so a header counts as renderable content. It is also an
+			// absorption boundary: Desktop renders [section without "\n",
+			// header, list] as paragraph, heading, bullet with no glue
+			// (inspected 2026-11-06), so the section-before-container state
+			// resets here.
 			hasBody = true
+			prevElem, prevSection = "", nil
 			continue
 		}
 		if t != "rich_text" {
@@ -1154,7 +1159,8 @@ func validateBlockShapes(raw []byte) (hasBody bool, err error) {
 // validateHeaderBlock checks one top-level header block against the shape
 // the composer stores: text is a plain_text object with non-empty text, and
 // level, when present, is an integer >= 1. There is no upper bound: the
-// composer emits 1..3 and the API stores 4 (rendering of 4 unverified).
+// composer emits 1..3 and the API stores 4, which Desktop renders as the
+// small (level 3) heading (inspected 2026-11-06).
 // emoji and block_id pass through untouched.
 func validateHeaderBlock(i int, block map[string]any) error {
 	reject := func(detail string) error {

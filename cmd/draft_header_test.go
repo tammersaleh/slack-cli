@@ -87,16 +87,29 @@ func TestValidateBlockShapes_RejectsMalformedHeaders(t *testing.T) {
 	}
 }
 
-// A header is not an absorption boundary: whether Desktop flattens rich_text
-// blocks across a header is unverified, so the section-before-container rule
-// still applies through one. Only the trailing "\n" clears it.
-func TestValidateBlockShapes_HeaderDoesNotResetAbsorption(t *testing.T) {
+// A header is an absorption boundary. Desktop renders
+// [section without "\n", header, list] as a paragraph, a heading, and a
+// bullet with no glue (inspected 2026-11-06), so the section-before-container
+// state resets at a valid header. Without a header between them the rule
+// still applies.
+func TestValidateBlockShapes_HeaderResetsAbsorption(t *testing.T) {
 	unterminated := `{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"no newline"}]}]}`
 	header := `{"type":"header","level":2,"text":{"type":"plain_text","text":"Mid","emoji":true}}`
 
-	_, err := validateBlockShapes([]byte(`[` + unterminated + `,` + header + `,` + headerList + `]`))
+	if _, err := validateBlockShapes([]byte(`[` + unterminated + `,` + header + `,` + headerList + `]`)); err != nil {
+		t.Fatalf("unterminated section, header, list should pass: a header breaks absorption, got %v", err)
+	}
+
+	if _, err := validateBlockShapes([]byte(`[` + headerSection + `,` + header + `,` + headerList + `]`)); err != nil {
+		t.Fatalf("terminated section before a header then a list should pass, got %v", err)
+	}
+
+	// Same section and list in one rich_text with no header between them:
+	// still rejected.
+	oneBlock := `{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"no newline"}]},{"type":"rich_text_list","style":"bullet","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"item"}]}]}]}`
+	_, err := validateBlockShapes([]byte(`[` + oneBlock + `]`))
 	if err == nil {
-		t.Fatal("expected invalid_blocks: the section before the header lacks a trailing newline")
+		t.Fatal("expected invalid_blocks: unterminated section directly before a list with no header between")
 	}
 	var oe *output.Error
 	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
@@ -106,8 +119,10 @@ func TestValidateBlockShapes_HeaderDoesNotResetAbsorption(t *testing.T) {
 		t.Errorf("detail should name the trailing-newline fix, got %q", oe.Detail)
 	}
 
-	if _, err := validateBlockShapes([]byte(`[` + headerSection + `,` + header + `,` + headerList + `]`)); err != nil {
-		t.Fatalf("terminated section before a header then a list should pass, got %v", err)
+	// Across two rich_text blocks with no header between them: still rejected
+	// (Desktop flattens adjacent rich_text blocks).
+	if _, err := validateBlockShapes([]byte(`[` + unterminated + `,` + headerList + `]`)); err == nil {
+		t.Fatal("expected invalid_blocks: unterminated section then list across adjacent rich_text blocks")
 	}
 }
 

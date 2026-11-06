@@ -29,8 +29,9 @@ import (
 const maxIndent = 2
 
 // maxHeaderLevel is the deepest heading the composer offers (big, medium,
-// small). Deeper Markdown headings clamp to it; the API stores level 4 but
-// its rendering is unverified (docs/header-blocks-plan.md).
+// small). Deeper Markdown headings clamp to it; the API stores level 4 and
+// Desktop renders it as the small heading anyway (inspected 2026-11-06,
+// docs/header-blocks-plan.md).
 const maxHeaderLevel = 3
 
 // Error is a conversion failure. Line is 1-based; 0 means the whole document
@@ -737,10 +738,11 @@ func ensureTrailingNewline(elems []map[string]any) []map[string]any {
 // it preserves the Markdown paragraph break: Slack's own composer stores
 // paragraph structure as "\n" inside text, so two bare adjacent sections
 // are at best one line apart and at worst glued. A following header counts
-// as a successor too: validateBlockShapes does not treat a header as an
-// absorption boundary, and whether the newline before a header renders as
-// a blank line is unverified (docs/header-blocks-plan.md). Whether the
-// trailing "\n" renders as a blank line or a line break in the compose box
+// as a successor too, for uniformity: a header breaks absorption and
+// supplies its own spacing, so a paragraph with and without the trailing
+// "\n" before a header renders identically (inspected 2026-11-06,
+// docs/header-blocks-plan.md). Whether the trailing "\n" before another
+// paragraph renders as a blank line or a line break in the compose box
 // is pending a Desktop check (docs/draft-messages.md).
 func (c *converter) applyAbsorptionRule() {
 	for i := 0; i+1 < len(c.items); i++ {
