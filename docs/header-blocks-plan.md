@@ -62,7 +62,7 @@ Every statement that drafts strip or lack headings goes. Files: `SPEC.md` (draft
 5. [x] Refactor (`codeSpanText` shared by inline and heading paths), `mise run check` green.
 6. [x] Docs: SPEC, SKILL, draft-messages, help text, CLAUDE.md, markdown-drafts-plan.
 7. [x] Code review (feature-dev:code-reviewer): nine findings (stale hint strings, float level coverage, vacuous detail assertions, missing --markdown header e2e, Setext error line attribution, plan wording), all fixed in 40ed9c9 and 472ea60; re-review clean.
-8. [ ] Merged and pushed as separate feat/docs/test commits (a39762f, 79aadbd, 7a8ede0, 40ed9c9, 472ea60). Still to do in the main session: wait for release, brew upgrade, verify live in self-DM with `--markdown`.
+8. [x] Merged and pushed as separate feat/docs/test commits (a39762f, 79aadbd, 7a8ede0, 40ed9c9, 472ea60). Still to do in the main session: wait for release, brew upgrade, verify live in self-DM with `--markdown`.
 
 ## Discoveries during implementation
 
@@ -76,3 +76,7 @@ Every statement that drafts strip or lack headings goes. Files: `SPEC.md` (draft
 - Clamp `####`+ to level 3 rather than pass through: composer range is 1..3, level 4 rendering unverified. The validator has no upper bound (hand-written `level: 4` is server-accepted).
 - Codex review 2026-11-06: agreed on clamp and rejection; pushed back on dropping the newline before a header (kept) and on the header-as-absorption-boundary (made conservative). Additional tests it named: `cmd/draft_test.go` has a `header_before_rich_text` rejection row that becomes passthrough coverage; `cmd/skill_test.go` `TestSkill_DraftGuidance` pins "One top-level rich_text" wording; header-only create and a schedule-only update of a header-only draft; validator level cases zero/negative/fractional/string; converter cases header-only, consecutive, Setext, empty heading, H4/H6 clamp, emoji with skin tone.
 - Reject links/mentions in headings rather than flatten: dropping a URL is content loss; dropping bold inside a heading is not.
+
+## Released
+
+5.10.0 cut by release PR #92 and installed via the cask 2026-11-06. Verified with the installed binary against the self-DM: `--markdown --print-payload` on a document with `#`, `## ... :tada:`, a list, `####`, and paragraphs emits header / rich_text alternation with levels 1, 2, 3; `draft create --markdown` of the same body and a hand-written header-only payload both round-trip and are alive after 90s; `level: 0` is `invalid_blocks` locally and `# See https://example.com` is `invalid_markdown` line 1. Drafts left in the self-DM for the Desktop checks: the Markdown one from this run, the mixed probe, the level-4 probe, and the no-newline-before-header probe.
