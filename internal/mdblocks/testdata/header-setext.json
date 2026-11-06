@@ -1,0 +1,5 @@
+[{"type":"header","level":1,"text":{"type":"plain_text","text":"Setext title spans two lines","emoji":true}},
+ {"type":"header","level":2,"text":{"type":"plain_text","text":"Subtitle","emoji":true}},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"body"}]}]}
+]

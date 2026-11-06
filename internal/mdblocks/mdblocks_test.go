@@ -46,9 +46,12 @@ func TestGolden(t *testing.T) {
 	}
 }
 
-// TestGolden_SingleTopLevelBlock pins the "exactly one rich_text" rule Desktop
-// flattening forces, independent of what each fixture expects.
-func TestGolden_SingleTopLevelBlock(t *testing.T) {
+// TestGolden_TopLevelShape pins the block-level invariants independent of
+// what each fixture expects: a source with no heading converts to exactly
+// one rich_text block (Desktop flattens adjacent ones); otherwise every
+// top-level block is a header or a rich_text, no rich_text is empty, and no
+// two rich_text blocks are adjacent (each run of containers is one block).
+func TestGolden_TopLevelShape(t *testing.T) {
 	inputs, _ := filepath.Glob("testdata/*.md")
 	for _, in := range inputs {
 		src, _ := os.ReadFile(in)
@@ -57,14 +60,93 @@ func TestGolden_SingleTopLevelBlock(t *testing.T) {
 			t.Fatalf("%s: %v", in, err)
 		}
 		var blocks []struct {
-			Type string `json:"type"`
+			Type     string            `json:"type"`
+			Elements []json.RawMessage `json:"elements"`
 		}
 		if err := json.Unmarshal(got, &blocks); err != nil {
 			t.Fatalf("%s: %v", in, err)
 		}
-		if len(blocks) != 1 || blocks[0].Type != "rich_text" {
-			t.Errorf("%s: want exactly one rich_text block, got %d (%v)", in, len(blocks), blocks)
+		if len(blocks) == 0 {
+			t.Errorf("%s: no blocks", in)
+			continue
 		}
+		headers := 0
+		for i, b := range blocks {
+			switch b.Type {
+			case "header":
+				headers++
+			case "rich_text":
+				if len(b.Elements) == 0 {
+					t.Errorf("%s: blocks[%d] is an empty rich_text", in, i)
+				}
+				if i > 0 && blocks[i-1].Type == "rich_text" {
+					t.Errorf("%s: blocks[%d] and blocks[%d] are adjacent rich_text blocks", in, i-1, i)
+				}
+			default:
+				t.Errorf("%s: blocks[%d] has type %q; only header and rich_text are allowed", in, i, b.Type)
+			}
+		}
+		if headers == 0 && len(blocks) != 1 {
+			t.Errorf("%s: no headings, want exactly one rich_text block, got %d", in, len(blocks))
+		}
+	}
+}
+
+// Headings become header blocks whose text is plain_text, so inline
+// formatting flattens and anything plain_text cannot carry is an error.
+func TestConvert_HeadingErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		src    string
+		line   int
+		detail string
+	}{
+		{"link", "# See [docs](https://example.com)\n", 1, "link"},
+		{"bare url", "# Visit https://example.com now\n", 1, "link"},
+		{"email", "# Mail alice@example.com\n", 1, "link"},
+		{"angle autolink", "# <https://example.com>\n", 1, "link"},
+		{"user mention", "# Hi <@U01XYZ>\n", 1, "mention"},
+		{"channel mention", "# In <#C01ABC>\n", 1, "channel"},
+		{"broadcast", "# Hey @here\n", 1, "broadcast"},
+		{"symbolic mention", "# Hi @alice\n", 1, "<@U"},
+		{"image", "# ![alt](https://example.com/a.png)\n", 1, "image"},
+		{"inline html", "# a <b>bold</b> tag\n", 1, "HTML"},
+		{"empty atx heading", "intro\n\n#\n", 3, "empty heading"},
+		{"empty atx heading with trailing hashes", "intro\n\n## ##\n", 3, "empty heading"},
+		{"error on a later heading line", "# ok\n\ntext\n\n## see https://example.com\n", 5, "link"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := mdblocks.Convert([]byte(tc.src))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			var me *mdblocks.Error
+			if !errors.As(err, &me) {
+				t.Fatalf("want *mdblocks.Error, got %T: %v", err, err)
+			}
+			if me.Line != tc.line {
+				t.Errorf("line: got %d want %d (%v)", me.Line, tc.line, err)
+			}
+			if !strings.Contains(err.Error(), tc.detail) {
+				t.Errorf("detail %q does not mention %q", err.Error(), tc.detail)
+			}
+		})
+	}
+}
+
+// A heading inside a quote or a list item has no shape (a header block is
+// top-level only) and keeps the container's existing rejection.
+func TestConvert_HeadingInsideContainerIsRejected(t *testing.T) {
+	for name, src := range map[string]string{
+		"quote": "> # quoted heading\n",
+		"list":  "- item\n\n  # heading in item\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := mdblocks.Convert([]byte(src)); err == nil {
+				t.Fatal("expected error")
+			}
+		})
 	}
 }
 

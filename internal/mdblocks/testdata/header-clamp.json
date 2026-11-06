@@ -1,0 +1,5 @@
+[{"type":"header","level":3,"text":{"type":"plain_text","text":"Four","emoji":true}},
+ {"type":"header","level":3,"text":{"type":"plain_text","text":"Six","emoji":true}},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"body"}]}]}
+]

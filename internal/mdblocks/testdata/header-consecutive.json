@@ -1,0 +1,7 @@
+[{"type":"header","level":1,"text":{"type":"plain_text","text":"One","emoji":true}},
+ {"type":"header","level":2,"text":{"type":"plain_text","text":"Two","emoji":true}},
+ {"type":"header","level":3,"text":{"type":"plain_text","text":"Three","emoji":true}},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"body\n"}]}]},
+ {"type":"header","level":1,"text":{"type":"plain_text","text":"Trailing","emoji":true}}
+]

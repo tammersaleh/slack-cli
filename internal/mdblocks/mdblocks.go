@@ -1,7 +1,8 @@
 // Package mdblocks converts a Markdown document into the Block Kit JSON a
-// Slack draft accepts: exactly one top-level rich_text block whose elements
-// are rich_text_section / rich_text_list / rich_text_quote /
-// rich_text_preformatted containers, in source order.
+// Slack draft accepts: header blocks for headings, and one top-level
+// rich_text block per run of rich_text_section / rich_text_list /
+// rich_text_quote / rich_text_preformatted containers between them, in
+// source order. A document with no headings is exactly one rich_text block.
 //
 // It is pure - no network, no Slack client. Mentions are accepted only in
 // the explicit <@Uxxx> form; anything the supported subset cannot represent
@@ -27,6 +28,11 @@ import (
 // maxIndent is the deepest list nesting Slack renders (indent 0, 1, 2).
 const maxIndent = 2
 
+// maxHeaderLevel is the deepest heading the composer offers (big, medium,
+// small). Deeper Markdown headings clamp to it; the API stores level 4 but
+// its rendering is unverified (docs/header-blocks-plan.md).
+const maxHeaderLevel = 3
+
 // Error is a conversion failure. Line is 1-based; 0 means the whole document
 // (for example, empty input).
 type Error struct {
@@ -41,7 +47,8 @@ func (e *Error) Error() string {
 	return e.Detail
 }
 
-// Convert renders src into a JSON array holding one rich_text block.
+// Convert renders src into a JSON array of top-level blocks: header blocks
+// interleaved with one rich_text block per run of containers.
 func Convert(src []byte) ([]byte, error) {
 	md := goldmark.New(
 		goldmark.WithExtensions(extension.Strikethrough, extension.Linkify, extension.Table),
@@ -56,19 +63,42 @@ func Convert(src []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if len(c.containers) == 0 {
+	if len(c.items) == 0 {
 		return nil, &Error{Detail: "no content: the Markdown is empty"}
 	}
 	c.applyAbsorptionRule()
-	return json.Marshal([]map[string]any{{
-		"type":     "rich_text",
-		"elements": c.containers,
-	}})
+	return json.Marshal(c.blocks())
 }
 
 type converter struct {
-	src        []byte
-	containers []map[string]any
+	src []byte
+	// items is the flat sequence of rich_text containers and header blocks
+	// in source order; blocks groups it at the end.
+	items []map[string]any
+}
+
+// blocks groups items into top-level blocks: each header stands alone and
+// each maximal run of containers becomes one rich_text block, so no
+// rich_text is ever empty and no two are adjacent.
+func (c *converter) blocks() []map[string]any {
+	var out []map[string]any
+	var run []map[string]any
+	flush := func() {
+		if len(run) > 0 {
+			out = append(out, map[string]any{"type": "rich_text", "elements": run})
+			run = nil
+		}
+	}
+	for _, it := range c.items {
+		if it["type"] == "header" {
+			flush()
+			out = append(out, it)
+			continue
+		}
+		run = append(run, it)
+	}
+	flush()
+	return out
 }
 
 // style is the inherited inline formatting at a point in the walk.
@@ -117,14 +147,7 @@ func (c *converter) block(n ast.Node) error {
 		}
 		c.push(section(elems))
 	case *ast.Heading:
-		// Slack has no heading element. A heading is a bold section that
-		// always ends with "\n" so a blank line separates it from what
-		// follows; the level is dropped.
-		elems, err := c.inlines(v, style{bold: true})
-		if err != nil {
-			return err
-		}
-		c.push(section(ensureTrailingNewline(elems)))
+		return c.heading(v)
 	case *ast.List:
 		return c.list(v, 0, false)
 	case *ast.FencedCodeBlock, *ast.CodeBlock:
@@ -146,7 +169,79 @@ func (c *converter) block(n ast.Node) error {
 }
 
 func (c *converter) push(container map[string]any) {
-	c.containers = append(c.containers, container)
+	c.items = append(c.items, container)
+}
+
+// heading emits a Markdown heading as a top-level header block, the shape
+// the composer stores for its big / medium / small headings. The text is
+// plain_text, so inline formatting flattens to its text, an emoji token
+// is written back as :name:, and a line break becomes a space. Anything
+// plain_text cannot carry - a link (including a bare URL or email), a user
+// or channel mention, a broadcast - is an error: dropping it is content
+// loss, where dropping bold is not. Levels past maxHeaderLevel clamp.
+func (c *converter) heading(h *ast.Heading) error {
+	text, err := c.plainText(h, h)
+	if err != nil {
+		return err
+	}
+	if text == "" {
+		return c.errAt(h, "an empty heading has no header equivalent; Slack rejects an empty header")
+	}
+	c.push(map[string]any{
+		"type":  "header",
+		"level": min(h.Level, maxHeaderLevel),
+		"text":  map[string]any{"type": "plain_text", "text": text, "emoji": true},
+	})
+	return nil
+}
+
+// plainText flattens a heading's inline children to the string a plain_text
+// object can hold. at is the node errors are attributed to.
+func (c *converter) plainText(parent, at ast.Node) (string, error) {
+	var b strings.Builder
+	for n := parent.FirstChild(); n != nil; n = n.NextSibling() {
+		switch v := n.(type) {
+		case *ast.Text:
+			b.WriteString(c.textOf(v))
+			if v.SoftLineBreak() || v.HardLineBreak() {
+				b.WriteByte(' ')
+			}
+		case *ast.String:
+			b.Write(v.Value)
+		case *ast.Emphasis, *east.Strikethrough:
+			inner, err := c.plainText(v, at)
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(inner)
+		case *ast.CodeSpan:
+			b.WriteString(c.codeSpanText(v))
+		case *ast.Link, *ast.AutoLink:
+			return "", c.errAt(at, "a heading cannot hold a link (a header block is plain text); move the URL into the paragraph below")
+		case *ast.Image:
+			return "", c.errAt(at, "an image has no rich_text equivalent; link to it instead")
+		case *ast.RawHTML:
+			return "", c.errAt(at, "HTML is not supported in draft Markdown")
+		case *token:
+			switch v.kind {
+			case tokenEmoji:
+				b.WriteString(":" + v.value + ":")
+			case tokenUser:
+				return "", &Error{Line: c.lineOfOffset(v.offset), Detail: "a heading cannot hold a user mention (a header block is plain text); mention the person in the paragraph below"}
+			case tokenChannel:
+				return "", &Error{Line: c.lineOfOffset(v.offset), Detail: "a heading cannot hold a channel mention (a header block is plain text); name the channel in the paragraph below"}
+			case tokenBroadcast:
+				return "", &Error{Line: c.lineOfOffset(v.offset), Detail: fmt.Sprintf("a heading cannot hold a broadcast (@%s); a header block is plain text, so put it in the paragraph below", v.value)}
+			default:
+				if _, err := c.appendToken(nil, v, style{}); err != nil {
+					return "", err
+				}
+			}
+		default:
+			return "", c.errAt(at, "unsupported inline Markdown construct %s", n.Kind())
+		}
+	}
+	return b.String(), nil
 }
 
 func section(elems []map[string]any) map[string]any {
@@ -455,13 +550,7 @@ func (c *converter) inline(out []map[string]any, n ast.Node, st style) ([]map[st
 	case *ast.CodeSpan:
 		child := st
 		child.code = true
-		var b strings.Builder
-		for t := v.FirstChild(); t != nil; t = t.NextSibling() {
-			if tt, ok := t.(*ast.Text); ok {
-				b.Write(tt.Segment.Value(c.src))
-			}
-		}
-		out = appendText(out, strings.ReplaceAll(b.String(), "\n", " "), child)
+		out = appendText(out, c.codeSpanText(v), child)
 	case *ast.Link:
 		label, err := c.plainLabel(v)
 		if err != nil {
@@ -488,6 +577,18 @@ func (c *converter) inline(out []map[string]any, n ast.Node, st style) ([]map[st
 		return nil, c.errAt(n, "unsupported inline Markdown construct %s", n.Kind())
 	}
 	return out, nil
+}
+
+// codeSpanText is a code span's raw text with line breaks folded to spaces,
+// the way CommonMark renders it.
+func (c *converter) codeSpanText(v *ast.CodeSpan) string {
+	var b strings.Builder
+	for t := v.FirstChild(); t != nil; t = t.NextSibling() {
+		if tt, ok := t.(*ast.Text); ok {
+			b.Write(tt.Segment.Value(c.src))
+		}
+	}
+	return strings.ReplaceAll(b.String(), "\n", " ")
 }
 
 func (c *converter) children(out []map[string]any, parent ast.Node, st style) ([]map[string]any, error) {
@@ -628,18 +729,21 @@ func ensureTrailingNewline(elems []map[string]any) []map[string]any {
 	return append(elems, map[string]any{"type": "text", "text": "\n"})
 }
 
-// applyAbsorptionRule runs over the finished container sequence and
-// terminates every rich_text_section that has a successor with a newline.
-// For a following list, quote, or code block this is the absorption rule
-// (the container would otherwise swallow the section). For a following
-// section it preserves the Markdown paragraph break: Slack's own composer
-// stores paragraph structure as "\n" inside text, so two bare adjacent
-// sections are at best one line apart and at worst glued. Whether the
+// applyAbsorptionRule runs over the finished item sequence and terminates
+// every rich_text_section that has a successor with a newline. For a
+// following list, quote, or code block this is the absorption rule (the
+// container would otherwise swallow the section). For a following section
+// it preserves the Markdown paragraph break: Slack's own composer stores
+// paragraph structure as "\n" inside text, so two bare adjacent sections
+// are at best one line apart and at worst glued. A following header counts
+// as a successor too: validateBlockShapes does not treat a header as an
+// absorption boundary, and whether the newline before a header renders as
+// a blank line is unverified (docs/header-blocks-plan.md). Whether the
 // trailing "\n" renders as a blank line or a line break in the compose box
 // is pending a Desktop check (docs/draft-messages.md).
 func (c *converter) applyAbsorptionRule() {
-	for i := 0; i+1 < len(c.containers); i++ {
-		if cur := c.containers[i]; cur["type"] == "rich_text_section" {
+	for i := 0; i+1 < len(c.items); i++ {
+		if cur := c.items[i]; cur["type"] == "rich_text_section" {
 			cur["elements"] = ensureTrailingNewline(cur["elements"].([]map[string]any))
 		}
 	}

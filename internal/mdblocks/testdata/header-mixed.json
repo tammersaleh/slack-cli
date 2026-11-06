@@ -1,0 +1,15 @@
+[{"type":"header","level":1,"text":{"type":"plain_text","text":"Weekly update","emoji":true}},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"Intro paragraph.\n"}]},
+   {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+     {"type":"rich_text_section","elements":[{"type":"text","text":"first"}]},
+     {"type":"rich_text_section","elements":[{"type":"text","text":"second"}]}]}]},
+ {"type":"header","level":2,"text":{"type":"plain_text","text":"Risks","emoji":true}},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"Nothing new.\n"}]}]},
+ {"type":"header","level":3,"text":{"type":"plain_text","text":"Next steps","emoji":true}},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_list","style":"ordered","indent":0,"offset":0,"elements":[
+     {"type":"rich_text_section","elements":[{"type":"text","text":"ship"}]},
+     {"type":"rich_text_section","elements":[{"type":"text","text":"verify"}]}]}]}
+]
