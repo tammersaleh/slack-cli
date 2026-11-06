@@ -1,0 +1,9 @@
+[{"type":"divider"},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"Leading, trailing, and doubled.\n"}]}]},
+ {"type":"divider"},
+ {"type":"divider"},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"Last paragraph.\n"}]}]},
+ {"type":"divider"}
+]

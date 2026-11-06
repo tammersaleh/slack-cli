@@ -138,12 +138,11 @@ func TestValidateBlockShapes_HeaderResetsAbsorption(t *testing.T) {
 	}
 }
 
-// Everything that is not rich_text or header keeps the generic rejection,
-// whose message now names both allowed types.
+// Everything that is not rich_text, header, or divider keeps the generic
+// rejection, whose message names the allowed types.
 func TestValidateBlockShapes_StillRejectsOtherTypes(t *testing.T) {
 	for _, blocks := range []string{
 		`[{"type":"section","text":{"type":"mrkdwn","text":"x"}}]`,
-		`[{"type":"divider"}]`,
 		`[{"type":"context","elements":[]}]`,
 	} {
 		_, err := validateBlockShapes([]byte(blocks))
@@ -152,8 +151,8 @@ func TestValidateBlockShapes_StillRejectsOtherTypes(t *testing.T) {
 			t.Errorf("%s: expected invalid_blocks, got %v", blocks, err)
 			continue
 		}
-		if !strings.Contains(oe.Detail, "rich_text and header") {
-			t.Errorf("%s: generic rejection should name both allowed types, got %q", blocks, oe.Detail)
+		if !strings.Contains(oe.Detail, "rich_text, header, and divider") {
+			t.Errorf("%s: generic rejection should name the allowed types, got %q", blocks, oe.Detail)
 		}
 	}
 }

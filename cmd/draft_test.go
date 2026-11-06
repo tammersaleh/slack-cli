@@ -785,8 +785,8 @@ func TestDraftCreate_RejectsNonRichTextBlocks(t *testing.T) {
 			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"section","text":{"type":"mrkdwn","text":"extra"}}]`,
 		},
 		{
-			name:   "divider_alongside_rich_text",
-			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"divider"}]`,
+			name:   "actions_alongside_rich_text",
+			blocks: `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"a"}]}]},{"type":"actions","elements":[]}]`,
 		},
 		{
 			name:   "context_before_rich_text",

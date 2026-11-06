@@ -111,7 +111,7 @@ func TestDraftCreate_MarkdownConversionErrorMakesNoCalls(t *testing.T) {
 		detail string
 	}{
 		"symbolic mention": {"hi @alice\n", "line 1"},
-		"horizontal rule":  {"a\n\n---\n", "line 3"},
+		"image":            {"a\n\n![alt](https://example.com/a.png)\n", "line 3"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -47,10 +47,11 @@ func TestGolden(t *testing.T) {
 }
 
 // TestGolden_TopLevelShape pins the block-level invariants independent of
-// what each fixture expects: a source with no heading converts to exactly
-// one rich_text block (Desktop flattens adjacent ones); otherwise every
-// top-level block is a header or a rich_text, no rich_text is empty, and no
-// two rich_text blocks are adjacent (each run of containers is one block).
+// what each fixture expects: a source with no heading or thematic break
+// converts to exactly one rich_text block (Desktop flattens adjacent ones);
+// otherwise every top-level block is a header, a divider, or a rich_text, no
+// rich_text is empty, and no two rich_text blocks are adjacent (each run of
+// containers is one block).
 func TestGolden_TopLevelShape(t *testing.T) {
 	inputs, err := filepath.Glob("testdata/*.md")
 	if err != nil || len(inputs) == 0 {
@@ -76,11 +77,11 @@ func TestGolden_TopLevelShape(t *testing.T) {
 			if len(blocks) == 0 {
 				t.Fatal("no blocks")
 			}
-			headers := 0
+			boundaries := 0
 			for i, b := range blocks {
 				switch b.Type {
-				case "header":
-					headers++
+				case "header", "divider":
+					boundaries++
 				case "rich_text":
 					if len(b.Elements) == 0 {
 						t.Errorf("blocks[%d] is an empty rich_text", i)
@@ -89,11 +90,11 @@ func TestGolden_TopLevelShape(t *testing.T) {
 						t.Errorf("blocks[%d] and blocks[%d] are adjacent rich_text blocks", i-1, i)
 					}
 				default:
-					t.Errorf("blocks[%d] has type %q; only header and rich_text are allowed", i, b.Type)
+					t.Errorf("blocks[%d] has type %q; only header, divider, and rich_text are allowed", i, b.Type)
 				}
 			}
-			if headers == 0 && len(blocks) != 1 {
-				t.Errorf("no headings, want exactly one rich_text block, got %d", len(blocks))
+			if boundaries == 0 && len(blocks) != 1 {
+				t.Errorf("no header or divider, want exactly one rich_text block, got %d", len(blocks))
 			}
 		})
 	}
@@ -154,6 +155,7 @@ func TestConvert_HeadingInsideContainerIsRejected(t *testing.T) {
 	}{
 		{"quote", "> # quoted heading\n", "quote may hold", 1},
 		{"list", "- item\n\n  # heading in item\n", "list item may hold", 3},
+		{"thematic break in a list item", "- item\n\n  ***\n", "list item may hold", 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -194,7 +196,6 @@ func TestConvert_Errors(t *testing.T) {
 		detail string
 	}{
 		{"empty", "   \n\n", 0, "no content"},
-		{"thematic break", "above\n\n---\n\nbelow\n", 3, "horizontal rule"},
 		{"image", "text\n\n![alt](https://example.com/a.png)\n", 3, "image"},
 		{"html block", "para\n\n<div>x</div>\n", 3, "HTML"},
 		{"inline html", "a <b>bold</b> tag\n", 1, "HTML"},
@@ -227,8 +228,8 @@ func TestConvert_Errors(t *testing.T) {
 		{"inline error with no text of its own", "x ![](https://example.com/i.png)\n", 1, "image"},
 		{"bad mention on a later line", "first\nsecond @bob\n", 2, "<@U"},
 		{"error inside the second list item", "- ok\n- see ![](https://example.com/i.png)\n", 2, "image"},
-		{"block after a fenced code block", "```\ncode\n```\n\n---\n", 5, "horizontal rule"},
 		{"empty-label link on a later line", "a\nsee [](/docs)\n", 2, "link"},
+		{"block after a fenced code block", "```\ncode\n```\n\n![](https://example.com/i.png)\n", 5, "image"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -350,4 +351,26 @@ func canonical(t *testing.T, raw []byte) string {
 	}
 	out, _ := json.MarshalIndent(v, "", " ")
 	return string(out)
+}
+
+// Goldmark parses `Title\n---` as a Setext H2 and `Title\n\n---` as a
+// paragraph followed by a thematic break, so the blank line decides between
+// a header and a divider.
+func TestConvert_SetextVersusDivider(t *testing.T) {
+	setext, err := mdblocks.Convert([]byte("Title\n---\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `[{"level":2,"text":{"emoji":true,"text":"Title","type":"plain_text"},"type":"header"}]`; canonical(t, setext) != canonical(t, []byte(want)) {
+		t.Errorf("Title\\n--- should be a Setext H2 header, got %s", setext)
+	}
+
+	divided, err := mdblocks.Convert([]byte("Title\n\n---\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Title\n"}]}]},{"type":"divider"}]`
+	if canonical(t, divided) != canonical(t, []byte(want)) {
+		t.Errorf("Title, blank, --- should be a paragraph then a divider, got %s", divided)
+	}
 }

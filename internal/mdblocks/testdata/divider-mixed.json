@@ -1,0 +1,10 @@
+[{"type":"rich_text","elements":[
+   {"type":"rich_text_section","elements":[{"type":"text","text":"Intro paragraph.\n"}]}]},
+ {"type":"divider"},
+ {"type":"header","level":1,"text":{"type":"plain_text","text":"Section","emoji":true}},
+ {"type":"divider"},
+ {"type":"rich_text","elements":[
+   {"type":"rich_text_list","style":"bullet","indent":0,"elements":[
+     {"type":"rich_text_section","elements":[{"type":"text","text":"item one"}]},
+     {"type":"rich_text_section","elements":[{"type":"text","text":"item two"}]}]}]}
+]
