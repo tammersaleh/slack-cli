@@ -176,6 +176,40 @@ func TestDraftCreate_PrintPayload(t *testing.T) {
 	}
 }
 
+// Header-only Markdown clears the renderable-content rule on the --markdown
+// create path and ships the converter's header block verbatim.
+func TestDraftCreate_MarkdownHeaderOnly(t *testing.T) {
+	var gotForm url.Values
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.create", captureCreate(t, &gotForm))
+
+	if _, err := runWithMockSessionStdin(t, "# Only a heading\n", mux, "draft", "create", "C01ABC", "--markdown"); err != nil {
+		t.Fatalf("header-only Markdown should create a draft, got %v", err)
+	}
+	want := `[{"level":1,"text":{"emoji":true,"text":"Only a heading","type":"plain_text"},"type":"header"}]`
+	if gotForm.Get("blocks") != want {
+		t.Errorf("blocks\n got %s\nwant %s", gotForm.Get("blocks"), want)
+	}
+}
+
+func TestDraftCreate_PrintPayloadHeadingLeadsBlocks(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", 500) })
+	out, err := runWithMockSessionStdin(t, "## Title\n\nbody\n", h, "draft", "create", "C01ABC", "--markdown", "--print-payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := parseJSON(t, nonEmptyLines(out)[0])
+	blocks, ok := row["blocks"].([]any)
+	if !ok || len(blocks) != 2 {
+		t.Fatalf("want [header, rich_text], got %v", row["blocks"])
+	}
+	first, _ := blocks[0].(map[string]any)
+	second, _ := blocks[1].(map[string]any)
+	if first["type"] != "header" || first["level"] != float64(2) || second["type"] != "rich_text" {
+		t.Errorf("want a level-2 header then rich_text, got %v", blocks)
+	}
+}
+
 func TestDraftCreate_PrintPayloadWithoutTableOmitsAttachments(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no", 500) })
 	out, err := runWithMockSessionStdin(t, sampleMarkdown, h, "draft", "create", "C01ABC", "--markdown", "--print-payload")

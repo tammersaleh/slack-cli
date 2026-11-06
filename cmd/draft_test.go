@@ -1352,8 +1352,8 @@ func TestDraftUpdate_RejectsScheduleOnlyDataTableOnlyDraft(t *testing.T) {
 	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
 		t.Fatalf("expected invalid_blocks (no renderable content), got %v", err)
 	}
-	if !strings.Contains(oe.Detail, "renderable content") {
-		t.Errorf("expected renderable-content message, got %q", oe.Detail)
+	if !strings.Contains(oe.Detail, "renderable content") || !strings.Contains(oe.Detail, "header block") {
+		t.Errorf("expected renderable-content message naming the header option, got %q", oe.Detail)
 	}
 }
 

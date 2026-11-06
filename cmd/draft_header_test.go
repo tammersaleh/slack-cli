@@ -23,6 +23,10 @@ func TestValidateBlockShapes_AcceptsHeaders(t *testing.T) {
 		{"composer shape, level 1", `[{"type":"header","level":1,"text":{"type":"plain_text","text":"Big","emoji":true}}]`},
 		{"level 3", `[{"type":"header","level":3,"text":{"type":"plain_text","text":"Small","emoji":true}}]`},
 		{"level 4 has no upper bound", `[{"type":"header","level":4,"text":{"type":"plain_text","text":"Deep","emoji":true}}]`},
+		// JSON 1.0 and 1e0 decode to the same float64 as 1; the check is
+		// "integer-valued", not "spelled as an integer".
+		{"level 1.0 is integer-valued", `[{"type":"header","level":1.0,"text":{"type":"plain_text","text":"One","emoji":true}}]`},
+		{"level 2e0 is integer-valued", `[{"type":"header","level":2e0,"text":{"type":"plain_text","text":"Two","emoji":true}}]`},
 		{"level omitted", `[{"type":"header","text":{"type":"plain_text","text":"No level","emoji":true}}]`},
 		{"emoji omitted", `[{"type":"header","level":2,"text":{"type":"plain_text","text":"No emoji"}}]`},
 		{"server-assigned block_id passes through", `[{"type":"header","block_id":"abc12","level":1,"text":{"type":"plain_text","text":"Hi","emoji":true}}]`},
@@ -46,15 +50,19 @@ func TestValidateBlockShapes_RejectsMalformedHeaders(t *testing.T) {
 	cases := []struct {
 		name, blocks, detail string
 	}{
-		{"missing text", `[{"type":"header","level":1}]`, "text"},
-		{"text is a string", `[{"type":"header","level":1,"text":"Hi"}]`, "text"},
-		{"mrkdwn text", `[{"type":"header","level":1,"text":{"type":"mrkdwn","text":"*Hi*"}}]`, "plain_text"},
-		{"empty text", `[{"type":"header","level":1,"text":{"type":"plain_text","text":""}}]`, "empty"},
-		{"text.text missing", `[{"type":"header","level":1,"text":{"type":"plain_text"}}]`, "text"},
-		{"level zero", `[{"type":"header","level":0,"text":{"type":"plain_text","text":"Hi"}}]`, "level"},
-		{"level negative", `[{"type":"header","level":-1,"text":{"type":"plain_text","text":"Hi"}}]`, "level"},
-		{"level fractional", `[{"type":"header","level":1.5,"text":{"type":"plain_text","text":"Hi"}}]`, "level"},
-		{"level string", `[{"type":"header","level":"2","text":{"type":"plain_text","text":"Hi"}}]`, "level"},
+		// Each expected fragment is unique to one branch of validateHeaderBlock,
+		// so a row cannot pass by hitting a neighbouring rejection.
+		{"missing text", `[{"type":"header","level":1}]`, `without a "text" object`},
+		{"text is a string", `[{"type":"header","level":1,"text":"Hi"}]`, `without a "text" object`},
+		{"mrkdwn text", `[{"type":"header","level":1,"text":{"type":"mrkdwn","text":"*Hi*"}}]`, `only "plain_text"`},
+		{"empty text", `[{"type":"header","level":1,"text":{"type":"plain_text","text":""}}]`, "empty text.text"},
+		{"text.text missing", `[{"type":"header","level":1,"text":{"type":"plain_text"}}]`, "empty text.text"},
+		{"text.text not a string", `[{"type":"header","level":1,"text":{"type":"plain_text","text":7}}]`, "empty text.text"},
+		{"level zero", `[{"type":"header","level":0,"text":{"type":"plain_text","text":"Hi"}}]`, "level must be an integer >= 1"},
+		{"level negative", `[{"type":"header","level":-1,"text":{"type":"plain_text","text":"Hi"}}]`, "level must be an integer >= 1"},
+		{"level fractional", `[{"type":"header","level":1.5,"text":{"type":"plain_text","text":"Hi"}}]`, "level must be an integer >= 1"},
+		{"level string", `[{"type":"header","level":"2","text":{"type":"plain_text","text":"Hi"}}]`, "level must be an integer >= 1"},
+		{"level null", `[{"type":"header","level":null,"text":{"type":"plain_text","text":"Hi"}}]`, "level must be an integer >= 1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,15 +111,22 @@ func TestValidateBlockShapes_HeaderDoesNotResetAbsorption(t *testing.T) {
 	}
 }
 
-// Everything that is not rich_text or header keeps its rejection.
+// Everything that is not rich_text or header keeps the generic rejection,
+// whose message now names both allowed types.
 func TestValidateBlockShapes_StillRejectsOtherTypes(t *testing.T) {
 	for _, blocks := range []string{
 		`[{"type":"section","text":{"type":"mrkdwn","text":"x"}}]`,
 		`[{"type":"divider"}]`,
 		`[{"type":"context","elements":[]}]`,
 	} {
-		if _, err := validateBlockShapes([]byte(blocks)); err == nil {
-			t.Errorf("%s: expected invalid_blocks", blocks)
+		_, err := validateBlockShapes([]byte(blocks))
+		var oe *output.Error
+		if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+			t.Errorf("%s: expected invalid_blocks, got %v", blocks, err)
+			continue
+		}
+		if !strings.Contains(oe.Detail, "rich_text and header") {
+			t.Errorf("%s: generic rejection should name both allowed types, got %q", blocks, oe.Detail)
 		}
 	}
 }
