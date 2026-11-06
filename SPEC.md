@@ -2105,22 +2105,22 @@ slack draft create <recipient>... [flags]
   --date-scheduled    Schedule send at Unix epoch (alternative to --at).
   --table             Build a table from a CSV/TSV file and attach it.
   --no-header         With --table, treat the first row as data, not a bold header.
-  --markdown          stdin is Markdown, converted to header and rich_text blocks.
+  --markdown          stdin is Markdown, converted to header, divider, and rich_text blocks.
   --print-payload     With --markdown: print the converted payload, create nothing.
 
 Body on stdin. Block Kit JSON by default: either a bare array of top-level
 blocks, or an object {"blocks":[...],"attachments":[...]}. Top-level blocks
-must be rich_text or header; tables go in attachments[].blocks[] (or use --table).
+must be rich_text, header, or divider; tables go in attachments[].blocks[] (or use --table).
 With --markdown, stdin is Markdown (subset below). No plain-text shortcut.
 ```
 
 ##### Markdown input
 
 `--markdown` converts stdin through `internal/mdblocks` into a `header`
-block per heading and exactly one top-level `rich_text` block per run of
-content between headings (Desktop flattens adjacent `rich_text` blocks, so
-one per run is the only stable shape; a document with no heading is one
-block) and then runs the result through the same `validateBlockShapes` gate
+block per heading, a `divider` block per thematic break, and exactly one
+top-level `rich_text` block per run of content between them (Desktop
+flattens adjacent `rich_text` blocks, so one per run is the only stable
+shape; a document with neither is one block) and then runs the result through the same `validateBlockShapes` gate
 as caller-supplied JSON. Blank stdin with
 `--markdown` is "nothing provided" (so `--table` alone still makes an
 attachments-only draft); non-blank stdin that converts to nothing is
@@ -2131,6 +2131,7 @@ Slack tokens. Every conversion is deterministic.
 | Markdown | rich_text |
 |---|---|
 | paragraph | `rich_text_section`; soft and hard line breaks both become `\n`; terminated with `\n` when any container follows |
+| `---`, `***`, `___` (any CommonMark thematic break) | top-level `{"type":"divider"}` block, the composer's horizontal rule. Leading, trailing, and consecutive breaks each emit one. `Title` directly followed by `---` is a Setext heading, not a divider; a blank line between them makes it paragraph then divider |
 | `# heading`, `## heading`, `### heading`, Setext | top-level `header` block, `level` 1, 2, 3, `text` `{"type":"plain_text","text":…,"emoji":true}`; `####` and deeper clamp to 3. Text is plain: bold, italic, strike, and code flatten to their text, `:name:` stays as text, a line break becomes a space. A link (including a bare URL or email), user or channel mention, or broadcast in a heading is `invalid_markdown` |
 | `- ` / `* ` list | `rich_text_list` `style:bullet` |
 | `N. ` list | `rich_text_list` `style:ordered`, `offset: N-1`; a later segment of the same list continues the count |
@@ -2153,7 +2154,8 @@ Markdown paragraph break from collapsing, since Slack's own composer
 encodes paragraph structure as `\n` inside text rather than as section
 boundaries; before a `header` it is kept for uniformity, since a header
 is an absorption boundary and renders the same with or without it
-(inspected 2026-11-06). Whether it renders as a blank line or one line
+(inspected 2026-11-06), and before a `divider` likewise (Desktop rendering
+of that case is pending a check). Whether it renders as a blank line or one line
 break before another section in the compose box is pending a Desktop
 check. The converter does this itself; `validateBlockShapes` stays as the
 backstop, so `invalid_blocks` after a successful conversion means a
@@ -2162,12 +2164,12 @@ converter defect.
 Rejected with `invalid_markdown` (exit 1), detail prefixed `line N:`:
 
 - `@name` and `<@name>` where the name is not a `U`/`W` id - "mention people as `<@Uxxx>`". Symbolic resolution is deferred until name collisions resolve deterministically (see `todo/at-name-resolution-picks-a-random-user-when-names-collide.md`).
-- Horizontal rule, image, HTML block, inline HTML, pipe table (points at `--table`).
+- Image, HTML block, inline HTML, pipe table (points at `--table`).
 - A list nested deeper than indent 2, a list item holding more than one paragraph, a quote inside a quote, a quote holding anything but paragraphs, lists, and code blocks.
 - A mention, channel, emoji, or image inside link text (Slack `link` elements hold text only).
 - An empty `-` list item, an item whose only content is a nested list, an empty `>` quote, or an empty code block: `drafts.create` rejects an empty text inline with `invalid_message` (verified live 2026-10-16), so these can be neither kept nor dropped. An empty heading likewise (a header with empty text is `invalid_message`, 2026-11-06).
 - A link, bare URL, email, `<@Uxxx>`, `<#Cxxx>`, or `@here`/`@channel`/`@everyone` inside a heading: `header` text is `plain_text` and cannot carry them, and dropping a URL or mention is content loss.
-- A heading inside a quote or a list item (a header block is top-level only).
+- A heading or a horizontal rule inside a quote or a list item (header and divider blocks are top-level only).
 - A link whose URL is not absolute `http`, `https`, or `mailto`.
 
 Boundary rules: `:` is an emoji delimiter only when the character before the
@@ -2197,6 +2199,11 @@ renders as the small heading (the same as 3, so the `####` clamp matches
 the client), `:name:` text inside a header renders as the emoji, a
 paragraph with and without a trailing `\n` before a header looks
 identical, and a header between a paragraph and a list breaks absorption.
+Divider blocks were verified through the API the same day
+(`docs/divider-blocks-plan.md`): a divider-only draft, `[section without
+`\n`, divider, list]`, and `[divider, rich_text, divider, divider, header,
+divider]` all round-tripped modulo `block_id` and were alive after 100s;
+Desktop rendering of dividers is pending a check.
 Not inspected: rendering of italic and strike, of `offset` on an
 unbordered ordered list (bordered: rendered `1.`, 2026-11-03), and of the
 trailing `\n` between two paragraphs as a blank line versus a line break.
@@ -2280,14 +2287,14 @@ Errors:
 - `user_not_found` (exit 1): One or more user recipients couldn't be resolved (the message lists every unresolved input).
 - `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset above; the detail names the line.
-- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text` or `header`, a `header` lacks `plain_text` text or has empty text or a `level` that isn't an integer of at least 1, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body, no `header`, and no table attachment).
+- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, `header`, or `divider`, a `header` lacks `plain_text` text or has empty text or a `level` that isn't an integer of at least 1, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body, no `header`, no `divider`, and no table attachment).
 - `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, `--print-payload` without `--markdown` or with a schedule/thread flag, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
 - `not_authed` (exit 2): No session token, or - for a `#name`/bare-name
   channel recipient only - the selected workspace credential cannot be
   resolved.
 
-Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text` or `header`; a `header` has `text` `{"type":"plain_text","text":<non-empty>}` and, when present, an integer `level` of at least 1 (no upper bound - the composer emits 1 through 3, and the API stores 4, which Desktop renders as the small heading; `emoji` and a server-assigned `block_id` pass through); caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block, a `header`, or a table attachment - a header-only draft survives reconciliation, measured 2026-11-06). A `header` is an absorption boundary: a `rich_text_section` without a trailing `\n` followed by a header and then a list is accepted, since Desktop renders it as paragraph, heading, bullet with no glue (inspected 2026-11-06). The same section directly before a list, in one `rich_text` or across adjacent `rich_text` blocks, is still rejected. Slack's API accepts other top-level block types, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
+Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`, `header`, or `divider`; a `header` has `text` `{"type":"plain_text","text":<non-empty>}` and, when present, an integer `level` of at least 1 (no upper bound - the composer emits 1 through 3, and the API stores 4, which Desktop renders as the small heading; `emoji` and a server-assigned `block_id` pass through); a `divider` needs only its `type` (every other field, including a server-assigned `block_id`, passes through); caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block, a `header`, a `divider`, or a table attachment - a header-only draft and a divider-only draft both survive reconciliation, measured 2026-11-06). A `header` is an absorption boundary: a `rich_text_section` without a trailing `\n` followed by a header and then a list is accepted, since Desktop renders it as paragraph, heading, bullet with no glue (inspected 2026-11-06). A `divider` is not yet treated as one (pending a Desktop check), so the section-before-container state carries across it and `[section without "\n", divider, list]` is rejected. The same section directly before a list, in one `rich_text` or across adjacent `rich_text` blocks, is still rejected. Slack's API accepts other top-level block types, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
 
 Slack API: `drafts.create`
 

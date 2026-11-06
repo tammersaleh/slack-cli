@@ -34,7 +34,7 @@ Constraints already established in this repo (see `docs/draft-messages.md`, `cmd
 - Links: `http`, `https`, `mailto` only; relative or other schemes are `invalid_markdown`. Label is plain text with inherited style (Slack link elements cannot hold nested inlines).
 - Emoji: boundary-aware scanner. `:30:` inside `10:30:45` is not an emoji. `:wave::skin-tone-2:` is one emoji element named `wave::skin-tone-2`.
 - Code spans are opaque: no emoji, mention, or link recognition inside.
-- Unsupported, always `invalid_markdown` with a line: thematic break, image, HTML block, inline HTML, pipe table. (Task-list syntax `- [ ]` is plain text without the GFM extension, so it passes through literally rather than erroring.)
+- Unsupported, always `invalid_markdown` with a line: thematic break (superseded 2026-11-06 by `docs/divider-blocks-plan.md`: a thematic break is now a top-level `divider` block), image, HTML block, inline HTML, pipe table. (Task-list syntax `- [ ]` is plain text without the GFM extension, so it passes through literally rather than erroring.)
 - Absorption is a final pass over the emitted container sequence: when a section precedes list/preformatted/quote, extend the trailing text with `\n` or append `{"type":"text","text":"\n"}` if the last inline is not text. Then the CLI runs `validateBlockShapes` as a backstop.
 - `draft update --markdown` produces a bare blocks array, so `buildIntent` replaces blocks and preserves attachments with no change.
 

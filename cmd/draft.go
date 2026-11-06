@@ -217,25 +217,27 @@ is Block Kit JSON - either a bare array of top-level blocks, or an object
 Markdown subset: paragraphs, headings (# ## ### become header blocks at
 level 1-3, the composer's big/medium/small; deeper clamps to 3; heading text
 is plain, so formatting flattens and a link or mention in a heading is
-rejected), bullet and ordered lists nested to three levels, **bold**,
+rejected), horizontal rules (---, ***, ___ become divider blocks), bullet
+and ordered lists nested to three levels, **bold**,
 *italic* (single star is italic, not Slack-mrkdwn bold), ~~strike~~,
 ` + "`code`" + `, fenced and indented code blocks, > quotes (holding
 paragraphs, lists, and code), [text](https://url), bare URLs, :emoji:,
 <@U01XYZ>, <#C01ABC>, @here/@channel/@everyone. Heading levels past 3,
 formatting inside headings and link text, code-fence language tags, link
 titles, and <#C01ABC|label> labels are dropped. Anything else - @name
-mentions (use <@Uxxx>), ---, images, HTML, pipe tables (use --table) - is
+mentions (use <@Uxxx>), images, HTML, pipe tables (use --table) - is
 rejected with invalid_markdown and a line number rather than dropped.
 --print-payload prints the converted payload and creates nothing.
 
   cat body.md | slack draft create '#general' --markdown
   cat body.md | slack draft create '#general' --markdown --print-payload | jq .blocks
 
-Top-level blocks must be rich_text or header - Slack's draft compose
-editor strips section / divider / context and bare table blocks when the
+Top-level blocks must be rich_text, header, or divider - Slack's draft
+compose editor strips section / context and bare table blocks when the
 user opens the draft. A header is {"type":"header","level":1..3,
 "text":{"type":"plain_text","text":"...","emoji":true}}, the composer's own
-heading shape. A table goes in an attachment instead: put a "table" block
+heading shape; a divider is {"type":"divider"}, its horizontal rule. A
+table goes in an attachment instead: put a "table" block
 in attachments[].blocks[], or use --table to build one from CSV/TSV.
 
 Recipients: one channel (#name, bare name, or Cxxx/Dxxx id), or one or
@@ -972,7 +974,7 @@ func readDraftPayload(cli *CLI, markdown bool) (draftPayload, error) {
 }
 
 // markdownHint summarizes the Markdown subset for the invalid_markdown error.
-const markdownHint = "Supported: paragraphs, headings (# ## ### become header blocks; no links or mentions inside), bullet/ordered lists nested to 3 levels, **bold**, *italic*, ~~strike~~, `code`, fenced code, > quotes (may hold lists and code), [text](https://url), :emoji:, <@Uxxx>, <#Cxxx>, @here. Use --print-payload to inspect the conversion."
+const markdownHint = "Supported: paragraphs, headings (# ## ### become header blocks; no links or mentions inside), horizontal rules (--- becomes a divider block), bullet/ordered lists nested to 3 levels, **bold**, *italic*, ~~strike~~, `code`, fenced code, > quotes (may hold lists and code), [text](https://url), :emoji:, <@Uxxx>, <#Cxxx>, @here. Use --print-payload to inspect the conversion."
 
 // parseDraftPayload accepts either a bare blocks array or a {blocks,
 // attachments} object and shape-validates whatever is present.

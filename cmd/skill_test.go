@@ -210,7 +210,8 @@ func TestSkill_DraftGuidance(t *testing.T) {
 		"One top-level `rich_text` block**, or one per",
 		// Header blocks are draftable and the skill shows the composer's shape.
 		`{"type":"header","level":1,"text":{"type":"plain_text","text":"Big heading","emoji":true}}`,
-		"`rich_text` or `header`",
+		"`rich_text`, `header`, or `divider`",
+		`{"type":"divider"}`,
 		// The absorption rule's fix: trailing newline on the heading section.
 		"must end with `\\n`",
 		// The literal bullet fallback is still documented as an escape hatch.

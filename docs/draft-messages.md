@@ -11,9 +11,10 @@ below.
 
 ## TL;DR
 
-Use rich_text blocks for prose, header blocks for headings, and nothing
-else. For multi-paragraph prose with bullets use sibling containers inside
-one `rich_text`. Everything else is a trap.
+Use rich_text blocks for prose, header blocks for headings, divider blocks
+for horizontal rules, and nothing else. For multi-paragraph prose with
+bullets use sibling containers inside one `rich_text`. Everything else is a
+trap.
 
 ```json
 [{"type":"header","level":1,"text":{"type":"plain_text","text":"Title","emoji":true}},
@@ -29,13 +30,14 @@ Two independent failure modes:
 
 1. **Tombstone.** Slack Desktop sets `is_deleted=true` on any
    server-side draft whose `blocks` array doesn't contain at least one
-   `rich_text` block with non-empty `elements` or a `header` block.
-   Lands within seconds of the user opening the Drafts panel.
+   `rich_text` block with non-empty `elements`, a `header` block, or a
+   `divider` block. Lands within seconds of the user opening the Drafts
+   panel.
 2. **Strip.** Slack Desktop's Drafts compose editor (the panel the
    user opens to review and send) silently discards every top-level
-   block that is not `rich_text` or `header` when it renders the draft. A
-   `[rich_text, section, divider]` array ships fine to the API but the
-   user only sees the rich_text content. Not reversible - once
+   block that is not `rich_text`, `header`, or `divider` when it renders
+   the draft. A `[rich_text, section]` array ships fine to the API but
+   the user only sees the rich_text content. Not reversible - once
    rendered for edit, the stripped content never comes back.
 
 Block type is the only variable that matters. Host, user-agent, TLS
@@ -129,6 +131,39 @@ paragraphs and a list:
   a paragraph, a heading, and a bullet. No glue. A header is a boundary
   for section-before-container absorption, so the validator resets its
   state at one.
+
+### Divider blocks (2026-11-06)
+
+The compose editor's formatting bar also offers a horizontal rule. A
+composer-authored draft with text, rule, text, rule, text reads back as
+`rich_text, divider, rich_text, divider, rich_text`, each divider a bare
+`{"type":"divider"}` plus a server-assigned `block_id`. Not tombstoned.
+This supersedes the May 2026 matrix rows and the DOM observation that a
+divider is dropped: a composer-authored divider is kept.
+
+Probes through the CLI's session client (self-DM, read back byte-identical
+modulo `block_id`, alive after 100s):
+
+| payload | result |
+|---|---|
+| `[divider]` only | accepted, alive (a divider is renderable content) |
+| `[rich_text(section without "\n"), divider, rich_text(list)]` | accepted, round-trips |
+| `[divider, rich_text, divider, divider, header, divider]` | accepted, round-trips, double divider stored as two |
+
+So `validateBlockShapes` admits `divider` beside `rich_text` and `header`,
+checks only its `type` (every other field passes through), and counts it
+as renderable content. The Markdown converter emits one for any CommonMark
+thematic break (`---`, `***`, `___`), flushing the rich_text run around it,
+so leading, trailing, and consecutive rules each become a divider. A rule
+inside a quote or list item keeps the container rejection. `Title`
+directly followed by `---` is a Setext heading, not a divider.
+
+Desktop rendering is pending a check: divider-only, leading and trailing,
+consecutive dividers, and whether a divider is an absorption boundary (the
+`[section without "\n", divider, list]` probe). Until then the validator
+carries the section-before-container state across a divider, so that
+payload is rejected like the same section and list with nothing between
+them.
 
 ### Quoted lists and code (2026-11-03)
 
@@ -333,10 +368,10 @@ same `user_ids`, only blocks and the carrier vary:
 | section+mrkdwn        | slack.com         | Chrome | standalone | no            |
 | section+mrkdwn        | workspace.ent     | SSB    | slack-cli  | no            |
 | section+plain_text    | workspace.ent     | SSB    | slack-cli  | no            |
-| divider only          | workspace.ent     | SSB    | slack-cli  | no            |
+| divider only (2026-05) | workspace.ent    | SSB    | slack-cli  | no (superseded by composer-authored divider support observed 2026-11-06: yes, alive after 100s) |
 | header only (2026-05) | workspace.ent     | SSB    | slack-cli  | no (superseded: yes on 2026-11-06, see Header blocks) |
 | context only          | workspace.ent     | SSB    | slack-cli  | no            |
-| [section, divider]    | workspace.ent     | SSB    | slack-cli  | no            |
+| [section, divider] (2026-05) | workspace.ent | SSB   | slack-cli  | no (superseded 2026-11-06: a divider alone is renderable, see Divider blocks) |
 | [rich_text, section]  | workspace.ent     | SSB    | slack-cli  | yes           |
 | [section, rich_text]  | workspace.ent     | SSB    | slack-cli  | yes           |
 | [rich_text, divider]  | workspace.ent     | SSB    | slack-cli  | yes           |
@@ -344,8 +379,9 @@ same `user_ids`, only blocks and the carrier vary:
 | rich_text, single space text | workspace.ent | SSB | slack-cli | no            |
 | rich_text, `"x"` text | workspace.ent     | SSB    | slack-cli  | yes           |
 
-Presence of one non-empty `rich_text` block, anywhere in the array, is
-the hinge.
+Presence of one non-empty `rich_text` block, anywhere in the array, was
+the hinge when this matrix was measured; `header` (2026-11-06) and
+`divider` (2026-11-06) now count too.
 
 ## How to repro
 
@@ -400,10 +436,11 @@ render correctly either.
 When the user opens a draft in Slack's Drafts compose editor (Desktop
 or `app.slack.com`), the client reads the `blocks` array and rebuilds
 a local representation for editing. That rebuild path only understands
-`rich_text` and, since the composer grew its own headings (2026-11-06),
-`header`. Every other top-level block type - `section`, `divider`,
-`context` - is dropped. The draft is still alive on the server, but the
-user only sees the rich_text and header content. Any `section` they'd
+`rich_text` and, since the composer grew its own headings and horizontal
+rule (2026-11-06), `header` and `divider`. Every other top-level block
+type - `section`, `context` - is dropped. The draft is still alive on the
+server, but the user only sees the rich_text, header, and divider
+content. Any `section` they'd
 hoped to surface (mrkdwn prose) is gone. It doesn't come back when the
 draft is subsequently sent.
 
@@ -475,7 +512,10 @@ Observed in the compose editor:
 
 - `SECTION` absent from both `innerText` and `innerHTML` of
   `[data-qa="message_input_container"]` - not hidden, truly absent.
-- No `<hr>` in the DOM - divider also dropped.
+- No `<hr>` in the DOM - divider also dropped. (Superseded by
+  composer-authored divider support observed 2026-11-06: the composer
+  now stores `divider` blocks itself, so the rebuild keeps them. Desktop
+  rendering of a CLI-authored divider is pending a check.)
 - One `<ul>` with two `<li>`s; the first reads
   `"INTROlist-A"` (intro rich_text absorbed into the following list's
   first item despite being a separate top-level block).
@@ -650,10 +690,10 @@ same way - block content, nothing else.
 `validateBlockShapes` in `cmd/draft.go` rejects three shapes of draft
 payload:
 
-1. Arrays with no non-empty `rich_text` block and no `header` (would
-   ghost).
-2. Arrays containing a top-level block that is neither `rich_text` nor
-   `header` (would ship fine but get stripped by Desktop's compose
+1. Arrays with no non-empty `rich_text` block, no `header`, and no
+   `divider` (would ghost).
+2. Arrays containing a top-level block that is not `rich_text`, `header`,
+   or `divider` (would ship fine but get stripped by Desktop's compose
    editor).
 3. A `header` whose text is not non-empty `plain_text`, or whose `level`
    is not an integer of at least 1 (Slack answers `invalid_message`).
@@ -691,8 +731,9 @@ Symptoms to watch for:
   our rich_text validation passing. The reconciliation rule changed.
 
 - A mixed-block draft (staged via curl to bypass CLI validation)
-  suddenly renders `section` / `divider` content in the compose editor.
+  suddenly renders `section` / `context` content in the compose editor.
   The strip rule relaxed; our validation is now unnecessarily strict.
+  This happened for `header` and `divider` on 2026-11-06.
 
 - `drafts.create` rejects previously-valid payloads
   (`invalid_arg_name`, new required fields, etc.). The wire format

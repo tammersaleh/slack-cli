@@ -413,8 +413,9 @@ Ping <@U01XYZ> or @here. :tada:
 MD
 ```
 
-The CLI converts the Markdown to a `header` block per heading and one
-`rich_text` block per run of content between headings, then runs it through
+The CLI converts the Markdown to a `header` block per heading, a `divider`
+block per horizontal rule, and one `rich_text` block per run of content
+between them, then runs it through
 the same shape validation as hand-written JSON. `--print-payload` prints the
 converted `{"blocks":[...]}` (plus `attachments` with `--table`) and creates
 nothing - use it to inspect a conversion. `--table` composes: Markdown body
@@ -424,6 +425,7 @@ Supported:
 
 - Paragraphs. A line break inside a paragraph (soft or hard) stays a line break. Every paragraph that has something after it ends with `\n`, so a Markdown paragraph break is at least a line break in Slack.
 - Headings: `#`, `##`, `###` (and Setext) become `header` blocks at level 1, 2, 3 - the composer's big, medium, and small headings. `####` and deeper clamp to 3. Header text is plain text: bold, italic, strike, and code inside a heading flatten to their text, `:emoji:` stays as `:emoji:` text (the block carries `emoji: true`). A link, bare URL, email, `<@U…>`, `<#C…>`, or `@here` inside a heading is rejected - a header cannot carry them, so put them in the paragraph below.
+- Horizontal rules: `---`, `***`, `___` (any CommonMark thematic break) become `divider` blocks, the composer's own horizontal rule. Put a blank line between a paragraph and `---`; `Title` directly followed by `---` is a Setext heading.
 - `- ` / `* ` bullets and `1.` ordered lists, nested to three levels by indentation. An ordered list may start at any number; numbering continues across a nested list.
 - `**bold**`, `*italic*`, `~~strike~~` (two tildes, GFM), `` `code` ``. Single `*` is italic, Markdown semantics - not Slack mrkdwn, where it is bold.
 - Fenced and indented code blocks. The fence language tag is dropped.
@@ -439,17 +441,21 @@ formatting, and the `<#C|label>` label.
 Everything else outside the subset is rejected with `invalid_markdown` and a
 line number:
 `@name` mentions (resolve the id first with `slack user info @name` and write
-`<@Uxxx>`), horizontal rules, images, HTML, pipe tables (use `--table`), a
+`<@Uxxx>`), images, HTML, pipe tables (use `--table`), a
 list nested more than three deep, a list item with more than one paragraph,
 a quote inside a quote, a mention or emoji
-inside link text, a link or mention inside a heading, a relative or
+inside link text, a link or mention inside a heading, a heading or
+horizontal rule inside a quote or list item, a relative or
 non-http(s)/mailto link, and an empty heading, list item, quote, or code
 block (Slack rejects an empty text inline).
 
 Verified live 2026-10-16 through the drafts API: every construct above round-trips
 through `drafts.create` and `drafts.list` byte for byte and survives the
 reconciliation window; header blocks the same way on 2026-11-06 (a
-header-only draft and a header / rich_text / header mix, alive after 60s).
+header-only draft and a header / rich_text / header mix, alive after 60s);
+divider blocks too (a divider-only draft and a divider / rich_text / divider
+/ divider / header / divider mix, alive after 100s; Desktop rendering of
+dividers is pending a check).
 Desktop compose box, inspected 2026-11-06: headings render at three sizes,
 `level` 4 as the small heading, `:emoji:` in a header as the emoji, and a
 paragraph before a header looks the same with or without its trailing `\n`.
@@ -463,12 +469,13 @@ the client the first time you rely on one of those.
 
 stdin is either a bare array of top-level blocks (prose), or an object
 `{"blocks":[...],"attachments":[...]}`. Top-level blocks must be
-`rich_text` or `header` - Slack's draft compose editor strips every other
-top-level block type when the user opens the draft. A `header` is the
-composer's own heading shape:
+`rich_text`, `header`, or `divider` - Slack's draft compose editor strips
+every other top-level block type when the user opens the draft. A `header`
+is the composer's own heading shape and a `divider` its horizontal rule:
 
 ```json
 {"type":"header","level":1,"text":{"type":"plain_text","text":"Big heading","emoji":true}}
+{"type":"divider"}
 ```
 
 `level` 1, 2, 3 are the composer's big, medium, and small headings; the
@@ -476,8 +483,9 @@ API also stores an omitted level and a higher one, which Desktop renders as
 the small heading (inspected 2026-11-06).
 `text` must be `plain_text` with non-empty text - `mrkdwn` and an empty
 string are `invalid_message` server-side, so the CLI rejects them locally.
-A draft needs renderable content: at least one `rich_text` block with
-non-empty `elements`, a `header`, **or** a table attachment - one with none
+A `divider` needs only its `type`. A draft needs renderable content: at
+least one `rich_text` block with non-empty `elements`, a `header`, a
+`divider`, **or** a table attachment - one with none
 of those is tombstoned. **Tables go in attachments,
 not top-level blocks** (see Tabular data). The CLI rejects bad shapes up
 front with `invalid_blocks`.
@@ -485,7 +493,7 @@ front with `invalid_blocks`.
 ##### Block types that look right but break
 
 Slack's public docs describe several block types you might reach for.
-For drafts specifically, only `rich_text` and `header` work. The CLI catches
+For drafts specifically, only `rich_text`, `header`, and `divider` work. The CLI catches
 the cases below at validation - you'll see `invalid_blocks` locally,
 not the Slack-side failure - but knowing the underlying reason makes
 the rejection less surprising and discourages bypassing the CLI:
@@ -512,18 +520,20 @@ the rejection less surprising and discourages bypassing the CLI:
   `drafts.delete` then fails with `draft_delete_invalid`
   because the record is already marked deleted - a leaked draft
   that the user can't see and you can't clean up.
-- **Mixed top-level blocks** (`[rich_text, section, divider]`):
+- **Mixed top-level blocks** (`[rich_text, section, context]`):
   the Drafts compose editor silently strips every block that is not
-  `rich_text` or `header` when the user opens the draft, so the user
-  sees only the rich_text content. Section-only or divider-only arrays -
-  i.e. no rich_text or header at all - get tombstoned by the
-  reconciliation pass within seconds, same mechanism as the previous
-  bullet.
+  `rich_text`, `header`, or `divider` when the user opens the draft, so
+  the user sees only the rich_text, header, and divider content.
+  Section-only or context-only arrays - i.e. no rich_text, header, or
+  divider at all - get tombstoned by the reconciliation pass within
+  seconds, same mechanism as the previous bullet. (`divider` was in
+  this list until 2026-11-06, when the composer was observed emitting
+  it.)
 - **Multiple top-level `rich_text` blocks expecting paragraph
   breaks between them**: Desktop flattens adjacent rich_text blocks
   into one before rendering. Emit one `rich_text` block per run of
-  content between `header` blocks (a single one when there are no
-  headings); use multiple inner containers (`rich_text_section`,
+  content between `header` and `divider` blocks (a single one when
+  there are neither); use multiple inner containers (`rich_text_section`,
   `rich_text_list`, `rich_text_preformatted`, `rich_text_quote`) for
   structure. A `header` between two rich_text blocks is a boundary: the
   section terminator rule below does not apply across one (inspected
@@ -539,6 +549,9 @@ the rejection less surprising and discourages bypassing the CLI:
   `{"type":"text","text":"\n"}`, or grow the last
   text element). The check spans adjacent rich_text blocks, because
   Desktop flattens them first, but a `header` between them resets it.
+  A `divider` between them does not (yet): whether Desktop treats a
+  divider as a boundary is pending a check, so terminate the section
+  with `\n` before a divider too.
 
 ##### rich_text (structured)
 
@@ -680,7 +693,7 @@ fallback that reads naturally.
 ##### Default pattern: one rich_text with sibling containers
 
 Use this for every draft. **One top-level `rich_text` block**, or one per
-run of content between `header` blocks. Inside it, use as many
+run of content between `header` and `divider` blocks. Inside it, use as many
 `rich_text_section` / `rich_text_list` / `rich_text_preformatted` /
 `rich_text_quote` containers as you need; they're siblings, not nested.
 This is the shape Slack's own compose editor produces. For a titled
@@ -797,9 +810,10 @@ terminator rule above).
 ##### Validation
 
 The CLI checks: non-empty JSON array; every top-level block is a
-`rich_text` or a `header`; a `header` has `plain_text` text that is
-non-empty and, when `level` is present, an integer of at least 1; at least
-one `rich_text` has a non-empty `elements` array or a `header` is present;
+`rich_text`, a `header`, or a `divider`; a `header` has `plain_text` text
+that is non-empty and, when `level` is present, an integer of at least 1;
+a `divider` needs only its `type`; at least one `rich_text` has a non-empty
+`elements` array or a `header` or `divider` is present;
 and a `rich_text_section`
 directly preceding `rich_text_list`, `rich_text_preformatted`,
 or `rich_text_quote` must terminate with a text inline whose
