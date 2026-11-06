@@ -331,7 +331,7 @@ func TestDraftUpdate_MarkdownConversionErrorMakesNoCalls(t *testing.T) {
 		calls.Add(1)
 		http.Error(w, "unexpected call to "+r.URL.Path, 500)
 	})
-	_, err := runWithMockSessionStdin(t, "a\n\n---\n", h, "draft", "update", "Dr01234", "--markdown")
+	_, err := runWithMockSessionStdin(t, "a\n\n![alt](https://example.com/a.png)\n", h, "draft", "update", "Dr01234", "--markdown")
 	var oe *output.Error
 	if !errors.As(err, &oe) || oe.Err != "invalid_markdown" {
 		t.Fatalf("want invalid_markdown, got %v", err)

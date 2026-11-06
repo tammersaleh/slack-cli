@@ -1,8 +1,9 @@
 // Package mdblocks converts a Markdown document into the Block Kit JSON a
-// Slack draft accepts: header blocks for headings, and one top-level
-// rich_text block per run of rich_text_section / rich_text_list /
-// rich_text_quote / rich_text_preformatted containers between them, in
-// source order. A document with no headings is exactly one rich_text block.
+// Slack draft accepts: header blocks for headings, divider blocks for
+// thematic breaks, and one top-level rich_text block per run of
+// rich_text_section / rich_text_list / rich_text_quote /
+// rich_text_preformatted containers between them, in source order. A
+// document with neither is exactly one rich_text block.
 //
 // It is pure - no network, no Slack client. Mentions are accepted only in
 // the explicit <@Uxxx> form; anything the supported subset cannot represent
@@ -48,8 +49,8 @@ func (e *Error) Error() string {
 	return e.Detail
 }
 
-// Convert renders src into a JSON array of top-level blocks: header blocks
-// interleaved with one rich_text block per run of containers.
+// Convert renders src into a JSON array of top-level blocks: header and
+// divider blocks interleaved with one rich_text block per run of containers.
 func Convert(src []byte) ([]byte, error) {
 	md := goldmark.New(
 		goldmark.WithExtensions(extension.Strikethrough, extension.Linkify, extension.Table),
@@ -73,14 +74,14 @@ func Convert(src []byte) ([]byte, error) {
 
 type converter struct {
 	src []byte
-	// items is the flat sequence of rich_text containers and header blocks
-	// in source order; blocks groups it at the end.
+	// items is the flat sequence of rich_text containers, header blocks, and
+	// divider blocks in source order; blocks groups it at the end.
 	items []map[string]any
 }
 
-// blocks groups items into top-level blocks: each header stands alone and
-// each maximal run of containers becomes one rich_text block, so no
-// rich_text is ever empty and no two are adjacent.
+// blocks groups items into top-level blocks: each header and divider stands
+// alone and each maximal run of containers becomes one rich_text block, so
+// no rich_text is ever empty and no two are adjacent.
 func (c *converter) blocks() []map[string]any {
 	var out []map[string]any
 	var run []map[string]any
@@ -91,7 +92,7 @@ func (c *converter) blocks() []map[string]any {
 		}
 	}
 	for _, it := range c.items {
-		if it["type"] == "header" {
+		if topLevelType(it["type"]) {
 			flush()
 			out = append(out, it)
 			continue
@@ -100,6 +101,12 @@ func (c *converter) blocks() []map[string]any {
 	}
 	flush()
 	return out
+}
+
+// topLevelType reports whether an item is emitted as its own top-level
+// block rather than grouped into a rich_text run.
+func topLevelType(t any) bool {
+	return t == "header" || t == "divider"
 }
 
 // style is the inherited inline formatting at a point in the walk.
@@ -156,7 +163,10 @@ func (c *converter) block(n ast.Node) error {
 	case *ast.Blockquote:
 		return c.quote(v)
 	case *ast.ThematicBreak:
-		return c.errAt(n, "a horizontal rule (---) has no rich_text equivalent; remove it")
+		// Any CommonMark spelling (---, ***, ___, with optional spaces)
+		// becomes the composer's divider block. Goldmark resolves
+		// `Title\n---` as a Setext heading before this case sees it.
+		c.push(map[string]any{"type": "divider"})
 	case *ast.HTMLBlock:
 		return c.errAt(n, "HTML is not supported in draft Markdown")
 	case *east.Table:
@@ -737,11 +747,12 @@ func ensureTrailingNewline(elems []map[string]any) []map[string]any {
 // container would otherwise swallow the section). For a following section
 // it preserves the Markdown paragraph break: Slack's own composer stores
 // paragraph structure as "\n" inside text, so two bare adjacent sections
-// are at best one line apart and at worst glued. A following header counts
-// as a successor too, for uniformity: a header breaks absorption and
-// supplies its own spacing, so a paragraph with and without the trailing
-// "\n" before a header renders identically (inspected 2026-11-06,
-// docs/header-blocks-plan.md). Whether the trailing "\n" before another
+// are at best one line apart and at worst glued. A following header or
+// divider counts as a successor too, for uniformity: a header breaks
+// absorption and supplies its own spacing, so a paragraph with and without
+// the trailing "\n" before a header renders identically (inspected
+// 2026-11-06, docs/header-blocks-plan.md); the same before a divider is
+// pending a Desktop check. Whether the trailing "\n" before another
 // paragraph renders as a blank line or a line break in the compose box
 // is pending a Desktop check (docs/draft-messages.md).
 func (c *converter) applyAbsorptionRule() {
