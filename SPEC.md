@@ -2151,11 +2151,13 @@ link, emoji, user, channel, or broadcast). Before a list, quote, or code
 block that is the absorption rule; before another section it keeps the
 Markdown paragraph break from collapsing, since Slack's own composer
 encodes paragraph structure as `\n` inside text rather than as section
-boundaries; before a `header` it is kept because `validateBlockShapes`
-does not treat a header as an absorption boundary. Whether it renders as a
-blank line or one line break in the compose box is pending a Desktop check. The converter does this itself;
-`validateBlockShapes` stays as the backstop, so `invalid_blocks` after a
-successful conversion means a converter defect.
+boundaries; before a `header` it is kept for uniformity, since a header
+is an absorption boundary and renders the same with or without it
+(inspected 2026-11-06). Whether it renders as a blank line or one line
+break before another section in the compose box is pending a Desktop
+check. The converter does this itself; `validateBlockShapes` stays as the
+backstop, so `invalid_blocks` after a successful conversion means a
+converter defect.
 
 Rejected with `invalid_markdown` (exit 1), detail prefixed `line N:`:
 

@@ -120,9 +120,21 @@ func TestValidateBlockShapes_HeaderResetsAbsorption(t *testing.T) {
 	}
 
 	// Across two rich_text blocks with no header between them: still rejected
-	// (Desktop flattens adjacent rich_text blocks).
-	if _, err := validateBlockShapes([]byte(`[` + unterminated + `,` + headerList + `]`)); err == nil {
-		t.Fatal("expected invalid_blocks: unterminated section then list across adjacent rich_text blocks")
+	// (Desktop flattens adjacent rich_text blocks), and the detail names the
+	// section in the earlier block.
+	_, err = validateBlockShapes([]byte(`[` + unterminated + `,` + headerList + `]`))
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("unterminated section then list across adjacent rich_text blocks: want invalid_blocks, got %v", err)
+	}
+	if !strings.Contains(oe.Detail, "blocks[0].elements[0]") {
+		t.Errorf("detail should name the section at blocks[0].elements[0], got %q", oe.Detail)
+	}
+
+	// State after a header is tracked normally: a reset must not disable the
+	// check for the rest of the draft.
+	_, err = validateBlockShapes([]byte(`[` + header + `,` + unterminated + `,` + headerList + `]`))
+	if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
+		t.Fatalf("header then unterminated section then list: want invalid_blocks, got %v", err)
 	}
 }
 
