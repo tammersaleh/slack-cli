@@ -144,6 +144,8 @@ func TestValidateBlockShapes_StillRejectsOtherTypes(t *testing.T) {
 	for _, blocks := range []string{
 		`[{"type":"section","text":{"type":"mrkdwn","text":"x"}}]`,
 		`[{"type":"context","elements":[]}]`,
+		// A leading divider must not mask a later unsupported block.
+		`[{"type":"divider"},{"type":"actions","elements":[]}]`,
 	} {
 		_, err := validateBlockShapes([]byte(blocks))
 		var oe *output.Error

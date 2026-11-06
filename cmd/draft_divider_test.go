@@ -42,25 +42,6 @@ func TestValidateBlockShapes_AcceptsDividers(t *testing.T) {
 	}
 }
 
-// The generic rejection names every allowed top-level type.
-func TestValidateBlockShapes_GenericRejectionNamesAllThreeTypes(t *testing.T) {
-	for _, blocks := range []string{
-		`[{"type":"section","text":{"type":"mrkdwn","text":"x"}}]`,
-		`[{"type":"context","elements":[]}]`,
-		`[` + divider + `,{"type":"actions","elements":[]}]`,
-	} {
-		_, err := validateBlockShapes([]byte(blocks))
-		var oe *output.Error
-		if !errors.As(err, &oe) || oe.Err != "invalid_blocks" {
-			t.Errorf("%s: expected invalid_blocks, got %v", blocks, err)
-			continue
-		}
-		if !strings.Contains(oe.Detail, "rich_text, header, and divider") {
-			t.Errorf("%s: generic rejection should name all three allowed types, got %q", blocks, oe.Detail)
-		}
-	}
-}
-
 func TestErrNoRenderableContent_NamesDivider(t *testing.T) {
 	var oe *output.Error
 	if !errors.As(errNoRenderableContent(), &oe) {
