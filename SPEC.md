@@ -143,7 +143,9 @@ With `--trace`, structured diagnostics go to stderr as JSONL. Each event
 carries `ts`, `kind`, and kind-specific attributes. Current kinds:
 
 - `page` - one per paginated page fetch (`endpoint`, `attempt`, `items`,
-  `latency_ms`, `has_more`, `error`)
+  `latency_ms`, `has_more`, `error`). The page-number commands (`search
+  messages`, `search files`, `file list`, `list find`) add `total`, the result
+  count Slack sent with that page; a failed attempt has none.
 - `call` - one per single-shot request through the shared retry (`endpoint`,
   `attempt`, `latency_ms`, `error`); `channel invite`, `channel kick`, the
   `users.info` and `users.profile.get` fetches of `user info` and
@@ -1157,6 +1159,46 @@ keeps `skypilot` as free text. Quoted forms `from:"Alice Adams"`, `from:"@Alice 
 resolve fails with `user_not_found` (exit 1) before any search call. A name two
 users share resolves to whichever the cache indexed first. Applies to `search
 files` too.
+
+##### `total` in the trailer
+
+The trailer of `search messages`, `search files`, `file list`, and `list find`
+carries `total`: the size of the result set as Slack reported it on the first
+page the command fetched.
+
+```
+$ slack search messages "deploy failed" --limit=2
+...2 rows...
+{"_meta":{"has_more":true,"next_cursor":"2","total":1357}}
+
+$ slack search messages "deploy failed after:2030-01-01"
+{"_meta":{"has_more":false,"total":0}}
+```
+
+It is there so an empty or short result can be checked against what Slack said
+exists. `total:0` beside zero rows is Slack stating that nothing matched. A
+nonzero `total` beside zero rows, or a finished `--all` walk
+(`has_more:false`, no `error`) with fewer rows than `total`, means rows went
+missing and the output is not the result set.
+
+What it does not promise:
+
+- It is Slack's number, passed through. The CLI does not compare it to the rows
+  emitted and raises no error on a mismatch.
+- `total:0` is only as good as Slack's search index at that moment. An agent
+  once received clean empty pages for windows that held over a thousand hits an
+  hour later. Whether Slack reported 0 or a real count on those pages is
+  unknown, since the responses were not kept. `total` distinguishes "Slack said
+  nothing matched" from "rows were dropped", not a wrong answer from a right
+  one.
+- It can exceed what one query can reach. Past 10,000 results the walk ends in
+  `search_page_limit` and `total` shows how much lies beyond it.
+- It is a snapshot from the first page. New messages can arrive during a walk.
+- It is absent when no page arrived (the first request failed, or the page
+  asked for was refused), and on every cursor-based command.
+
+In two measured `--all` walks of 11 and 12 pages (2026-11-10) the rows emitted
+equaled `total` exactly.
 
 ##### The 100-page cap
 

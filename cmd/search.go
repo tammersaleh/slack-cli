@@ -94,7 +94,8 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]slack.SearchMessage, *slack.Paging, error) {
+	walk := searchPageWalk()
+	fetch := pageCursorFetch(walk, func(page int) ([]slack.SearchMessage, *slack.Paging, error) {
 		msgs, err := client.User().SearchMessagesContext(ctx, query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,
@@ -114,7 +115,7 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 			}
 		}
 		return nil
-	})
+	}, walk.report())
 }
 
 type SearchFilesCmd struct {
@@ -168,7 +169,8 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]slack.File, *slack.Paging, error) {
+	walk := searchPageWalk()
+	fetch := pageCursorFetch(walk, func(page int) ([]slack.File, *slack.Paging, error) {
 		files, err := client.User().SearchFilesContext(ctx, query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,
@@ -188,7 +190,7 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 			}
 		}
 		return nil
-	})
+	}, walk.report())
 }
 
 func fileToMap(f slack.File) map[string]any          { return toMap(f) }

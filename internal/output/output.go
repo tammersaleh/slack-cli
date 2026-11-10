@@ -67,6 +67,12 @@ type Meta struct {
 	// output does not. Pointers so zero is emitted when Slack reported it.
 	RowCount         *int `json:"row_count,omitempty"`
 	ArchivedRowCount *int `json:"archived_row_count,omitempty"`
+	// Total is the size of the result set as Slack reported it on the first
+	// page a page-number command fetched (search, file list). Nil (key absent)
+	// for cursor-based commands and when no page arrived. A pointer because 0
+	// is the meaningful value: it is Slack saying nothing matched, as opposed
+	// to rows that went missing.
+	Total *int `json:"total,omitempty"`
 }
 
 type metaWrapper struct {

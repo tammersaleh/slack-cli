@@ -167,13 +167,13 @@ type recordsListResponse struct {
 // Applied to every trailer, failures included, since the limits came with a
 // page that was read successfully.
 func withListLimits(limits **listLimits) streamOption {
-	return func(m *output.Meta) {
+	return withMeta(func(m *output.Meta) {
 		if l := *limits; l != nil {
 			rc, arc := l.RowCount, l.ArchivedRowCount
 			m.RowCount = &rc
 			m.ArchivedRowCount = &arc
 		}
-	}
+	})
 }
 
 func (c *ListRecordsCmd) Run(cli *CLI) error {
@@ -291,7 +291,8 @@ func (c *ListFindCmd) Run(cli *CLI) error {
 	// become spaces, which keeps the rest of the phrase matching.
 	query := `type:list "` + strings.ReplaceAll(title, `"`, " ") + `"`
 
-	fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]slack.File, *slack.Paging, error) {
+	walk := searchPageWalk()
+	fetch := pageCursorFetch(walk, func(page int) ([]slack.File, *slack.Paging, error) {
 		data, err := client.PostInternalForm(ctx, "search.files", map[string]string{
 			"query": query,
 			"count": strconv.Itoa(limit),
@@ -321,5 +322,5 @@ func (c *ListFindCmd) Run(cli *CLI) error {
 			}
 		}
 		return nil
-	})
+	}, walk.report())
 }

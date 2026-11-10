@@ -91,7 +91,8 @@ func (c *FileListCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	fetch := pageCursorFetch(filePageWalk(), func(page int) ([]slack.File, *slack.Paging, error) {
+	walk := filePageWalk()
+	fetch := pageCursorFetch(walk, func(page int) ([]slack.File, *slack.Paging, error) {
 		return client.Bot().GetFilesContext(ctx, slack.GetFilesParameters{
 			Channel: channelID,
 			User:    userID,
@@ -108,7 +109,7 @@ func (c *FileListCmd) Run(cli *CLI) error {
 			}
 		}
 		return nil
-	})
+	}, walk.report())
 }
 
 type FileInfoCmd struct {

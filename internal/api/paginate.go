@@ -75,20 +75,35 @@ func PaginateEach[T any](ctx context.Context, endpoint string, fetch PageFunc[T]
 // times and honoring Retry-After. Use it for streaming pagination, where the
 // caller emits each page as it arrives instead of collecting them; Paginate
 // and PaginateEach are built on the same retry behavior.
-func FetchPage[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T]) ([]T, string, error) {
+//
+// Each trace function is called after every attempt and its fields are added
+// to that attempt's page event. It lets a caller record something the page
+// carried beyond items and cursor - the result total a page-number API
+// reports, say - without widening PageFunc for every other caller.
+func FetchPage[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T], trace ...TraceFields) ([]T, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
-	return fetchWithRetry(ctx, endpoint, cursor, fetch)
+	return fetchWithRetry(ctx, endpoint, cursor, fetch, trace...)
 }
 
-func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T]) ([]T, string, error) {
+// TraceFields returns extra fields for the trace event of the attempt that
+// just ran. It must not block or fail.
+type TraceFields func() map[string]any
+
+func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch PageFunc[T], trace ...TraceFields) ([]T, string, error) {
 	var items []T
 	var next string
 	err := retry(ctx, endpoint, "page", func() (map[string]any, error) {
 		var err error
 		items, next, err = fetch(cursor)
-		return map[string]any{"items": len(items), "has_more": next != ""}, err
+		fields := map[string]any{"items": len(items), "has_more": next != ""}
+		for _, extra := range trace {
+			for k, v := range extra() {
+				fields[k] = v
+			}
+		}
+		return fields, err
 	})
 	if err != nil {
 		return nil, "", err

@@ -10,10 +10,23 @@ import (
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
-// streamOption adjusts the trailer streamPages emits. Options are applied to
-// every trailer, including the ones written on failure, so a marker can't be
-// reported on a clean run and forgotten on a truncated one.
-type streamOption func(*output.Meta)
+// streamOption adjusts what streamPages reports about a walk: the trailer, and
+// the page trace events.
+type streamOption func(*streamConfig)
+
+type streamConfig struct {
+	// meta functions are applied to every trailer, including the ones written
+	// on failure, so a marker can't be reported on a clean run and forgotten
+	// on a truncated one.
+	meta []func(*output.Meta)
+	// trace functions add fields to each page trace event.
+	trace []api.TraceFields
+}
+
+// withMeta is the streamOption for a trailer-only adjustment.
+func withMeta(f func(*output.Meta)) streamOption {
+	return func(c *streamConfig) { c.meta = append(c.meta, f) }
+}
 
 // withClientSideFilter records that a client-side filter (--query,
 // --has-unread) is active, so the trailer states whether that filter saw every
@@ -21,10 +34,10 @@ type streamOption func(*output.Meta)
 // Slack had no further pages: anything else means an empty result could be
 // hiding matches the command never looked at.
 func withClientSideFilter() streamOption {
-	return func(m *output.Meta) {
+	return withMeta(func(m *output.Meta) {
 		exhaustive := m.Error == "" && !m.HasMore
 		m.FilterExhaustive = &exhaustive
-	}
+	})
 }
 
 // streamPages drives the pagination loop shared by every list command: fetch
@@ -71,17 +84,22 @@ func streamPages[T any](
 		seen[cursor] = true
 	}
 
-	// printMeta applies every option before writing, so options see the final
-	// has_more and error and can key off them.
+	var cfg streamConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	// printMeta applies every meta option before writing, so options see the
+	// final has_more and error and can key off them.
 	printMeta := func(meta output.Meta) error {
-		for _, opt := range opts {
-			opt(&meta)
+		for _, apply := range cfg.meta {
+			apply(&meta)
 		}
 		return p.PrintMeta(meta)
 	}
 
 	for {
-		items, next, err := api.FetchPage(ctx, endpoint, cursor, fetch)
+		items, next, err := api.FetchPage(ctx, endpoint, cursor, fetch, cfg.trace...)
 		if err != nil {
 			oErr, resumable := streamError(cli, err)
 			meta := output.Meta{Error: oErr.Err}
@@ -134,8 +152,30 @@ const slackMaxPage = 100
 // pageWalk is the per-command state of a walk over a page-number API.
 // pageLimit builds the error for a page above slackMaxPage, so each endpoint
 // can name its own way around the cap.
+//
+// It also remembers the result total Slack reports in each page's paging
+// block. total is the first fetched page's, which is what the trailer shows:
+// the size of the result set the walk set out to read. pageTotal is the latest
+// attempt's, nil when that attempt failed, and goes on the page trace event.
 type pageWalk struct {
 	pageLimit func(page int) *output.Error
+	total     *int
+	pageTotal *int
+}
+
+// report is the streamOption that puts the walk's totals in the trailer and on
+// the page trace events. The trailer gets total on every path, failures
+// included, and omits it only when no page arrived.
+func (w *pageWalk) report() streamOption {
+	return func(c *streamConfig) {
+		c.meta = append(c.meta, func(m *output.Meta) { m.Total = w.total })
+		c.trace = append(c.trace, func() map[string]any {
+			if w.pageTotal == nil {
+				return nil
+			}
+			return map[string]any{"total": *w.pageTotal}
+		})
+	}
 }
 
 // searchPageWalk is the walk for search.messages and search.files.
@@ -181,6 +221,7 @@ func pageLimitDetail(what string, page int) string {
 // returning page 1 with exit 0.
 func pageCursorFetch[T any](w *pageWalk, fetch func(page int) ([]T, *slack.Paging, error)) api.PageFunc[T] {
 	return func(cursor string) ([]T, string, error) {
+		w.pageTotal = nil
 		page, err := parsePageCursor(cursor)
 		if err != nil {
 			return nil, "", err
@@ -192,7 +233,15 @@ func pageCursorFetch[T any](w *pageWalk, fetch func(page int) ([]T, *slack.Pagin
 		if err != nil {
 			return nil, "", err
 		}
-		if paging == nil || paging.Page >= paging.Pages {
+		if paging == nil {
+			return items, "", nil
+		}
+		total := paging.Total
+		w.pageTotal = &total
+		if w.total == nil {
+			w.total = &total
+		}
+		if paging.Page >= paging.Pages {
 			return items, "", nil
 		}
 		return items, strconv.Itoa(paging.Page + 1), nil

@@ -360,3 +360,42 @@ func TestPaginate_RateLimitContextCancelled(t *testing.T) {
 		t.Error("expected error from cancelled context")
 	}
 }
+
+// Extra trace fields are read after each attempt, so a page event carries what
+// that attempt's response said and a retried attempt reports its own value.
+func TestFetchPage_TraceFieldsPerAttempt(t *testing.T) {
+	rec := &attrTracer{}
+	ctx := WithTracer(context.Background(), rec)
+	calls := 0
+	total := 0
+	_, _, err := FetchPage(ctx, testEndpoint, "", func(cursor string) ([]string, string, error) {
+		calls++
+		if calls == 1 {
+			total = 0
+			return nil, "", &slack.RateLimitedError{RetryAfter: 2 * time.Millisecond}
+		}
+		total = 7
+		return []string{"a"}, "", nil
+	}, func() map[string]any {
+		if total == 0 {
+			return nil
+		}
+		return map[string]any{"total": total}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"page", "retry", "page"}
+	if len(rec.kinds) != len(want) {
+		t.Fatalf("events = %v, want %v", rec.kinds, want)
+	}
+	if _, ok := rec.attrs[0]["total"]; ok {
+		t.Errorf("the rate-limited attempt reported total %v, want none", rec.attrs[0]["total"])
+	}
+	if rec.attrs[2]["total"] != 7 {
+		t.Errorf("second attempt total = %v, want 7", rec.attrs[2]["total"])
+	}
+	if rec.attrs[2]["items"] != 1 {
+		t.Errorf("extra fields must not displace the standard ones: %v", rec.attrs[2])
+	}
+}
