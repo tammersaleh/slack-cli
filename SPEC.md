@@ -140,8 +140,9 @@ carries `ts`, `kind`, and kind-specific attributes. Current kinds:
 - `page` - one per paginated page fetch (`endpoint`, `attempt`, `items`,
   `latency_ms`, `has_more`, `error`)
 - `call` - one per single-shot request through the shared retry (`endpoint`,
-  `attempt`, `latency_ms`, `error`); `channel invite`, `channel kick`, and the
-  `users.profile.get` fetches of `user info --full` and `user manager-chain`
+  `attempt`, `latency_ms`, `error`); `channel invite`, `channel kick`, the
+  `users.profile.get` fetches of `user info --full` and `user manager-chain`,
+  and the retried internal calls (each also emits its `internal_api` event)
 - `retry` - emitted before each rate-limit sleep (`endpoint`, `attempt`,
   `wait_ms`); `attempt` is the request that was rate limited
 - `internal_api` - one per internal API POST (`endpoint`, `latency_ms`,
@@ -434,15 +435,15 @@ Some endpoints are not paginated by Slack (usergroup list, emoji list). These re
 
 Slack reports a rate limit in two shapes, and the CLI treats them as one condition: an HTTP 429, usually with a `Retry-After` header, or a 200 whose body is `{"ok":false,"error":"ratelimited"}` (`users.profile.get` answers this way). Both surface as `rate_limited`, exit 3.
 
-Requests that go through the shared retry are attempted up to 5 times: every paginated page, `channel invite`/`kick` calls, and the `user info --full` and `user manager-chain` profile lookups. The wait between attempts is `Retry-After`, or one second when Slack sent none (the body shape never carries one). There is no wait after the last failure, and the command then exits 3:
+Requests that go through the shared retry are attempted up to 5 times: every paginated page, `channel invite`/`kick` calls, the `user info --full` and `user manager-chain` profile lookups, and the internal API calls that are safe to repeat (listed below). The wait between attempts is `Retry-After`, or one second when Slack sent none (the body shape never carries one). There is no wait after the last failure, and the command then exits 3:
 
 ```json
 {"error":"rate_limited","detail":"Rate limited after 5 attempts on conversations.history","endpoint":"conversations.history"}
 ```
 
-The internal API methods (`saved.*`, `users.channelSections.*`, `drafts.*`, `lists.*`, `client.counts`, `admin.roles.entity.listAssignments`) follow the same rules. `saved list` pages are retried. A 429 that carries no `Retry-After` still counts as a rate limit.
+The internal API methods (`saved.*`, `users.channelSections.*`, `drafts.*`, `lists.*`, `client.counts`, `admin.roles.entity.listAssignments`) follow the same rules, and a 429 that carries no `Retry-After` still counts as a rate limit. The internal calls retried are the paginated ones (`saved list`, `list records`, `list find`), the reads (`users.channelSections.list`, `saved.list` for `saved counts`, `client.counts`, `admin.roles.entity.listAssignments`, `files.info` for lists, `drafts.list`, `lists.records.info`), and two writes that set state and so are safe to repeat: `users.channelSections.set` (`section rename`/`emoji`) and `users.channelSections.channels.bulkUpdate` (`section move`).
 
-Other single-shot calls are not retried. A rate limit on one of them is reported at once, with the wait Slack asked for in `detail` when it sent one:
+Other single-shot calls are not retried: every `drafts.*` write, `users.channelSections.create`, every `lists.*` write, and the public calls outside the list above. Repeating a create could create twice. A rate limit on one of them is reported at once, with the wait Slack asked for in `detail` when it sent one:
 
 ```json
 {"error":"rate_limited","detail":"Rate limited; Slack asked to retry after 30s"}

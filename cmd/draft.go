@@ -133,7 +133,7 @@ func fetchDrafts(ctx context.Context, client *api.Client, activeOnly bool, limit
 	if activeOnly {
 		params["is_active"] = "true"
 	}
-	data, err := client.PostInternalForm(ctx, "drafts.list", params)
+	data, err := client.RetryInternalForm(ctx, "drafts.list", params)
 	if err != nil {
 		return nil, false, err
 	}

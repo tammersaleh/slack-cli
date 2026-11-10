@@ -41,7 +41,7 @@ type sectionsListResponse struct {
 
 // fetchSections calls users.channelSections.list and returns parsed sections.
 func fetchSections(ctx context.Context, client *api.Client) ([]sectionData, error) {
-	data, err := client.PostInternalForm(ctx, "users.channelSections.list", nil)
+	data, err := client.RetryInternalForm(ctx, "users.channelSections.list", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +355,7 @@ func (e *sectionMismatchError) detail() string {
 // back from the server, so user input is normalized by the caller - and the
 // returned row is the re-fetched data, never the request.
 func setSection(ctx context.Context, client *api.Client, id, name, emoji string) (*sectionData, error) {
-	if _, err := client.PostInternalForm(ctx, "users.channelSections.set", map[string]string{
+	if _, err := client.RetryInternalForm(ctx, "users.channelSections.set", map[string]string{
 		"channel_section_id": id,
 		"name":               name,
 		"emoji":              emoji,
@@ -579,7 +579,7 @@ func (c *SectionMoveCmd) Run(cli *CLI) error {
 		params["remove"] = mustJSONString(remove)
 	}
 
-	if _, err = client.PostInternalForm(ctx, "users.channelSections.channels.bulkUpdate", params); err != nil {
+	if _, err = client.RetryInternalForm(ctx, "users.channelSections.channels.bulkUpdate", params); err != nil {
 		return cli.ClassifyError(err)
 	}
 

@@ -152,6 +152,32 @@ func (c *Client) PostInternalForm(ctx context.Context, method string, params map
 	})
 }
 
+// RetryInternal is PostInternal through Call's rate-limit retry. Use it only
+// where repeating the request is safe: reads, and writes that set state to a
+// value (a second identical request changes nothing). A create must not go
+// through here.
+func (c *Client) RetryInternal(ctx context.Context, method string, body map[string]any) (json.RawMessage, error) {
+	var data json.RawMessage
+	err := Call(ctx, method, func() error {
+		var err error
+		data, err = c.PostInternal(ctx, method, body)
+		return err
+	})
+	return data, err
+}
+
+// RetryInternalForm is PostInternalForm through Call's rate-limit retry, with
+// the same restriction as RetryInternal.
+func (c *Client) RetryInternalForm(ctx context.Context, method string, params map[string]string) (json.RawMessage, error) {
+	var data json.RawMessage
+	err := Call(ctx, method, func() error {
+		var err error
+		data, err = c.PostInternalForm(ctx, method, params)
+		return err
+	})
+	return data, err
+}
+
 // postInternal sends one internal API request and reads its answer. It makes
 // exactly one attempt; retrying is the caller's choice (FetchPage, Call),
 // since not every internal write is safe to repeat.

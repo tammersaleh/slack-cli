@@ -202,7 +202,7 @@ type clientCountsResponse struct {
 // context: the workspace token returns team_is_restricted. NewSessionClient
 // already prefers SLACK_WORKSPACE_ORG for exactly this reason.
 func fetchUnreadState(ctx context.Context, client *api.Client) (map[string]unreadState, error) {
-	data, err := client.PostInternal(ctx, "client.counts", map[string]any{
+	data, err := client.RetryInternal(ctx, "client.counts", map[string]any{
 		"thread_counts_by_channel": true,
 		"org_wide_aware":           true,
 		"include_file_channels":    true,
@@ -490,7 +490,7 @@ func (c *ChannelManagersCmd) Run(cli *CLI) error {
 		return channelResolveError(c.Channel, err)
 	}
 
-	data, err := sessionClient.PostInternalForm(ctx, "admin.roles.entity.listAssignments", map[string]string{
+	data, err := sessionClient.RetryInternalForm(ctx, "admin.roles.entity.listAssignments", map[string]string{
 		"entity_id": channelID,
 	})
 	if err != nil {

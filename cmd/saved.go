@@ -198,7 +198,7 @@ func (c *SavedCountsCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	data, err := client.PostInternal(ctx, "saved.list", map[string]any{
+	data, err := client.RetryInternal(ctx, "saved.list", map[string]any{
 		"count": 1,
 	})
 	if err != nil {

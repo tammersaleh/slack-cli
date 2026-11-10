@@ -222,7 +222,7 @@ func (c *ListRecordUpdateCmd) Run(cli *CLI) error {
 // rereadRecord fetches one record through lists.records.info and renders it
 // against the schema read at session open.
 func rereadRecord(s *listSession, recID string) (map[string]any, error) {
-	data, err := s.client.PostInternalForm(s.ctx, "lists.records.info", map[string]string{"list_id": s.file.ID, "id": recID})
+	data, err := s.client.RetryInternalForm(s.ctx, "lists.records.info", map[string]string{"list_id": s.file.ID, "id": recID})
 	if err != nil {
 		return nil, err
 	}

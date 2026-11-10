@@ -58,7 +58,7 @@ type ListFindCmd struct {
 // list is a not_a_list error rather than an empty schema, since every list
 // command would otherwise emit rows that look complete and hold nothing.
 func fetchListFile(ctx context.Context, cli *CLI, client *api.Client, id string) (*listFile, error) {
-	data, err := client.PostInternalForm(ctx, "files.info", map[string]string{"file": id})
+	data, err := client.RetryInternalForm(ctx, "files.info", map[string]string{"file": id})
 	if err != nil {
 		return nil, cli.ClassifyError(err)
 	}
