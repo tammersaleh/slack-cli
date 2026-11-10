@@ -409,6 +409,15 @@ slack draft update <draft-id> [--markdown [--print-payload]] [--at RFC3339] [--c
 slack draft delete <draft-id>...
 ```
 
+`draft list` hides sent and deleted drafts by default and says how many in
+the trailer: `suppressed_sent` and `suppressed_deleted`. Zero rows beside a
+nonzero count means the drafts exist and are hidden. Rows carry `is_sent`,
+`is_deleted`, and `is_from_composer` when Slack sent them (an absent key is
+unknown, not false). To check that a draft exists, read
+`slack draft list --include-sent --include-deleted --limit 100` and match on
+`id`. Do not use `--active` for that: it is a server-side `is_active` filter
+whose meaning is unverified.
+
 Write the body as Markdown with `--markdown` unless you need a block shape
 the subset below cannot express. Hand-rolled rich_text JSON is where the
 bugs live (lost `*italic*`, unrecognized `1.` lists, reordered blocks).

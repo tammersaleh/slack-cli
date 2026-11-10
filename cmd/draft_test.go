@@ -194,6 +194,104 @@ func TestDraftList_IncludeSentAndDeleted(t *testing.T) {
 	}
 }
 
+// drafts.list sends is_sent/is_deleted/is_from_composer on some rows and omits
+// them on others. A row reports exactly what Slack sent: an absent key stays
+// absent, never a fabricated false.
+func TestDraftList_EmitsStateFields(t *testing.T) {
+	base := func(id string, extra map[string]any) map[string]any {
+		m := map[string]any{"id": id, "last_updated_ts": "1.0", "blocks": richTextBlocks("x"), "destinations": []map[string]any{{"channel_id": "C01ABC"}}}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	drafts := []map[string]any{
+		base("DrBARE", nil),
+		base("DrFALSE", map[string]any{"is_sent": false, "is_deleted": false, "is_from_composer": false}),
+		base("DrSENT", map[string]any{"is_sent": true, "is_from_composer": true}),
+		base("DrDELETED", map[string]any{"is_deleted": true}),
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", draftsListHandler(t, drafts, false))
+
+	out, err := runWithMockSession(t, mux, "draft", "list", "--include-sent", "--include-deleted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 5 {
+		t.Fatalf("expected 4 rows + meta, got %d:\n%s", len(lines), out)
+	}
+	want := []map[string]any{
+		{},
+		{"is_sent": false, "is_deleted": false, "is_from_composer": false},
+		{"is_sent": true, "is_from_composer": true},
+		{"is_deleted": true},
+	}
+	for i, w := range want {
+		row := parseJSON(t, lines[i])
+		for _, key := range []string{"is_sent", "is_deleted", "is_from_composer"} {
+			got, present := row[key]
+			wantVal, wantPresent := w[key]
+			if present != wantPresent || got != wantVal {
+				t.Errorf("row %s: %s = %v (present=%v), want %v (present=%v)", row["id"], key, got, present, wantVal, wantPresent)
+			}
+		}
+	}
+}
+
+// The default listing hides sent and deleted drafts. The trailer says how many
+// of each, so a page of hidden drafts does not read as an empty account.
+func TestDraftList_SuppressedCounts(t *testing.T) {
+	d := func(id string, extra map[string]any) map[string]any {
+		m := map[string]any{"id": id, "last_updated_ts": "1.0", "blocks": richTextBlocks("x"), "destinations": []map[string]any{{"channel_id": "C01ABC"}}}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	drafts := []map[string]any{
+		d("DrLIVE", nil),
+		d("DrS1", map[string]any{"is_sent": true}),
+		d("DrS2", map[string]any{"is_sent": true}),
+		d("DrD1", map[string]any{"is_deleted": true}),
+		d("DrBOTH", map[string]any{"is_sent": true, "is_deleted": true}),
+	}
+	tests := []struct {
+		name        string
+		args        []string
+		wantRows    int
+		wantSent    float64
+		wantDeleted float64
+	}{
+		{"default", nil, 1, 3, 1},
+		{"include sent", []string{"--include-sent"}, 3, 0, 2},
+		{"include deleted", []string{"--include-deleted"}, 2, 3, 0},
+		{"include both", []string{"--include-sent", "--include-deleted"}, 5, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/drafts.list", draftsListHandler(t, drafts, false))
+			out, err := runWithMockSession(t, mux, append([]string{"draft", "list"}, tt.args...)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := nonEmptyLines(out)
+			if len(lines) != tt.wantRows+1 {
+				t.Fatalf("expected %d rows + meta, got %d lines:\n%s", tt.wantRows, len(lines), out)
+			}
+			meta, _ := parseJSON(t, lines[len(lines)-1])["_meta"].(map[string]any)
+			if meta["suppressed_sent"] != tt.wantSent {
+				t.Errorf("suppressed_sent = %v, want %v", meta["suppressed_sent"], tt.wantSent)
+			}
+			if meta["suppressed_deleted"] != tt.wantDeleted {
+				t.Errorf("suppressed_deleted = %v, want %v", meta["suppressed_deleted"], tt.wantDeleted)
+			}
+		})
+	}
+}
+
 func TestDraftList_HasMoreMeta(t *testing.T) {
 	drafts := []map[string]any{{
 		"id": "DrX", "last_updated_ts": "1.0", "blocks": richTextBlocks("first"),

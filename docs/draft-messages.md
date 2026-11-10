@@ -215,7 +215,7 @@ Body fields:
 
 - `token` - duplicate of the Authorization token. Required.
 - `limit` - page size, observed max ~100. Required in practice.
-- `is_active` - `"true"` to exclude already-sent and scheduled-past drafts.
+- `is_active` - `"true"` applies a server-side filter. What it excludes is unverified (the CLI's `--active` passes it through and makes no claim).
 
 Response:
 

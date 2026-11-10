@@ -73,6 +73,11 @@ type Meta struct {
 	// is the meaningful value: it is Slack saying nothing matched, as opposed
 	// to rows that went missing.
 	Total *int `json:"total,omitempty"`
+	// SuppressedSent and SuppressedDeleted count the drafts `draft list`
+	// fetched and withheld because they were sent or deleted. Pointers so
+	// zero is emitted: a zero says the page held nothing hidden.
+	SuppressedSent    *int `json:"suppressed_sent,omitempty"`
+	SuppressedDeleted *int `json:"suppressed_deleted,omitempty"`
 }
 
 type metaWrapper struct {

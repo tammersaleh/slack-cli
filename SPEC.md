@@ -2265,22 +2265,39 @@ and `users.channelSections.*`.
 
 ```
 slack draft list [flags]
-  --active     Exclude scheduled drafts (active only).
-  --limit      Page size. Default: 50. Max 100.
+  --active            Send is_active=true to drafts.list (server-side filter, semantics unverified).
+  --limit             Page size. Default: 50. Max 100.
+  --include-sent      Include drafts already sent.
+  --include-deleted   Include drafts marked deleted server-side.
 ```
+
+`--active` passes `is_active=true` to `drafts.list` and nothing else. Slack
+applies the filter, and what it excludes has not been measured (sent drafts,
+scheduled drafts, or something else). Do not use it to check that a draft
+exists: read the unfiltered listing with `--include-sent --include-deleted`
+and match on `id`.
 
 The `drafts.list` API does not support cursor pagination. Raise `--limit`
 to fetch more per call; `has_more` in `_meta` indicates truncation.
 
 ```
 $ slack draft list
-{"id":"Dr01234","client_msg_id":"3b2f...","destinations":[{"channel_id":"C01ABC"}],"blocks":[{"type":"rich_text",...}],"date_created":1713300000,"date_created_iso":"2024-04-17T00:00:00Z","date_scheduled":0,"last_updated_ts":"1713300000.1234567"}
-{"_meta":{"has_more":false}}
+{"id":"Dr01234","client_msg_id":"3b2f...","destinations":[{"channel_id":"C01ABC"}],"blocks":[{"type":"rich_text",...}],"date_created":1713300000,"date_created_iso":"2024-04-17T00:00:00Z","date_scheduled":0,"last_updated_ts":"1713300000.1234567","is_sent":false,"is_deleted":false,"is_from_composer":true}
+{"_meta":{"has_more":false,"suppressed_sent":0,"suppressed_deleted":0}}
 ```
+
+Every draft row (from `list`, `create`, and `update`) carries `is_sent`,
+`is_deleted`, and `is_from_composer` when Slack sent them. A key Slack
+omitted is omitted from the row, never reported as `false`.
 
 Sent and deleted drafts are suppressed by default. Use `--include-sent`
 and `--include-deleted` to see them (Slack keeps tombstones in the list
-after drafts are sent or when the desktop client marks them deleted).
+after drafts are sent or when the desktop client marks them deleted). The
+trailer counts the rows the page held and the listing withheld:
+`suppressed_sent` and `suppressed_deleted`. Both are always present on
+`draft list`, zero included. A draft that is both sent and deleted is counted
+once, as sent, or as deleted under `--include-sent`. Zero rows beside a
+nonzero count means the drafts exist and are hidden, not that there are none.
 
 Slack API: `drafts.list`
 

@@ -37,10 +37,10 @@ type DraftCmd struct {
 const skillHint = "For the rich_text shape, load the slack-cli skill (install: 'skills add tammersaleh/slack-cli -g -y')."
 
 type DraftListCmd struct {
-	Active         bool `help:"Exclude scheduled drafts (active only)."`
+	Active         bool `help:"Send is_active=true to drafts.list, a server-side filter whose exact meaning is unverified. Do not use it to check that a draft exists."`
 	Limit          int  `help:"Page size." default:"50"`
-	IncludeSent    bool `help:"Include drafts already sent (suppressed by default)."`
-	IncludeDeleted bool `help:"Include drafts marked deleted server-side (suppressed by default)."`
+	IncludeSent    bool `help:"Include drafts already sent (hidden by default; the trailer's suppressed_sent counts them)."`
+	IncludeDeleted bool `help:"Include drafts marked deleted server-side (hidden by default; the trailer's suppressed_deleted counts them)."`
 }
 
 // draftData is the parsed draft object from Slack responses.
@@ -49,6 +49,10 @@ type DraftListCmd struct {
 // which update and delete send derived from LastUpdatedTS via padDraftTS. The
 // response carries last_updated_ts (and last_updated_client), verified against a
 // real drafts.list payload.
+//
+// The three state flags are pointers because Slack omits them on some rows. An
+// absent key is reported as absent, never as false. Read them through sent()
+// and deleted().
 type draftData struct {
 	ID             string          `json:"id"`
 	ClientMsgID    string          `json:"client_msg_id"`
@@ -60,11 +64,17 @@ type draftData struct {
 	Blocks         json.RawMessage `json:"blocks"`
 	Attachments    json.RawMessage `json:"attachments,omitempty"`
 	FileIDs        []string        `json:"file_ids"`
-	IsFromComposer bool            `json:"is_from_composer"`
-	IsDeleted      bool            `json:"is_deleted"`
-	IsSent         bool            `json:"is_sent"`
+	IsFromComposer *bool           `json:"is_from_composer"`
+	IsDeleted      *bool           `json:"is_deleted"`
+	IsSent         *bool           `json:"is_sent"`
 	Destinations   []destination   `json:"destinations"`
 }
+
+// sent reports whether Slack marked the draft as already sent.
+func (d *draftData) sent() bool { return d.IsSent != nil && *d.IsSent }
+
+// deleted reports whether Slack marked the draft as deleted (a tombstone).
+func (d *draftData) deleted() bool { return d.IsDeleted != nil && *d.IsDeleted }
 
 type destination struct {
 	ChannelID string   `json:"channel_id,omitempty"`
@@ -112,18 +122,27 @@ func (c *DraftListCmd) Run(cli *CLI) error {
 	if err != nil {
 		return cli.ClassifyError(err)
 	}
+	// A hidden draft is counted once, under the first filter that hid it, so
+	// the two counts add up to the number of rows withheld.
+	var suppressedSent, suppressedDeleted int
 	for _, d := range drafts {
-		if d.IsSent && !c.IncludeSent {
+		if d.sent() && !c.IncludeSent {
+			suppressedSent++
 			continue
 		}
-		if d.IsDeleted && !c.IncludeDeleted {
+		if d.deleted() && !c.IncludeDeleted {
+			suppressedDeleted++
 			continue
 		}
 		if err := p.PrintItem(formatDraft(d)); err != nil {
 			return err
 		}
 	}
-	return p.PrintMeta(output.Meta{HasMore: hasMore})
+	return p.PrintMeta(output.Meta{
+		HasMore:           hasMore,
+		SuppressedSent:    &suppressedSent,
+		SuppressedDeleted: &suppressedDeleted,
+	})
 }
 
 func fetchDrafts(ctx context.Context, client *api.Client, activeOnly bool, limit int) ([]draftData, bool, error) {
@@ -495,7 +514,7 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 	// out of band too. Once tombstoned, drafts.update returns
 	// draft_update_invalid and drafts.delete returns draft_delete_invalid.
 	// The only path forward is to create a fresh draft at the same destination.
-	if existing.IsDeleted {
+	if existing.deleted() {
 		warnTombstoned(p.Err, c.DraftID)
 		return c.createReplacement(ctx, cli, client, p, intent)
 	}
@@ -1352,6 +1371,16 @@ func formatDraft(d draftData) map[string]any {
 	}
 	if len(d.Attachments) > 0 {
 		m["attachments"] = d.Attachments
+	}
+	// State flags are emitted only when Slack sent them.
+	for key, v := range map[string]*bool{
+		"is_sent":          d.IsSent,
+		"is_deleted":       d.IsDeleted,
+		"is_from_composer": d.IsFromComposer,
+	} {
+		if v != nil {
+			m[key] = *v
+		}
 	}
 	if d.DateScheduled > 0 {
 		m["date_scheduled_iso"] = time.Unix(d.DateScheduled, 0).UTC().Format(time.RFC3339)
