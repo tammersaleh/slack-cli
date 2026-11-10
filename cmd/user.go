@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 	"github.com/tammersaleh/slack-cli/internal/resolve"
 )
@@ -106,8 +108,17 @@ Examples:
   slack user info alice@example.com
   slack user info @alice
 
-Per-user failures emit {input, error:"user_not_found", hint:...} rows
-on stdout and set _meta.error_count in the trailer.`
+Per-user failures emit {input, error, detail, hint} rows on stdout and
+set _meta.error_count in the trailer. error is "user_not_found" when the
+user does not exist, otherwise Slack's own code.
+
+A failure that is not about one user (auth, missing_scope, a rate limit
+that outlasts its retries, network, --timeout) stops the run. Stdout then
+ends with {"_meta":{"has_more":true,"error":"<code>"}}: the rows printed
+are good, the inputs with no row were not looked up. Rerun those.
+
+--full fetches users.profile.get per user, which Slack rate-limits after a
+few calls. The fetch is retried, but a long list can still stop early.`
 }
 
 func (c *UserInfoCmd) Run(cli *CLI) error {
@@ -132,14 +143,24 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 			continue
 		}
 
+		// lookupFailed reports one failed lookup: a systemic failure aborts
+		// the run behind a trailer, anything else is this input's error row.
+		lookupFailed := func(err error) (abort error) {
+			cErr := cli.ClassifyError(err)
+			if isSystemicErr(cErr) {
+				return abortWithTrailer(p, cErr, errorCount)
+			}
+			errorCount++
+			return p.PrintItem(userLookupError(input, cErr).AsItem())
+		}
+
 		// Try cached profile first, fall back to direct API call.
 		user, found, lookupErr := r.LookupUser(ctx, userID)
 		if lookupErr != nil || !found {
 			apiUser, err := client.Bot().GetUserInfoContext(ctx, userID)
 			if err != nil {
-				errorCount++
-				if err := p.PrintItem(output.UserNotFound(input).AsItem()); err != nil {
-					return err
+				if abort := lookupFailed(err); abort != nil {
+					return abort
 				}
 				continue
 			}
@@ -150,19 +171,10 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 		m["input"] = input
 
 		if c.Full {
-			profile, err := client.Bot().GetUserProfileContext(ctx, &slack.GetUserProfileParameters{
-				UserID:        userID,
-				IncludeLabels: true,
-			})
+			profile, err := fetchUserProfile(ctx, client, userID)
 			if err != nil {
-				// Systemic failures (auth, missing scope, rate limit) abort the
-				// whole command rather than repeating per input.
-				if cErr := cli.ClassifyError(err); isSystemicErr(cErr) {
-					return cErr
-				}
-				errorCount++
-				if err := p.PrintItem(output.UserNotFound(input).AsItem()); err != nil {
-					return err
+				if abort := lookupFailed(err); abort != nil {
+					return abort
 				}
 				continue
 			}
@@ -212,21 +224,57 @@ func userDisplayName(u slack.User) string {
 	return u.Name
 }
 
+// fetchUserProfile reads one user's profile with custom-field labels through
+// the shared rate-limit retry. users.profile.get limits after a handful of
+// calls and reports it in the body with no Retry-After, so each wait is the
+// retry loop's floor.
+func fetchUserProfile(ctx context.Context, client *api.Client, userID string) (*slack.UserProfile, error) {
+	var profile *slack.UserProfile
+	err := api.Call(ctx, "users.profile.get", func() error {
+		var err error
+		profile, err = client.Bot().GetUserProfileContext(ctx, &slack.GetUserProfileParameters{
+			UserID:        userID,
+			IncludeLabels: true,
+		})
+		return err
+	})
+	return profile, err
+}
+
 // isSystemicErr reports whether a classified error reflects a whole-command
-// problem (auth, missing scope, rate limit) rather than one bad input, so the
-// caller can fail fast instead of emitting the same error per input.
+// problem rather than one bad input, so the caller can fail fast instead of
+// emitting the same error per input: the credential (auth, missing scope), a
+// rate limit that outlasted its retries, the network, or the --timeout budget.
 func isSystemicErr(e *output.Error) bool {
 	if e == nil {
 		return false
 	}
-	if e.Code == output.ExitAuth {
+	switch e.Code {
+	case output.ExitAuth, output.ExitRateLimit, output.ExitNetwork:
 		return true
 	}
-	switch e.Err {
-	case "missing_scope", "ratelimited", "rate_limited", "account_inactive", "token_revoked":
-		return true
+	return e.Err == "timeout"
+}
+
+// userNotFoundCodes are Slack's ways of saying the user does not exist or is
+// not visible to this token.
+var userNotFoundCodes = map[string]bool{
+	"user_not_found":   true,
+	"users_not_found":  true,
+	"user_not_visible": true,
+}
+
+// userLookupError is the per-input row for a failed user lookup. Only a
+// not-found answer becomes user_not_found, with its discovery hint; any other
+// failure keeps its own code, so a user whose fetch hit a transient Slack
+// error is not reported as nonexistent.
+func userLookupError(input string, cErr *output.Error) *output.Error {
+	if userNotFoundCodes[cErr.Err] {
+		return output.UserNotFound(input)
 	}
-	return false
+	row := *cErr
+	row.Input = input
+	return &row
 }
 
 // customField is a single labeled custom profile field in --full output.
@@ -347,10 +395,7 @@ func (c *UserManagerChainCmd) Run(cli *CLI) error {
 		if pr, ok := cache[id]; ok {
 			return pr, nil
 		}
-		pr, err := client.Bot().GetUserProfileContext(ctx, &slack.GetUserProfileParameters{
-			UserID:        id,
-			IncludeLabels: true,
-		})
+		pr, err := fetchUserProfile(ctx, client, id)
 		if err != nil {
 			return nil, err
 		}
@@ -370,7 +415,7 @@ func (c *UserManagerChainCmd) Run(cli *CLI) error {
 
 		rows, fatal, hadError := c.walk(getProfile, cli, input, rootID)
 		if fatal != nil {
-			return fatal
+			return abortWithTrailer(p, fatal, errorCount)
 		}
 		if hadError {
 			errorCount++
@@ -406,12 +451,13 @@ func (c *UserManagerChainCmd) walk(
 	for {
 		profile, err := getProfile(cur)
 		if err != nil {
-			if cErr := cli.ClassifyError(err); isSystemicErr(cErr) {
+			cErr := cli.ClassifyError(err)
+			if isSystemicErr(cErr) {
 				return nil, cErr, false
 			}
 			if len(chain) == 0 {
 				// Root lookup failed and it's not systemic: per-item error.
-				return []map[string]any{output.UserNotFound(input).AsItem()}, nil, true
+				return []map[string]any{userLookupError(input, cErr).AsItem()}, nil, true
 			}
 			chain[len(chain)-1].stopReason = "profile_lookup_failed"
 			break

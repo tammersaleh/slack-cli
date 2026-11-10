@@ -139,8 +139,9 @@ carries `ts`, `kind`, and kind-specific attributes. Current kinds:
 
 - `page` - one per paginated page fetch (`endpoint`, `attempt`, `items`,
   `latency_ms`, `has_more`, `error`)
-- `call` - one per single-shot write through the shared retry (`endpoint`,
-  `attempt`, `latency_ms`, `error`); `channel invite` and `channel kick`
+- `call` - one per single-shot request through the shared retry (`endpoint`,
+  `attempt`, `latency_ms`, `error`); `channel invite`, `channel kick`, and the
+  `users.profile.get` fetches of `user info --full` and `user manager-chain`
 - `retry` - emitted before each rate-limit sleep (`endpoint`, `attempt`,
   `wait_ms`); `attempt` is the request that was rate limited
 - `internal_api` - one per internal API POST (`endpoint`, `latency_ms`,
@@ -962,10 +963,39 @@ $ slack user info --full @alice
 `--full` needs the `users.profile:read` scope. Desktop session tokens have it;
 OAuth tokens issued before this scope was added must re-auth (`slack auth login`).
 
+A failed lookup for one input is an error row, `{"input","error","detail","hint"}`,
+counted in `_meta.error_count`, exit 1. `error` is `user_not_found` when Slack
+says the user does not exist or is not visible (`user_not_found`,
+`users_not_found`, `user_not_visible`). Any other per-user failure keeps
+Slack's own code, so a transient failure is not reported as a missing user.
+
+A failure that is not about one user stops the run: an auth error,
+`missing_scope`, a rate limit that outlasted its retries, a network error, or
+the `--timeout` budget. The classified error goes to stderr with its exit
+code, and stdout ends with a trailer in the `channel invite` shape:
+
+```
+$ slack user info --full U01XYZ U02MGR U03ABC U04DEF
+{"input":"U01XYZ","id":"U01XYZ",...}
+{"input":"U02MGR","id":"U02MGR",...}
+{"_meta":{"has_more":true,"error":"rate_limited"}}
+```
+
+The rows printed are authoritative. `has_more:true` means some inputs have no
+row and were not looked up. There is no cursor: rerun the inputs that have no
+row (every row carries `input`).
+
+`users.profile.get` is rate-limited after a few calls, and reports it in the
+response body with no `Retry-After`. Each profile fetch goes through the shared
+retry (5 attempts, one second apart), which rides out a brief limit. It does
+not pace a long list: a bulk `--full` run can still exhaust the retries and
+stop with the trailer above. Spacing calls about 15 seconds apart has worked.
+
 Errors:
 
 - `user_not_found` (exit 1): No user matching the input.
 - `missing_scope` (exit 2): Token lacks `users.profile:read` (with `--full`).
+- `rate_limited` (exit 3): Rate limit outlasted the retries.
 - `not_authed` (exit 2): No token.
 
 Slack API: `users.info` (by ID), `users.lookupByEmail` (by email),
@@ -1001,10 +1031,18 @@ The terminal row carries a `stop_reason`:
 
 Error stop_reasons increment `_meta.error_count` and set exit code 1.
 
+A root lookup that fails for a reason other than "no such user" keeps Slack's
+own code on its error row. Systemic failures stop the run the way `user info`
+does: classified error on stderr, and stdout ends with
+`{"_meta":{"has_more":true,"error":"<code>","error_count":N}}`. The chain being
+walked when the run stopped emits no rows. Profile fetches go through the same
+retry as `user info --full`.
+
 Errors:
 
 - `user_not_found` (exit 1): Root user not found.
 - `missing_scope` (exit 2): Token lacks `users.profile:read`.
+- `rate_limited` (exit 3): Rate limit outlasted the retries.
 - `not_authed` (exit 2): No token.
 
 Slack API: `users.profile.get`

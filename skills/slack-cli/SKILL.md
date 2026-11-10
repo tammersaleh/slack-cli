@@ -252,6 +252,15 @@ top). Traversal is upward-only - Slack exposes no reliable direct-reports
 data. `--full` and `manager-chain` need the `users.profile:read` scope;
 desktop auth has it, older OAuth tokens must re-auth.
 
+Check the trailer on a bulk `user info` or `manager-chain` run. Slack
+rate-limits `--full` profile lookups after a few calls. The CLI retries, but a
+long list can still stop early, and then stdout ends with
+`{"_meta":{"has_more":true,"error":"rate_limited"}}` (exit 3). The rows
+printed are good; inputs with no row were never looked up, not missing. Wait
+(about 15 seconds has worked) and rerun only those inputs. An error row with a
+code other than `user_not_found` means the lookup failed, not that the user
+does not exist.
+
 Examples:
 
 ```

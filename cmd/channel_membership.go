@@ -214,11 +214,7 @@ func runMembership(cli *CLI, recipients []string, op membershipOp) error {
 				// Fatal. The rows above are authoritative; has_more:true says
 				// some requested pairs have no row, and there is no cursor
 				// because the recovery is to rerun the (idempotent) command.
-				oErr := cli.ClassifyError(callErr)
-				if err := p.PrintMeta(output.Meta{HasMore: true, Error: oErr.Err, ErrorCount: errorCount}); err != nil {
-					return err
-				}
-				return oErr
+				return abortWithTrailer(p, cli.ClassifyError(callErr), errorCount)
 			}
 		}
 	}
