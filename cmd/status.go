@@ -37,6 +37,9 @@ func (c *StatusGetCmd) Run(cli *CLI) error {
 	for _, input := range users {
 		userID, err := r.ResolveUser(ctx, input)
 		if err != nil {
+			if fatal := systemicResolveError(cli, err); fatal != nil {
+				return abortWithTrailer(p, fatal, errorCount)
+			}
 			errorCount++
 			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
 				return err
@@ -44,17 +47,12 @@ func (c *StatusGetCmd) Run(cli *CLI) error {
 			continue
 		}
 
-		user, found, lookupErr := r.LookupUser(ctx, userID)
-		if lookupErr != nil || !found {
-			apiUser, err := client.Bot().GetUserInfoContext(ctx, userID)
-			if err != nil {
-				errorCount++
-				if err := p.PrintItem(output.UserNotFound(input).AsItem()); err != nil {
-					return err
-				}
-				continue
+		user, err := fetchUser(ctx, client, r, userID)
+		if err != nil {
+			if abort := userLookupFailed(cli, p, input, err, &errorCount); abort != nil {
+				return abort
 			}
-			user = *apiUser
+			continue
 		}
 
 		item := map[string]any{

@@ -54,7 +54,7 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 		if err != nil {
 			oErr := cli.ClassifyError(err)
 			// If it's a specific message error, inline it.
-			if oErr.Code == output.ExitGeneral {
+			if !isSystemicErr(oErr) {
 				errorCount++
 				if err := p.PrintItem(map[string]any{
 					"input":      ref.input,

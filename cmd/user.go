@@ -146,33 +146,12 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 			continue
 		}
 
-		// lookupFailed reports one failed lookup: a systemic failure aborts
-		// the run behind a trailer, anything else is this input's error row.
-		lookupFailed := func(err error) (abort error) {
-			cErr := cli.ClassifyError(err)
-			if isSystemicErr(cErr) {
-				return abortWithTrailer(p, cErr, errorCount)
+		user, err := fetchUser(ctx, client, r, userID)
+		if err != nil {
+			if abort := userLookupFailed(cli, p, input, err, &errorCount); abort != nil {
+				return abort
 			}
-			errorCount++
-			return p.PrintItem(userLookupError(input, cErr).AsItem())
-		}
-
-		// Try cached profile first, fall back to direct API call.
-		user, found, lookupErr := r.LookupUser(ctx, userID)
-		if lookupErr != nil || !found {
-			var apiUser *slack.User
-			err := api.Call(ctx, "users.info", func() error {
-				var err error
-				apiUser, err = client.Bot().GetUserInfoContext(ctx, userID)
-				return err
-			})
-			if err != nil {
-				if abort := lookupFailed(err); abort != nil {
-					return abort
-				}
-				continue
-			}
-			user = *apiUser
+			continue
 		}
 
 		m := userToMap(user)
@@ -181,7 +160,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 		if c.Full {
 			profile, err := fetchUserProfile(ctx, client, userID)
 			if err != nil {
-				if abort := lookupFailed(err); abort != nil {
+				if abort := userLookupFailed(cli, p, input, err, &errorCount); abort != nil {
 					return abort
 				}
 				continue
@@ -230,6 +209,37 @@ func userDisplayName(u slack.User) string {
 		return u.RealName
 	}
 	return u.Name
+}
+
+// fetchUser returns a user from the resolver's cache, falling back to
+// users.info through the shared rate-limit retry. The resolver's own lookup
+// swallows its error, so the fallback is what reports why a user is missing.
+func fetchUser(ctx context.Context, client *api.Client, r *resolve.Resolver, userID string) (slack.User, error) {
+	if user, found, err := r.LookupUser(ctx, userID); err == nil && found {
+		return user, nil
+	}
+	var user *slack.User
+	err := api.Call(ctx, "users.info", func() error {
+		var err error
+		user, err = client.Bot().GetUserInfoContext(ctx, userID)
+		return err
+	})
+	if err != nil {
+		return slack.User{}, err
+	}
+	return *user, nil
+}
+
+// userLookupFailed reports one failed user lookup. A systemic failure ends
+// the run behind a trailer and comes back as the error to return; anything
+// else prints this input's error row, counts it, and returns nil.
+func userLookupFailed(cli *CLI, p *output.Printer, input string, err error, errorCount *int) error {
+	cErr := cli.ClassifyError(err)
+	if isSystemicErr(cErr) {
+		return abortWithTrailer(p, cErr, *errorCount)
+	}
+	*errorCount++
+	return p.PrintItem(userLookupError(input, cErr).AsItem())
 }
 
 // fetchUserProfile reads one user's profile with custom-field labels through

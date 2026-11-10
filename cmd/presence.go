@@ -27,6 +27,9 @@ func (c *PresenceGetCmd) Run(cli *CLI) error {
 	for _, input := range c.Users {
 		userID, err := r.ResolveUser(ctx, input)
 		if err != nil {
+			if fatal := systemicResolveError(cli, err); fatal != nil {
+				return abortWithTrailer(p, fatal, errorCount)
+			}
 			errorCount++
 			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
 				return err
@@ -37,7 +40,7 @@ func (c *PresenceGetCmd) Run(cli *CLI) error {
 		presence, err := client.Bot().GetUserPresenceContext(ctx, userID)
 		if err != nil {
 			oErr := cli.ClassifyError(err)
-			if oErr.Code != output.ExitGeneral {
+			if isSystemicErr(oErr) {
 				return abortWithTrailer(p, oErr, errorCount)
 			}
 			errorCount++

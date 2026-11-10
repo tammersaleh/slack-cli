@@ -417,10 +417,10 @@ the command starts its work - bad input, an unresolvable channel, no
 credentials - is reported on stderr with no trailer, as it always has been.
 
 Multi-input commands (`message get`, `message permalink`, `reaction list`,
-`channel info`, `file info`, `dnd info`, `presence get`, `user info`,
-`user manager-chain`, `draft delete`, `channel invite`/`kick`) follow the same
-rule without a cursor. A fatal error on any input - auth, `missing_scope`, a
-rate limit, network - stops the run, goes to stderr with its exit code, and
+`channel info`, `file info`, `dnd info`, `presence get`, `status get`,
+`user info`, `user manager-chain`, `draft delete`, `channel invite`/`kick`)
+follow the same rule without a cursor. A fatal error on any input - auth,
+`missing_scope`, a rate limit, network, an expired `--timeout` - stops the run, goes to stderr with its exit code, and
 stdout ends with `{"_meta":{"has_more":true,"error":"<code>","error_count":N}}`.
 Rows above it are good. Inputs with no row were not processed: rerun those.
 

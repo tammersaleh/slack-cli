@@ -350,7 +350,7 @@ func (c *ChannelInfoCmd) Run(cli *CLI) error {
 		})
 		if err != nil {
 			oErr := cli.ClassifyError(err)
-			if oErr.Code != output.ExitGeneral {
+			if isSystemicErr(oErr) {
 				return abortWithTrailer(p, oErr, errorCount)
 			}
 			errorCount++
