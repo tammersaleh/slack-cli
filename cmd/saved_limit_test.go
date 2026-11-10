@@ -82,6 +82,7 @@ func TestSavedList_DefaultLimit(t *testing.T) {
 	for _, args := range [][]string{
 		{"saved", "list"},
 		{"saved", "list", "--limit", "0"},
+		{"saved", "list", "--limit=-3"},
 	} {
 		rec := &savedListRequests{}
 		mux := http.NewServeMux()

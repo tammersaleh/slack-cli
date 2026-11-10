@@ -2074,7 +2074,7 @@ $ slack saved counts
 The row is Slack's `counts` block passed through unchanged, so the keys are
 Slack's and may change.
 
-Slack API: `saved.list` (counts field from response, requested with `limit: 1`)
+Slack API: `saved.list` (counts field from response, requested with `limit: 1`; the counts block does not depend on the page size)
 
 ### section (Phase 2)
 
