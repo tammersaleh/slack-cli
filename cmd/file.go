@@ -36,7 +36,7 @@ type FileCmd struct {
 }
 
 type FileListCmd struct {
-	Limit   int    `help:"Page size." default:"20"`
+	Limit   int    `help:"Page size, 1-100. Slack serves at most 100 pages, so --all reaches 100 times this many files (10,000 at --limit 100) and then fails with file_page_limit." default:"20"`
 	Cursor  string `help:"Continue from previous page."`
 	All     bool   `help:"Fetch all pages."`
 	Channel string `help:"Filter by channel ID or name."`
@@ -91,7 +91,7 @@ func (c *FileListCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	fetch := pageCursorFetch(func(page int) ([]slack.File, *slack.Paging, error) {
+	fetch := pageCursorFetch(filePageWalk(), func(page int) ([]slack.File, *slack.Paging, error) {
 		return client.Bot().GetFilesContext(ctx, slack.GetFilesParameters{
 			Channel: channelID,
 			User:    userID,

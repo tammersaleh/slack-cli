@@ -14,7 +14,7 @@ type SearchCmd struct {
 
 type SearchMessagesCmd struct {
 	Query   string `arg:"" required:"" help:"Search query (supports Slack search modifiers)."`
-	Limit   int    `help:"Page size." default:"20"`
+	Limit   int    `help:"Page size, 1-100. Slack serves at most 100 pages per query, so --all reaches 100 times this many results (10,000 at --limit 100) and then fails with search_page_limit." default:"20"`
 	Cursor  string `help:"Continue from previous page."`
 	All     bool   `help:"Fetch all pages."`
 	Sort    string `help:"Sort order: timestamp, score." default:"timestamp" enum:"timestamp,score"`
@@ -47,7 +47,9 @@ user_not_found instead of returning an empty page.
 
 Each hit includes channel{id,name}, user, ts, text, and permalink.
 Page with --cursor (a raw page number, pass-through from _meta.next_cursor)
-or use --all to fetch every page.`
+or use --all to fetch every page. Slack serves pages 1-100 only: a page above
+100 fails with search_page_limit, so use --all --limit 100 to reach 10,000
+results and split a larger query into before:/after: date windows.`
 }
 
 func (c *SearchMessagesCmd) Run(cli *CLI) error {
@@ -92,7 +94,7 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	fetch := pageCursorFetch(func(page int) ([]slack.SearchMessage, *slack.Paging, error) {
+	fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]slack.SearchMessage, *slack.Paging, error) {
 		msgs, err := client.User().SearchMessagesContext(ctx, query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,
@@ -117,7 +119,7 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 
 type SearchFilesCmd struct {
 	Query   string `arg:"" required:"" help:"Search query (supports Slack search modifiers)."`
-	Limit   int    `help:"Page size." default:"20"`
+	Limit   int    `help:"Page size, 1-100. Slack serves at most 100 pages per query, so --all reaches 100 times this many results (10,000 at --limit 100) and then fails with search_page_limit." default:"20"`
 	Cursor  string `help:"Continue from previous page."`
 	All     bool   `help:"Fetch all pages."`
 	Sort    string `help:"Sort order: timestamp, score." default:"timestamp" enum:"timestamp,score"`
@@ -166,7 +168,7 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	fetch := pageCursorFetch(func(page int) ([]slack.File, *slack.Paging, error) {
+	fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]slack.File, *slack.Paging, error) {
 		files, err := client.User().SearchFilesContext(ctx, query, slack.SearchParameters{
 			Sort:          c.Sort,
 			SortDirection: c.SortDir,

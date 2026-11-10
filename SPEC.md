@@ -116,6 +116,11 @@ unchanged. The codes the CLI raises for failures Slack did not name:
   so rerun without it (exit 1).
 - `pagination_error` - Slack returned a cursor that repeats a page already
   fetched, which would loop forever (exit 1).
+- `search_page_limit`, `file_page_limit` - the page asked for is above 100, the
+  last page Slack serves for `search.messages`, `search.files`, and
+  `files.list` (exit 1). The request is never sent, because Slack answers a
+  page above 100 with page 1 again. Terminal: the trailer has `has_more:false`
+  and no cursor. See "The 100-page cap" under `search messages`.
 - `unknown_error` - the CLI did not recognize the failure. Read `detail` (exit 1).
 
 `missing_scope` is the one Slack string that exits 2 without being a login
@@ -1153,10 +1158,35 @@ resolve fails with `user_not_found` (exit 1) before any search call. A name two
 users share resolves to whichever the cache indexed first. Applies to `search
 files` too.
 
+##### The 100-page cap
+
+Slack serves pages 1 through 100 of a search and no further, so one query
+reaches at most `100 x --limit` results: 2,000 at the default `--limit 20`,
+10,000 at `--limit 100`. Page 100 still reports more pages when the result set
+is larger, and Slack answers page 101 with page 1's rows and a next page of 2
+(measured 2026-11-10 on `search.messages`, `search.files`, and `files.list`).
+The CLI therefore refuses any page above 100 before sending it:
+
+```
+$ slack search messages "deploy" --all --limit 100
+...10,000 rows...
+{"_meta":{"has_more":false,"error":"search_page_limit"}}
+```
+
+The rows before the trailer are real and are not repeated. The error is
+terminal, with no resume cursor. To read past it, split the query into date
+windows with `before:`/`after:` and run each with `--all --limit 100`. A single
+page at `--cursor 100` succeeds and its trailer names `next_cursor:"101"`,
+since more results exist. Asking for that page is what fails.
+
+The same cap applies to `search files`, `list find`, and `file list` (which
+reports `file_page_limit`).
+
 Errors:
 
 - `missing_user_token` (exit 2): Search requires a user token. Set `SLACK_USER_TOKEN` or re-run `slack auth login`.
 - `not_authed` (exit 2): No token.
+- `search_page_limit` (exit 1): A page above 100 was asked for, by `--cursor` or by an `--all` walk that passed page 100.
 
 Slack API: `search.messages`
 
@@ -1175,6 +1205,7 @@ Errors:
 
 - `missing_user_token` (exit 2): Search requires a user token.
 - `not_authed` (exit 2): No token.
+- `search_page_limit` (exit 1): A page above 100 was asked for. See "The 100-page cap" above.
 
 Slack API: `search.files`
 
@@ -1189,7 +1220,7 @@ slack file list [flags]
   --all        Fetch all pages
   --channel    Filter by channel
   --user       Filter by user
-  --type       Filter by file type (e.g., pdf, png, zip)
+  --types      Comma-separated file types (e.g. images,pdfs)
 ```
 
 ```
@@ -1199,9 +1230,15 @@ $ slack file list --channel=#general --limit=2
 {"_meta":{"has_more":true,"next_cursor":"ZmlsZXM"}}
 ```
 
+Slack serves pages 1 through 100 of `files.list` and answers a higher page with
+page 1 again, so the listing reaches at most `100 x --limit` files. A page above
+100 is refused before the request with `file_page_limit`. Narrow the listing
+with `--channel`, `--user`, or `--types` to read past it.
+
 Errors:
 
 - `not_authed` (exit 2): No token.
+- `file_page_limit` (exit 1): A page above 100 was asked for, by `--cursor` or by an `--all` walk that passed page 100. Terminal, no resume cursor.
 
 Slack API: `files.list`
 
@@ -1396,6 +1433,7 @@ $ slack list find "Launch tasks"
 Errors:
 
 - `invalid_input` (exit 1): Blank title, `--limit` over 100, or `--all` with `--cursor`.
+- `search_page_limit` (exit 1): A page above 100 was asked for. See "The 100-page cap" under `search messages`.
 - `session_token_required` (exit 2): Bot token.
 
 Slack API: `search.files`

@@ -291,7 +291,7 @@ func (c *ListFindCmd) Run(cli *CLI) error {
 	// become spaces, which keeps the rest of the phrase matching.
 	query := `type:list "` + strings.ReplaceAll(title, `"`, " ") + `"`
 
-	fetch := pageCursorFetch(func(page int) ([]slack.File, *slack.Paging, error) {
+	fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]slack.File, *slack.Paging, error) {
 		data, err := client.PostInternalForm(ctx, "search.files", map[string]string{
 			"query": query,
 			"count": strconv.Itoa(limit),

@@ -124,16 +124,69 @@ func streamPages[T any](
 	}
 }
 
+// slackMaxPage is the highest page Slack's page-number APIs serve. Measured
+// live 2026-11-10 on search.messages, search.files, and files.list: page 100
+// answers normally and still reports further pages, and any page above it
+// answers with page 1's rows and a next page of 2. Slack's docs state the cap
+// for search ("the max page value is 100") but not the wrap.
+const slackMaxPage = 100
+
+// pageWalk is the per-command state of a walk over a page-number API.
+// pageLimit builds the error for a page above slackMaxPage, so each endpoint
+// can name its own way around the cap.
+type pageWalk struct {
+	pageLimit func(page int) *output.Error
+}
+
+// searchPageWalk is the walk for search.messages and search.files.
+func searchPageWalk() *pageWalk {
+	return &pageWalk{pageLimit: func(page int) *output.Error {
+		return &output.Error{
+			Err:    "search_page_limit",
+			Detail: pageLimitDetail("search", page),
+			Hint:   "Split the query into date windows with before:/after: and run each window with --all --limit 100. A window that still ends in this error holds more than 10,000 results - narrow it further.",
+			Code:   output.ExitGeneral,
+		}
+	}}
+}
+
+// filePageWalk is the walk for files.list.
+func filePageWalk() *pageWalk {
+	return &pageWalk{pageLimit: func(page int) *output.Error {
+		return &output.Error{
+			Err:    "file_page_limit",
+			Detail: pageLimitDetail("file listing", page),
+			Hint:   "Narrow the listing with --channel, --user, or --types and run each with --all --limit 100.",
+			Code:   output.ExitGeneral,
+		}
+	}}
+}
+
+func pageLimitDetail(what string, page int) string {
+	return "Slack serves at most " + strconv.Itoa(slackMaxPage) + " pages of a " + what +
+		" (10,000 results at --limit 100). Page " + strconv.Itoa(page) +
+		" was not requested, because Slack answers it with page 1 again."
+}
+
 // pageCursorFetch adapts a page-number Slack API (files.list, search.messages,
 // search.files) to api.PageFunc. The cursor is the page number as a string,
 // which is exactly what these commands accept back via --cursor. The next page
 // comes from the response's paging block rather than from incrementing a
 // captured counter, so a retried attempt can't skip ahead.
-func pageCursorFetch[T any](fetch func(page int) ([]T, *slack.Paging, error)) api.PageFunc[T] {
+//
+// A page above slackMaxPage is refused before the request. The error is an
+// *output.Error, so streamError ends the stream with a terminal trailer and no
+// resume cursor: an --all walk stops after page 100 instead of appending a
+// second copy of page 1, and a hand-written --cursor 101 fails instead of
+// returning page 1 with exit 0.
+func pageCursorFetch[T any](w *pageWalk, fetch func(page int) ([]T, *slack.Paging, error)) api.PageFunc[T] {
 	return func(cursor string) ([]T, string, error) {
 		page, err := parsePageCursor(cursor)
 		if err != nil {
 			return nil, "", err
+		}
+		if page > slackMaxPage {
+			return nil, "", w.pageLimit(page)
 		}
 		items, paging, err := fetch(page)
 		if err != nil {

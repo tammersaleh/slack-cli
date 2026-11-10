@@ -302,7 +302,7 @@ func TestPageCursorFetch_TranslatesPages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotPage := 0
-			fetch := pageCursorFetch(func(page int) ([]string, *slack.Paging, error) {
+			fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]string, *slack.Paging, error) {
 				gotPage = page
 				return []string{"x"}, &slack.Paging{Page: tt.page, Pages: tt.pages}, nil
 			})
@@ -324,7 +324,7 @@ func TestPageCursorFetch_RejectsBadCursor(t *testing.T) {
 	for _, cursor := range []string{"0", "-1", "2x", "abc"} {
 		t.Run(cursor, func(t *testing.T) {
 			called := false
-			fetch := pageCursorFetch(func(page int) ([]string, *slack.Paging, error) {
+			fetch := pageCursorFetch(searchPageWalk(), func(page int) ([]string, *slack.Paging, error) {
 				called = true
 				return nil, nil, nil
 			})
@@ -333,6 +333,50 @@ func TestPageCursorFetch_RejectsBadCursor(t *testing.T) {
 			}
 			if called {
 				t.Errorf("cursor %q must be rejected before any API call", cursor)
+			}
+		})
+	}
+}
+
+// Slack answers a page above 100 with page 1, so the adapter refuses it before
+// the request. Page 100 itself is still served, and still names page 101 when
+// Slack reports more pages.
+func TestPageCursorFetch_RefusesPagesAbove100(t *testing.T) {
+	walks := map[string]*pageWalk{
+		"search_page_limit": searchPageWalk(),
+		"file_page_limit":   filePageWalk(),
+	}
+	for code, walk := range walks {
+		t.Run(code, func(t *testing.T) {
+			var requested []int
+			fetch := pageCursorFetch(walk, func(page int) ([]string, *slack.Paging, error) {
+				requested = append(requested, page)
+				return []string{"x"}, &slack.Paging{Page: page, Pages: 500}, nil
+			})
+
+			_, next, err := fetch("100")
+			if err != nil {
+				t.Fatalf("page 100 must be served: %v", err)
+			}
+			if next != "101" {
+				t.Errorf("next after page 100 = %q, want 101", next)
+			}
+
+			for _, cursor := range []string{"101", "102", "5000"} {
+				_, _, err := fetch(cursor)
+				var oErr *output.Error
+				if !errors.As(err, &oErr) {
+					t.Fatalf("cursor %s: expected *output.Error, got %T: %v", cursor, err, err)
+				}
+				if oErr.Err != code {
+					t.Errorf("cursor %s: error = %q, want %q", cursor, oErr.Err, code)
+				}
+				if !strings.Contains(oErr.Detail, "Page "+cursor+" ") {
+					t.Errorf("cursor %s: detail does not name the refused page: %s", cursor, oErr.Detail)
+				}
+			}
+			if len(requested) != 1 || requested[0] != 100 {
+				t.Errorf("requested pages %v, want only page 100", requested)
 			}
 		})
 	}
