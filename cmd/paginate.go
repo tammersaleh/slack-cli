@@ -63,6 +63,14 @@ func withClientSideFilter() streamOption {
 // it must not make network calls or fail for domain reasons, because an error
 // from it is taken as a broken stdout and returned with no trailer. Domain
 // checks belong before the first PrintItem of a page.
+//
+// The one exception is the printer's own enrichment. PrintItem calls the
+// resolver's LookupUser and LookupChannel, which on a cache miss make one
+// users.info or conversations.info per distinct id. Those lookups are
+// best-effort: they go through api.Call, so a rate limit is retried a bounded
+// number of times, a failed id is memoized for the process, and any error is
+// swallowed. The cost is a missing name or a slower emit, never an error out
+// of emit or a half-written page.
 func streamPages[T any](
 	ctx context.Context,
 	cli *CLI,
