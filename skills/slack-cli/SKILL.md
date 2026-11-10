@@ -64,6 +64,7 @@ Common errors and their recovery:
 | `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. |
 | `rate_limited` | Exit 3. Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait. `user info` lookups, internal reads (`section list`, `draft list`, `saved counts`, `channel managers`), and `section move`/`rename`/`emoji` are retried too. Other single-shot commands (`message get`, `reaction list`, `channel info`, `file info`) and creates and draft and list writes are not: wait (`detail` names Slack's `Retry-After` when it sent one) and rerun. Slack's raw `ratelimited` string is always reported as `rate_limited` |
 | `invalid_cursor` | The cursor is void. Rerun without `--cursor`; a cursor only works for the same command, flags, and workspace that produced it |
+| `search_page_limit` / `file_page_limit` | The run asked for a page above 100, the last one Slack serves (10,000 results at `--limit 100`). Terminal, no cursor. Search: split the query with `before:`/`after:` and run each window with `--all --limit 100`. `file list`: narrow with `--channel`, `--user`, or `--types` |
 | `timeout` | The `--timeout` budget expired. Raise it, drop it, or resume from `_meta.next_cursor` |
 | `http_error` | Slack answered with a non-200. Read `detail` for the status; usually transient, so wait and resume |
 | `parse_error` | The response was not JSON. Check for a proxy or captive portal intercepting `slack.com` |
@@ -142,9 +143,29 @@ slack thread list https://acme.slack.com/archives/C01ABC/p1709251200000100
 ### Search (requires user token)
 
 ```
-slack search messages <query> [--limit N] [--sort timestamp|score] [--sort-dir asc|desc]
-slack search files <query> [--limit N]
+slack search messages <query> [--limit N] [--all] [--cursor N] [--sort timestamp|score] [--sort-dir asc|desc]
+slack search files <query> [--limit N] [--all] [--cursor N] [--sort timestamp|score] [--sort-dir asc|desc]
 ```
+
+`--limit` is the page size: default 20, max 100, and a larger value is
+`invalid_input`.
+
+For an exhaustive sweep use `--all --limit 100`. Do not split a query into date
+windows by hand to get past the page size: `--all` already pages through it.
+
+`next_cursor` is a page number for search (`"2"`, `"3"`), not an opaque token,
+so `--cursor 5` is safe to write by hand. Pages run 1 to 100.
+
+One query reaches at most 10,000 results (100 pages at `--limit 100`, only
+2,000 at the default 20). Past that the run ends with
+`{"_meta":{"has_more":false,"error":"search_page_limit"}}`, exit 1. The rows
+above the trailer are real. That is the one case for date windows: split the
+query with `before:`/`after:` and run each window with `--all --limit 100`.
+
+The trailer carries `total`, Slack's own count of the result set. Zero rows
+with `"total":0` means Slack said nothing matched. A clean `--all` run that
+printed fewer rows than `total` is missing rows: rerun before concluding
+anything.
 
 Query supports Slack's search modifiers. Combine freely:
 
@@ -166,7 +187,7 @@ Query supports Slack's search modifiers. Combine freely:
 
 Example: `"deploy blocker in:#general from:@alice after:2026-01-01"`
 
-Results are ranked by score unless `--sort timestamp`. Each hit
+Results are sorted by timestamp, newest first, unless `--sort score`. Each hit
 includes `channel` (object with `id`/`name`), `user`, `ts`,
 `text`, and `permalink`.
 
@@ -278,10 +299,13 @@ slack user info @alice U01XYZ alice@example.com   # or name / ID / email (incl. 
 ### Files
 
 ```
-slack file list [--limit N] [--channel CH] [--user UID] [--types images,pdfs]
+slack file list [--limit N] [--all] [--cursor N] [--channel CH] [--user UID] [--types images,pdfs]
 slack file info <file-id-or-url>...
 slack file download <file-id-or-url> [-o path]
 ```
+
+`file list` pages like search: `next_cursor` is a page number, `total` in the
+trailer is Slack's count, and pages stop at 100 (`file_page_limit`).
 
 ### Lists (requires session token)
 
@@ -936,7 +960,9 @@ resolved `user_name` too (no need to list both).
 ## Pagination
 
 Most list commands return one page by default. Use `--all` to fetch
-everything, or use the `next_cursor` from `_meta` with `--cursor`.
+everything, or use the `next_cursor` from `_meta` with `--cursor`. That covers
+`search messages`, `search files`, and `file list` too, where the cursor is a
+page number and Slack stops serving at page 100.
 
 ### Always check the trailer before trusting a list
 

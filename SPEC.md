@@ -1134,9 +1134,9 @@ Requires a user token (`xoxp-`).
 
 ```
 slack search messages <query> [flags]
-  --limit       Page size (default: 20, max: 100)
-  --cursor      Continue from previous page
-  --all         Fetch all pages
+  --limit       Page size (default: 20, max: 100; above 100 is invalid_input)
+  --cursor      Continue from previous page (a page number, 1-100)
+  --all         Fetch all pages, up to page 100
   --sort        timestamp, score (default: timestamp)
   --sort-dir    asc, desc (default: desc)
 ```
@@ -1145,8 +1145,15 @@ slack search messages <query> [flags]
 $ slack search messages "deploy failed" --limit=2
 {"type":"message","channel":{"id":"C01ABC","name":"general"},"user":"U01XYZ","username":"tammer","text":"The deploy failed at 3am, investigating now.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z","permalink":"https://acme.slack.com/archives/C01ABC/p1709251200000100"}
 {"type":"message","channel":{"id":"C03GHI","name":"engineering"},"user":"U02ABC","username":"alice","text":"deploy failed again, same error as last week","ts":"1709164800.000050","ts_iso":"2024-02-29T00:00:00Z","permalink":"https://acme.slack.com/archives/C03GHI/p1709164800000050"}
-{"_meta":{"has_more":true,"next_cursor":"c2VhcmNo"}}
+{"_meta":{"has_more":true,"next_cursor":"2","total":57}}
 ```
+
+The search cursor is a page number, not an opaque token. `search.messages` and
+`search.files` page by number, and the CLI passes that number through as
+`next_cursor`, so `--cursor 5` may be written by hand. It is only meaningful
+for the same query, `--limit`, and sort. An exhaustive sweep is `--all`, not a
+set of hand-written date windows: `--all` walks every page up to Slack's cap
+(see "The 100-page cap" below).
 
 Supports Slack search modifiers in the query string: `in:#channel`, `from:@user`, `has:link`, `has:reaction`, `has::eyes:` (a specific emoji reaction; `has:my::eyes:` for your own), `before:2024-03-01`, `after:2024-02-01`, etc.
 
@@ -1251,7 +1258,7 @@ Same flags as `search messages`.
 $ slack search files "quarterly report" --limit=2
 {"id":"F01ABC","name":"Q1-report.pdf","title":"Q1 Quarterly Report","mimetype":"application/pdf","filetype":"pdf","size":1048576,"user":"U01XYZ","created":1709251200,"permalink":"https://acme.slack.com/files/U01XYZ/F01ABC/q1-report.pdf"}
 {"id":"F02DEF","name":"Q4-report.xlsx","title":"Q4 Quarterly Report","mimetype":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","filetype":"xlsx","size":524288,"user":"U02ABC","created":1701388800,"permalink":"https://acme.slack.com/files/U02ABC/F02DEF/q4-report.xlsx"}
-{"_meta":{"has_more":false}}
+{"_meta":{"has_more":false,"total":2}}
 ```
 
 Errors:
@@ -1268,9 +1275,9 @@ Slack API: `search.files`
 
 ```
 slack file list [flags]
-  --limit      Page size (default: 20, max: 100)
-  --cursor     Continue from previous page
-  --all        Fetch all pages
+  --limit      Page size (default: 20; a value above 100 falls back to 20)
+  --cursor     Continue from previous page (a page number, 1-100)
+  --all        Fetch all pages, up to page 100
   --channel    Filter by channel
   --user       Filter by user
   --types      Comma-separated file types (e.g. images,pdfs)
@@ -1280,8 +1287,11 @@ slack file list [flags]
 $ slack file list --channel=#general --limit=2
 {"id":"F01ABC","name":"Q1-report.pdf","title":"Q1 Quarterly Report","mimetype":"application/pdf","filetype":"pdf","size":1048576,"user":"U01XYZ","created":1709251200,"url_private":"https://files.slack.com/files-pri/T01ABC-F01ABC/q1-report.pdf","permalink":"https://acme.slack.com/files/U01XYZ/F01ABC/q1-report.pdf"}
 {"id":"F02DEF","name":"screenshot.png","title":"Bug Screenshot","mimetype":"image/png","filetype":"png","size":245760,"user":"U02ABC","created":1709164800,"url_private":"https://files.slack.com/files-pri/T01ABC-F02DEF/screenshot.png","permalink":"https://acme.slack.com/files/U02ABC/F02DEF/screenshot.png"}
-{"_meta":{"has_more":true,"next_cursor":"ZmlsZXM"}}
+{"_meta":{"has_more":true,"next_cursor":"2","total":41}}
 ```
+
+`next_cursor` is a page number, as for search, and `total` is Slack's count of
+the listing (see "`total` in the trailer" under `search messages`).
 
 Slack serves pages 1 through 100 of `files.list` and answers a higher page with
 page 1 again, so the listing reaches at most `100 x --limit` files. A page above
@@ -1480,7 +1490,7 @@ slack list find <title> [flags]
 $ slack list find "Launch tasks"
 {"id":"F01ABC","title":"Launch tasks","user":"U01XYZ","created":1709251200,"permalink":"https://acme.slack.com/lists/T01ABC/F01ABC"}
 {"id":"F02DEF","title":"Launch tasks","user":"U02MGR","created":1709164800,"permalink":"https://acme.slack.com/lists/T01ABC/F02DEF"}
-{"_meta":{"has_more":false}}
+{"_meta":{"has_more":false,"total":2}}
 ```
 
 Errors:
