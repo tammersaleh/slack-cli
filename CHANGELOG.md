@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.11.2](https://github.com/tammersaleh/slack-cli/compare/v5.11.1...v5.11.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* answer a repeat channel-name miss without walking the workspace again ([49b6994](https://github.com/tammersaleh/slack-cli/commit/49b6994b942b44cd21e852cbe27002c4542fb856))
+* trace and retry the resolver's user and channel lookups ([c9e849e](https://github.com/tammersaleh/slack-cli/commit/c9e849e9031a91726ad291ac6180891480bf5014))
+
 ## [5.11.1](https://github.com/tammersaleh/slack-cli/compare/v5.11.0...v5.11.1) (2026-11-10)
 
 
