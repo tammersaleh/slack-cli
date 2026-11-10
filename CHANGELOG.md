@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.12.0](https://github.com/tammersaleh/slack-cli/compare/v5.11.2...v5.12.0) (2026-11-10)
+
+
+### Features
+
+* report Slack's result total in the search and file list trailer ([ce7802f](https://github.com/tammersaleh/slack-cli/commit/ce7802f3202605830295b3bb910d2b9c45ba6a10))
+
+
+### Bug Fixes
+
+* refuse a search or file page above 100 instead of repeating page 1 ([3cc7476](https://github.com/tammersaleh/slack-cli/commit/3cc7476a59ad7eb7246b1126659565dc08486eed))
+* trace the search query as sent, after user names are resolved ([0edf354](https://github.com/tammersaleh/slack-cli/commit/0edf35499bce9acdd9437cbef5d5b12caaac7dce))
+
 ## [5.11.2](https://github.com/tammersaleh/slack-cli/compare/v5.11.1...v5.11.2) (2026-11-10)
 
 
