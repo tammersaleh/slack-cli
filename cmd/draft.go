@@ -745,11 +745,11 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 				return abortWithTrailer(p, oErr, errorCount)
 			}
 			errorCount++
-			if err := p.PrintItem(map[string]any{
-				"input":  id,
-				"error":  oErr.Err,
-				"detail": oErr.Detail,
-			}); err != nil {
+			// AsItem keeps the classifier's hint, which a hand-built row
+			// dropped. The classifier does not know the draft id.
+			item := oErr.AsItem()
+			item["input"] = id
+			if err := p.PrintItem(item); err != nil {
 				return err
 			}
 			continue

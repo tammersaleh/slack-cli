@@ -2401,3 +2401,57 @@ func TestDraftDelete_LookupMissOnTruncatedPage(t *testing.T) {
 		t.Errorf("expected error_count=1, got %v", meta["error_count"])
 	}
 }
+
+// A per-draft delete failure is the classified error's own item form plus the
+// draft id, so a hint the classifier attached reaches the row.
+func TestDraftDelete_ErrorRowKeepsHint(t *testing.T) {
+	existing := map[string]any{
+		"id": "Dr01234", "last_updated_ts": "1709251200.12", "blocks": richTextBlocks("a"),
+		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.delete", func(w http.ResponseWriter, r *http.Request) {
+		// A proxy or captive portal answering 200 with HTML: parse_error,
+		// which carries a hint and is not systemic.
+		_, _ = w.Write([]byte("<html>login</html>"))
+	})
+
+	out, err := runWithMockSession(t, mux, "draft", "delete", "Dr01234")
+	assertExitError(t, err)
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected an error row and a trailer, got %d lines:\n%s", len(lines), out)
+	}
+	row := parseJSON(t, lines[0])
+	if row["error"] != "parse_error" || row["input"] != "Dr01234" {
+		t.Errorf("expected parse_error for Dr01234, got %v", row)
+	}
+	if detail, _ := row["detail"].(string); detail == "" {
+		t.Errorf("row should keep detail, got %v", row)
+	}
+	if hint, _ := row["hint"].(string); !strings.Contains(hint, "proxy") {
+		t.Errorf("row should keep the classifier's hint, got %v", row)
+	}
+}
+
+// Slack's own error on a delete has no hint to carry. The row keeps the code,
+// the id, and the detail.
+func TestDraftDelete_SlackErrorRow(t *testing.T) {
+	existing := map[string]any{
+		"id": "Dr01234", "last_updated_ts": "1709251200.12", "blocks": richTextBlocks("a"),
+		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, existing))
+	mux.HandleFunc("/api/drafts.delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "draft_delete_invalid"})
+	})
+
+	out, err := runWithMockSession(t, mux, "draft", "delete", "Dr01234")
+	assertExitError(t, err)
+	row := parseJSON(t, nonEmptyLines(out)[0])
+	if row["error"] != "draft_delete_invalid" || row["input"] != "Dr01234" || row["detail"] == nil {
+		t.Errorf("unexpected row: %v", row)
+	}
+}

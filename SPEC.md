@@ -2606,6 +2606,10 @@ $ slack draft delete Dr01234 Dr05678
 ```
 
 Per-draft errors appear inline; `error_count` in `_meta` indicates partial failure.
+Each error row is `{"input":"<draft id>","error":...,"detail":...}` plus
+`hint` when the error has one. Slack's own rejection is passed through as
+returned: `draft_delete_invalid` is what `drafts.delete` answers for a draft
+already marked deleted, and it is reported as an error (exit 1).
 An id that the lookup page does not hold is `draft_not_found`, or
 `draft_lookup_incomplete` when Slack reported more drafts than the 100 the
 lookup can read.
