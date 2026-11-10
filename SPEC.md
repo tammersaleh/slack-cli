@@ -1974,12 +1974,17 @@ Uses the internal `saved.list` API. Requires `xoxc-` session token.
 
 ```
 slack saved list [flags]
-  --limit              Max items to return (default: 20, max: 100)
+  --limit              Page size, 1-50 (default: 20)
   --cursor             Continue from previous page
   --all                Fetch all pages
   --enrich             Fetch message text and sender for each item
   --include-completed  Include completed items
 ```
+
+`--limit` is the page size, sent as `saved.list`'s `limit` on every page. Slack
+serves 1 to 50 rows per page and answers `invalid_arguments` outside that range,
+so a value above 50 is `invalid_input` before any request. `0` or a negative
+value means the default of 20.
 
 ```
 $ slack saved list --limit=2
@@ -2050,6 +2055,7 @@ Errors:
 
 - `not_authed` (exit 2): No session token (requires xoxc-).
 - `session_token_required` (exit 2): Bot/user token provided but saved.list requires a session token.
+- `invalid_input` (exit 1): `--limit` above 50, or `--all` with `--cursor`.
 
 Slack API: `saved.list` (internal, undocumented)
 
@@ -2061,11 +2067,14 @@ slack saved counts
 
 ```
 $ slack saved counts
-{"uncompleted":12,"overdue":2,"completed":45,"total":59}
+{"uncompleted_count":12,"uncompleted_overdue_count":2,"archived_count":0,"completed_count":45,"total_count":59,"saved_no_due_date_count":0,"todo_unfiltered_count":14,"todo_count":12}
 {"_meta":{"has_more":false}}
 ```
 
-Slack API: `saved.list` (counts field from response)
+The row is Slack's `counts` block passed through unchanged, so the keys are
+Slack's and may change.
+
+Slack API: `saved.list` (counts field from response, requested with `limit: 1`)
 
 ### section (Phase 2)
 

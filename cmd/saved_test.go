@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alecthomas/kong"
@@ -55,7 +57,39 @@ func runWithMockSessionStdin(t *testing.T, stdin string, handler http.Handler, a
 	return outBuf.String(), runErr
 }
 
+// savedListRequests records the JSON body of every saved.list request a
+// handler saw, so a test can assert what the command sent.
+type savedListRequests struct {
+	mu     sync.Mutex
+	bodies []map[string]any
+}
+
+func (r *savedListRequests) add(body map[string]any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bodies = append(r.bodies, body)
+}
+
+func (r *savedListRequests) all() []map[string]any {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]map[string]any(nil), r.bodies...)
+}
+
+// savedListHandler models saved.list's paging as measured live: the page size
+// is the JSON body's `limit` (default 20 when absent, invalid_arguments outside
+// 1-50), and every other key - `count` included - is ignored. The fixture is
+// sliced by it, so a command that sends the wrong parameter gets the wrong row
+// count here the same way it does against Slack.
+//
+// The cursor is the offset of the next row. nextCursor is what the last page
+// reports, for tests that want a has_more trailer without a second page.
 func savedListHandler(t *testing.T, items []map[string]any, counts map[string]any, nextCursor string) http.HandlerFunc {
+	t.Helper()
+	return savedListRecordingHandler(t, &savedListRequests{}, items, counts, nextCursor)
+}
+
+func savedListRecordingHandler(t *testing.T, rec *savedListRequests, items []map[string]any, counts map[string]any, nextCursor string) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/saved.list" {
@@ -66,13 +100,36 @@ func savedListHandler(t *testing.T, items []map[string]any, counts map[string]an
 		body, _ := io.ReadAll(r.Body)
 		var req map[string]any
 		_ = json.Unmarshal(body, &req)
+		rec.add(req)
+
+		limit := 20
+		if v, ok := req["limit"]; ok {
+			f, isNum := v.(float64)
+			if !isNum || f != float64(int(f)) || f < 1 || f > 50 {
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_arguments"})
+				return
+			}
+			limit = int(f)
+		}
+
+		offset := 0
+		if c, ok := req["cursor"].(string); ok {
+			if n, err := strconv.Atoi(c); err == nil && n >= 0 && n <= len(items) {
+				offset = n
+			}
+		}
+		end := min(offset+limit, len(items))
+		next := nextCursor
+		if end < len(items) {
+			next = strconv.Itoa(end)
+		}
 
 		resp := map[string]any{
 			"ok":          true,
-			"saved_items": items,
+			"saved_items": items[offset:end],
 			"counts":      counts,
 			"response_metadata": map[string]string{
-				"next_cursor": nextCursor,
+				"next_cursor": next,
 			},
 		}
 		_ = json.NewEncoder(w).Encode(resp)

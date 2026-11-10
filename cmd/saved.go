@@ -19,7 +19,7 @@ type SavedCmd struct {
 }
 
 type SavedListCmd struct {
-	Limit            int    `help:"Page size." default:"20"`
+	Limit            int    `help:"Page size, 1-50." default:"20"`
 	Cursor           string `help:"Continue from previous page."`
 	All              bool   `help:"Fetch all pages."`
 	Enrich           bool   `help:"Fetch message text and sender for each item."`
@@ -27,6 +27,11 @@ type SavedListCmd struct {
 }
 
 type SavedCountsCmd struct{}
+
+// savedListMaxLimit is the largest page saved.list serves. The parameter is
+// `limit`; the endpoint ignores `count` and answers invalid_arguments for a
+// limit outside 1-50.
+const savedListMaxLimit = 50
 
 // savedItem is a single item from the saved.list response.
 type savedItem struct {
@@ -50,6 +55,13 @@ type savedListResponse struct {
 func (c *SavedListCmd) Run(cli *CLI) error {
 	if c.All && c.Cursor != "" {
 		return &output.Error{Err: "invalid_input", Detail: "--all and --cursor are mutually exclusive", Code: output.ExitGeneral}
+	}
+	limit := c.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > savedListMaxLimit {
+		return &output.Error{Err: "invalid_input", Detail: fmt.Sprintf("--limit must be between 1 and %d", savedListMaxLimit), Code: output.ExitGeneral}
 	}
 
 	// saved.list is an internal endpoint and needs a session (xoxc-) token,
@@ -94,11 +106,6 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	limit := c.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 20
-	}
-
 	// Set when any row got an item-local enrich marker, so the command can
 	// exit nonzero once the whole stream has been written.
 	partialEnrich := false
@@ -108,7 +115,7 @@ func (c *SavedListCmd) Run(cli *CLI) error {
 	// failure can't leave half a page written.
 	fetch := func(cursor string) ([]map[string]any, string, error) {
 		body := map[string]any{
-			"count": limit,
+			"limit": limit,
 		}
 		if c.IncludeCompleted {
 			body["include_completed"] = true
@@ -199,7 +206,7 @@ func (c *SavedCountsCmd) Run(cli *CLI) error {
 	defer cancel()
 
 	data, err := client.RetryInternal(ctx, "saved.list", map[string]any{
-		"count": 1,
+		"limit": 1,
 	})
 	if err != nil {
 		return cli.ClassifyError(err)

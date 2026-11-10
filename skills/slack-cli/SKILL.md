@@ -375,9 +375,12 @@ slack bookmark list <channel>
 ### Saved Items (requires session token)
 
 ```
-slack saved list [--limit N] [--enrich] [--include-completed]
+slack saved list [--limit N] [--all] [--enrich] [--include-completed]
 slack saved counts
 ```
+
+`--limit` is the page size, 1-50 (default 20). Above 50 is `invalid_input`. Use
+`--all` for every saved item.
 
 ### Sidebar Sections (requires session token)
 
