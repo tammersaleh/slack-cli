@@ -497,14 +497,26 @@ formatting inside a heading, fence language, link title, link-text
 formatting, and the `<#C|label>` label.
 Everything else outside the subset is rejected with `invalid_markdown` and a
 line number:
-`@name` mentions (resolve the id first with `slack user info @name` and write
-`<@Uxxx>`), images, HTML, pipe tables (use `--table`), a
+`@name` mentions (write `<@Uxxx>`; see below for getting the id), images, HTML, pipe tables (use `--table`), a
 list nested more than three deep, a list item with more than one paragraph,
 a quote inside a quote, a mention or emoji
 inside link text, a link or mention inside a heading, a heading or
 horizontal rule inside a quote or list item, a relative or
 non-http(s)/mailto link, and an empty heading, list item, quote, or code
 block (Slack rejects an empty text inline).
+
+Get a mention id by email or handle, never by display name, and check the
+account is live:
+
+```
+slack user info alice@example.com --fields id,name,deleted
+slack user info @alice --fields id,name,deleted      # @alice is the handle
+```
+
+Use the `id` only when `deleted` is `false` and `name` is the handle you
+expect. A display or real name (`@Alice Adams`) can resolve to a deactivated
+duplicate account, exit 0, and `draft create` stages a `<@Uxxx>` mention as
+written without checking the account.
 
 Verified live 2026-10-16 through the drafts API: every construct above round-trips
 through `drafts.create` and `drafts.list` byte for byte and survives the
