@@ -120,8 +120,11 @@ func TestSearchMessages_AllStopsAtPage100(t *testing.T) {
 	out, err := runWithMock(t, mux, "search", "messages", "deploy", "--all", "--limit", "1")
 	assertPageLimit(t, err, "search_page_limit")
 
-	if len(requested) != 100 || requested[99] != "100" {
-		t.Errorf("requested %d pages ending at %q, want 100 ending at page 100", len(requested), requested[len(requested)-1])
+	if len(requested) != 100 {
+		t.Fatalf("requested %d pages, want 100", len(requested))
+	}
+	if requested[99] != "100" {
+		t.Errorf("last page requested = %q, want 100", requested[99])
 	}
 	lines := nonEmptyLines(out)
 	if len(lines) != 101 {
@@ -136,6 +139,39 @@ func TestSearchMessages_AllStopsAtPage100(t *testing.T) {
 		seen[text] = true
 	}
 	assertTerminalTrailer(t, out, "search_page_limit")
+}
+
+// file list shares the adapter and the wrap, with its own error code.
+func TestFileList_AllStopsAtPage100(t *testing.T) {
+	var requested []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/files.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		requested = append(requested, r.Form.Get("page"))
+		page := wrappingPage(r.Form.Get("page"))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":     true,
+			"files":  []map[string]any{{"id": fmt.Sprintf("F%03dABC", page), "name": "file.pdf"}},
+			"paging": map[string]any{"count": 1, "total": 150, "page": page, "pages": 150},
+		})
+	})
+
+	out, err := runWithMock(t, mux, "file", "list", "--all", "--limit", "1")
+	assertPageLimit(t, err, "file_page_limit")
+	if len(requested) != 100 {
+		t.Fatalf("requested %d pages, want 100", len(requested))
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 101 {
+		t.Fatalf("expected 100 rows + trailer, got %d lines", len(lines))
+	}
+	if first, last := parseJSON(t, lines[0])["id"], parseJSON(t, lines[99])["id"]; first != "F001ABC" || last != "F100ABC" {
+		t.Errorf("rows ran %v to %v, want F001ABC to F100ABC", first, last)
+	}
+	assertTerminalTrailer(t, out, "file_page_limit")
+	if total := metaOf(t, out)["total"]; total != float64(150) {
+		t.Errorf("_meta.total = %v, want 150: the trailer shows what lies past the cap", total)
+	}
 }
 
 // Page 100 itself is served, and its trailer still names page 101: more

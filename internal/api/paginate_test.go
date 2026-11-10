@@ -395,7 +395,7 @@ func TestFetchPage_TraceFieldsPerAttempt(t *testing.T) {
 	if rec.attrs[2]["total"] != 7 {
 		t.Errorf("second attempt total = %v, want 7", rec.attrs[2]["total"])
 	}
-	if rec.attrs[2]["items"] != 1 {
-		t.Errorf("extra fields must not displace the standard ones: %v", rec.attrs[2])
+	if rec.attrs[2]["items"] != 1 || rec.attrs[2]["has_more"] != false {
+		t.Errorf("the standard fields are missing beside the extra ones: %v", rec.attrs[2])
 	}
 }
