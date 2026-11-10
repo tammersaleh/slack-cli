@@ -47,7 +47,7 @@ func (c *StatusGetCmd) Run(cli *CLI) error {
 			continue
 		}
 
-		user, err := fetchUser(ctx, client, r, userID)
+		user, err := r.FetchUser(ctx, userID)
 		if err != nil {
 			if abort := userLookupFailed(cli, p, input, err, &errorCount); abort != nil {
 				return abort

@@ -89,7 +89,7 @@ func (c *UserListCmd) Run(cli *CLI) error {
 }
 
 type UserInfoCmd struct {
-	Users []string `arg:"" required:"" help:"User ID or email."`
+	Users []string `arg:"" required:"" help:"User ID, email, or @name."`
 	Full  bool     `help:"Fetch custom profile fields (Manager, Division, Department, etc.) via users.profile.get."`
 }
 
@@ -98,9 +98,17 @@ func (UserInfoCmd) Help() string {
 
 Accepted forms:
   U01ABC123               Slack user ID
-  alice@example.com       email (uses users.lookupByEmail - fails with
-                          session tokens on Enterprise Grid; prefer @name there)
+  alice@example.com       email, read from the local user cache; an email
+                          the cache does not hold falls back to
+                          users.lookupByEmail (which fails with session
+                          tokens on Enterprise Grid)
   @alice                  display name, username, or real name via local cache
+
+Email and @name need the whole user directory. When the user cache is
+missing or older than its TTL (24h, SLACK_CACHE_TTL), the lookup first
+walks users.list to rebuild it, which prints nothing until it finishes and
+can take minutes on a large org. --trace shows each page and rate-limit
+wait. A user ID never triggers the walk.
 
 Examples:
 
@@ -146,7 +154,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 			continue
 		}
 
-		user, err := fetchUser(ctx, client, r, userID)
+		user, err := r.FetchUser(ctx, userID)
 		if err != nil {
 			if abort := userLookupFailed(cli, p, input, err, &errorCount); abort != nil {
 				return abort
@@ -209,25 +217,6 @@ func userDisplayName(u slack.User) string {
 		return u.RealName
 	}
 	return u.Name
-}
-
-// fetchUser returns a user from the resolver's cache, falling back to
-// users.info through the shared rate-limit retry. The resolver's own lookup
-// swallows its error, so the fallback is what reports why a user is missing.
-func fetchUser(ctx context.Context, client *api.Client, r *resolve.Resolver, userID string) (slack.User, error) {
-	if user, found, err := r.LookupUser(ctx, userID); err == nil && found {
-		return user, nil
-	}
-	var user *slack.User
-	err := api.Call(ctx, "users.info", func() error {
-		var err error
-		user, err = client.Bot().GetUserInfoContext(ctx, userID)
-		return err
-	})
-	if err != nil {
-		return slack.User{}, err
-	}
-	return *user, nil
 }
 
 // userLookupFailed reports one failed user lookup. A systemic failure ends

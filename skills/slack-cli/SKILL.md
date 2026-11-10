@@ -975,5 +975,6 @@ Channel types (`--type` flag on `slack channel list`):
 User resolution gotchas:
 
 - `@name` matches display name, username, or real name via the local user cache.
-- Email lookup (passing `alice@example.com`) goes through Slack's `users.lookupByEmail` API, which fails with session tokens on Enterprise Grid. Prefer `@name` in that case.
+- Email lookup (passing `alice@example.com`) reads the same local user cache. Only an email the cache does not hold falls back to Slack's `users.lookupByEmail` API, which fails with session tokens on Enterprise Grid.
+- An email or `@name` lookup with a missing or stale user cache (24h TTL, see `slack cache info`) first walks the whole user directory. It prints nothing until the walk ends and can take minutes on a large org, so an empty stdout under a short timeout means "still loading", not "no such user". Run it without a tight timeout, add `--trace` to watch the `users.list` pages on stderr, or pass a user ID, which never walks.
 - On name collisions, first match wins silently. Inspect `slack user list --query <partial>` to see the candidates.

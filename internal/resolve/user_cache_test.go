@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 )
 
 // usersListHandler returns a mock handler that serves a users.list response.
@@ -139,11 +140,11 @@ func TestLookupUser_NotFound(t *testing.T) {
 	r := NewResolver(client, "T123", t.TempDir())
 
 	_, found, err := r.LookupUser(context.Background(), "U999")
-	if err != nil {
-		t.Fatal(err)
-	}
 	if found {
 		t.Error("expected user not to be found")
+	}
+	if code, ok := api.SlackErrorCode(err); !ok || code != "user_not_found" {
+		t.Errorf("got err=%v, want Slack's user_not_found", err)
 	}
 }
 

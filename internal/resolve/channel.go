@@ -3,6 +3,7 @@ package resolve
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -104,10 +105,12 @@ func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, er
 // in-memory cache and, on a miss, falls back to a single conversations.info
 // call rather than bulk-loading the whole workspace via conversations.list
 // (which is Tier-2 rate-limited and can take minutes on a large Enterprise
-// Grid org). This mirrors LookupUser's single-fetch fallback. Failures are
-// memoized for the process so a wide result set with an unresolvable channel
-// ID doesn't re-hit conversations.info on every row. Best-effort: returns
-// ("", false) on any error or an empty name (e.g. a DM).
+// Grid org). This mirrors LookupUser's single-fetch fallback, including the
+// shared rate-limit retry, the "call" trace event, and the stop once that
+// retry is exhausted. Failures are memoized for the process so a wide result
+// set with an unresolvable channel ID doesn't re-hit conversations.info on
+// every row. Best-effort: returns ("", false) on any error or an empty name
+// (e.g. a DM).
 func (r *Resolver) LookupChannel(ctx context.Context, id string) (string, bool) {
 	if name, found := r.LookupChannelName(id); found {
 		return name, true
@@ -115,14 +118,20 @@ func (r *Resolver) LookupChannel(ctx context.Context, id string) (string, bool) 
 
 	r.mu.RLock()
 	_, failed := r.failedChannels[id]
+	down := r.conversationsInfoDown
 	r.mu.RUnlock()
-	if failed {
+	if failed || down {
 		return "", false
 	}
 
-	info, err := r.client.Bot().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: id})
+	var info *slack.Channel
+	err := api.Call(ctx, "conversations.info", func() error {
+		var err error
+		info, err = r.client.Bot().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{ChannelID: id})
+		return err
+	})
 	if err != nil || info == nil || info.Name == "" {
-		r.markChannelFailed(id)
+		r.markChannelFailed(ctx, id, err)
 		return "", false
 	}
 
@@ -153,14 +162,24 @@ func (r *Resolver) addChannelToCache(id, name string) {
 }
 
 // markChannelFailed records a channel ID whose conversations.info lookup failed
-// so subsequent enrichment rows skip the call.
-func (r *Resolver) markChannelFailed(id string) {
+// so subsequent enrichment rows skip the call. An exhausted rate limit stops
+// every later lookup, not just this ID's, and a dead context is recorded
+// nowhere - see markUserFailed.
+func (r *Resolver) markChannelFailed(ctx context.Context, id string, err error) {
+	if ctx.Err() != nil {
+		return
+	}
 	r.mu.Lock()
+	defer r.mu.Unlock()
+	var exhausted *api.RateLimitExhaustedError
+	if errors.As(err, &exhausted) {
+		r.conversationsInfoDown = true
+		return
+	}
 	if r.failedChannels == nil {
 		r.failedChannels = make(map[string]struct{})
 	}
 	r.failedChannels[id] = struct{}{}
-	r.mu.Unlock()
 }
 
 // resolveChannelTypes are the channel kinds a name can refer to. DMs have no

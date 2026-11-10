@@ -41,6 +41,14 @@ type Resolver struct {
 	usersByEmail map[string]string     // email -> ID
 	usersByName  map[string]string     // lowercase display name -> ID
 	usersAt      time.Time
+	failedUsers  map[string]error // IDs whose users.info lookup failed this session, and why
+
+	// usersInfoDown and conversationsInfoDown are set once that method
+	// exhausts its rate-limit retries. Single-ID lookups run in the printer's
+	// emit path; without this every distinct uncached ID in an output would
+	// wait out its own run of Retry-After sleeps.
+	usersInfoDown         error
+	conversationsInfoDown bool
 }
 
 // NewResolver creates a Resolver using the given API client. If teamID and

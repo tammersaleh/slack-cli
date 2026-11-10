@@ -142,7 +142,8 @@ carries `ts`, `kind`, and kind-specific attributes. Current kinds:
 - `call` - one per single-shot request through the shared retry (`endpoint`,
   `attempt`, `latency_ms`, `error`); `channel invite`, `channel kick`, the
   `users.info` and `users.profile.get` fetches of `user info` and
-  `user manager-chain`,
+  `user manager-chain`, the `users.info` and `conversations.info` lookups
+  that name the IDs in a command's output,
   and the retried internal calls (each also emits its `internal_api` event)
 - `retry` - emitted before each rate-limit sleep (`endpoint`, `attempt`,
   `wait_ms`); `attempt` is the request that was rate limited
@@ -309,7 +310,9 @@ Anywhere a channel is required, the CLI accepts:
 
 Names are resolved from cache first (in-memory, 5-minute TTL; then the channel file cache), then from the API. The API path scans `users.conversations` - just the conversations you are in - before falling back to a walk of `conversations.list` for the whole workspace, so a name you are a member of costs a handful of requests instead of a partial org-wide crawl. The member scan is never persisted to the file cache, which stays the complete `conversations.list` snapshot. On name collision, first match wins, and a repeat lookup returns the same ID as the lookup that populated the cache. A URL that isn't a usable channel reference (wrong kind or malformed) is rejected as `invalid_input` rather than treated as a name.
 
-Output enrichment (resolving a `channel_id` to a `channel_name` on emitted rows) does *not* trigger the `conversations.list` bulk load. On a cache miss it resolves the single ID via `conversations.info`, mirroring how user enrichment falls back to `users.info`. Enrichment cost is proportional to the number of distinct unresolved IDs in the output, not to workspace size. Failed lookups are memoized for the process so a wide result set with an unresolvable channel doesn't re-hit the API per row.
+Output enrichment (resolving a `channel_id` to a `channel_name` on emitted rows) does *not* trigger the `conversations.list` bulk load. On a cache miss it resolves the single ID via `conversations.info`, mirroring how user enrichment falls back to `users.info`. Enrichment cost is proportional to the number of distinct unresolved IDs in the output, not to workspace size. Failed lookups are memoized for the process so a wide result set with an unresolvable channel or user doesn't re-hit the API per row.
+
+Both enrichment lookups go through the shared retry, so each emits a `call` trace event and a rate limit is retried (see Rate limiting). They run while rows are being printed, so the retry is bounded: once `users.info` or `conversations.info` has exhausted its attempts, no further enrichment lookup of that method is made in the process and the remaining rows are printed without the name. The stop and the failure memo apply to enrichment only: `user info` and `status get` always make their own `users.info` request for a user that is not cached. A row that lacks `user_name` or `channel_name` carries no marker saying why.
 
 ### Users
 
@@ -444,7 +447,7 @@ Some endpoints are not paginated by Slack (usergroup list, emoji list). These re
 
 Slack reports a rate limit in two shapes, and the CLI treats them as one condition: an HTTP 429, usually with a `Retry-After` header, or a 200 whose body is `{"ok":false,"error":"ratelimited"}` (`users.profile.get` answers this way). Both surface as `rate_limited`, exit 3.
 
-Requests that go through the shared retry are attempted up to 5 times: every paginated page, `channel invite`/`kick` calls, the `user info` and `user manager-chain` lookups (`users.info`, `users.profile.get`), and the internal API calls that are safe to repeat (listed below). The wait between attempts is `Retry-After`, or one second when Slack sent none (the body shape never carries one). There is no wait after the last failure, and the command then exits 3:
+Requests that go through the shared retry are attempted up to 5 times: every paginated page (the user-directory load behind an email or `@name` lookup included), `channel invite`/`kick` calls, the `user info` and `user manager-chain` lookups (`users.info`, `users.profile.get`), the output-enrichment lookups (`users.info`, `conversations.info`), and the internal API calls that are safe to repeat (listed below). The wait between attempts is `Retry-After`, or one second when Slack sent none (the body shape never carries one). There is no wait after the last failure, and the command then exits 3:
 
 ```json
 {"error":"rate_limited","detail":"Rate limited after 5 attempts on conversations.history","endpoint":"conversations.history"}
@@ -995,9 +998,19 @@ The rows printed are authoritative. `has_more:true` means some inputs have no
 row and were not looked up. There is no cursor: rerun the inputs that have no
 row (every row carries `input`).
 
-Resolving an email input can stop the run the same way (`users.lookupByEmail`
-answering `missing_scope`, for example). An `@name` that fails to resolve is
-always `user_not_found`.
+An email or `@name` input is read from the user cache. When that cache is
+missing or older than its TTL, the lookup first rebuilds it by walking the whole
+`users.list` directory (200 per page) through the shared pager: one `page` trace
+event per request, a `retry` event per rate-limit wait, 5 attempts per page.
+Nothing reaches stdout until the walk ends, which can take minutes on a large
+org. A walk that fails or is cut off by `--timeout` writes no cache. A user ID
+input never triggers the walk.
+
+An email the cache does not hold falls back to `users.lookupByEmail`, which
+fails with session tokens on Enterprise Grid. That fallback can stop the run
+the same way as a lookup (`missing_scope`, for example). An `@name` that fails
+to resolve is always `user_not_found`, including when the directory walk itself
+failed.
 
 `users.profile.get` is rate-limited after a few calls, and reports it in the
 response body with no `Retry-After`. Each `users.info` and profile fetch goes
@@ -1012,7 +1025,8 @@ Errors:
 - `rate_limited` (exit 3): Rate limit outlasted the retries.
 - `not_authed` (exit 2): No token.
 
-Slack API: `users.info` (by ID), `users.lookupByEmail` (by email),
+Slack API: `users.info` (by ID), `users.list` (email or `@name` on a stale
+user cache), `users.lookupByEmail` (an email the cache does not hold),
 `users.profile.get` (with `--full`)
 
 #### slack user manager-chain
@@ -2461,8 +2475,9 @@ Linux. `slack cache info` prints the resolved paths:
 TTL is configurable via `SLACK_CACHE_TTL` env var (e.g., `1h`, `24h`,
 `7d`). Default: `24h`.
 
-User cache is populated on first miss by paginating `users.list --all`,
-then point lookups hit the cache. Channel cache uses the existing
+User cache is populated by paginating all of `users.list` the first time an
+email or `@name` is resolved against a missing or stale cache; point lookups
+then hit the cache. Channel cache uses the existing
 early-exit pagination pattern. Single-ID lookups during output enrichment
 bypass both bulk loads and hit `users.info` / `conversations.info` instead,
 so a cold cache never forces a full-workspace crawl just to name the handful

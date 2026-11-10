@@ -277,12 +277,12 @@ func TestUserInfo_UsersInfoSystemicAbortWritesTrailer(t *testing.T) {
 }
 
 func TestUserInfo_RateLimitedUsersInfoIsRetried(t *testing.T) {
-	// The resolver's cache lookup spends users.info call 1 and swallows its
-	// error; the command's own fetch is call 2, limited, and call 3 succeeds.
+	// The resolver makes the one users.info lookup: call 1 is limited, call 2
+	// succeeds. The command used to repeat the resolver's failed call itself.
 	var calls atomic.Int64
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) <= 2 {
+		if calls.Add(1) <= 1 {
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "ratelimited"})
 			return
 		}
@@ -297,19 +297,31 @@ func TestUserInfo_RateLimitedUsersInfoIsRetried(t *testing.T) {
 	if len(rows) != 1 || rows[0]["name"] != "alice" {
 		t.Errorf("expected alice's row, got:\n%s", r.stdout)
 	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("got %d users.info requests, want 2 (limited, then answered)", got)
+	}
 }
 
-// An email that cannot be resolved because the lookup itself failed
-// systemically stops the run; it is not a missing user.
-func TestUserInfo_ResolveSystemicAbortWritesTrailer(t *testing.T) {
+// A user that does not exist costs one users.info request. The resolver's
+// lookup and the command's own fetch used to each make one.
+func TestUserInfo_MissingUserCostsOneRequest(t *testing.T) {
+	var calls atomic.Int64
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "members": []any{}})
-	})
-	mux.HandleFunc("/api/users.lookupByEmail", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing_scope"})
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "user_not_found"})
 	})
 
-	r := runWithMockFull(t, mux, "user", "info", "alice@example.com", "U02")
-	assertFatalAbort(t, r.err, r.stdout, "missing_scope", output.ExitAuth, 0)
+	r := runWithMockFull(t, mux, "user", "info", "U01XYZ")
+	assertExitError(t, r.err)
+	rows, meta := rowsAndMeta(t, r.stdout)
+	if len(rows) != 1 || rows[0]["error"] != "user_not_found" || rows[0]["input"] != "U01XYZ" {
+		t.Fatalf("expected one user_not_found row for U01XYZ, got:\n%s", r.stdout)
+	}
+	if meta["error_count"] != float64(1) {
+		t.Errorf("error_count = %v, want 1", meta["error_count"])
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("got %d users.info requests for one missing user, want 1", got)
+	}
 }
