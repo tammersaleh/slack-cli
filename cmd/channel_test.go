@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -864,8 +865,8 @@ func TestChannelInfo_MockAPI(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"channels": []map[string]any{{"id": "C01", "name": "general"}},
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C01", "name": "general"}},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
 	})
@@ -896,8 +897,8 @@ func TestChannelInfo_InlineError(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"channels": []map[string]any{{"id": "C01", "name": "general"}},
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C01", "name": "general"}},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
 	})
@@ -937,7 +938,7 @@ func TestChannelMembers_MockAPI(t *testing.T) {
 	mux.HandleFunc("/api/conversations.members", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok":                true,
-			"members":          []string{"U01", "U02", "U03"},
+			"members":           []string{"U01", "U02", "U03"},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
 	})
@@ -1125,8 +1126,8 @@ func TestChannelInfo_PartialFailure_NoStderr(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/conversations.list", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"channels": []map[string]any{{"id": "C01", "name": "general"}},
+			"ok":                true,
+			"channels":          []map[string]any{{"id": "C01", "name": "general"}},
 			"response_metadata": map[string]string{"next_cursor": ""},
 		})
 	})
@@ -1157,4 +1158,66 @@ func TestChannelInfo_PartialFailure_NoStderr(t *testing.T) {
 
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
+}
+
+// TestChannelMembers_FieldsUserName requests the derived name on a command
+// whose rows carry user_id, the second source key: the name comes back alone.
+func TestChannelMembers_FieldsUserName(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.members", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "members": []string{"U01XYZ"}})
+	})
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"user": map[string]any{"id": "U01XYZ", "name": "alice"},
+		})
+	})
+
+	out, err := runWithMock(t, mux, "channel", "members", "C01ABC", "--fields", "user_name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected a row and a trailer, got:\n%s", out)
+	}
+	got := parseJSON(t, lines[0])
+	if len(got) != 1 || got["user_name"] != "alice" {
+		t.Errorf("got %v, want only user_name=alice", got)
+	}
+}
+
+// TestMessageGet_FieldsChannelName requests channel_name on a command whose
+// rows carry channel_id: the name comes back without the id.
+func TestMessageGet_FieldsChannelName(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"messages": []map[string]any{
+				{"type": "message", "user": "U01XYZ", "text": "hello", "ts": "1709251200.000100"},
+			},
+		})
+	})
+	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"channel": map[string]any{"id": "C01ABC", "name": "general"},
+		})
+	})
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("users.info called though no user field was requested")
+	})
+
+	out, err := runWithMock(t, mux, "message", "get", "C01ABC", "1709251200.000100", "--fields", "channel_name,text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := nonEmptyLines(out)
+	got := parseJSON(t, lines[0])
+	want := map[string]any{"input": "1709251200.000100", "channel_name": "general", "text": "hello"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
 }

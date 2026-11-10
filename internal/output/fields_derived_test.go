@@ -156,6 +156,12 @@ func TestFields_DerivedNames(t *testing.T) {
 			want:   map[string]any{"user_name": "bob"},
 		},
 		{
+			name:   "both source keys in one row",
+			fields: []string{"user_name"},
+			row:    map[string]any{"user": "U01XYZ", "user_id": "U01XYZ", "text": "x"},
+			want:   map[string]any{"user_name": "alice"},
+		},
+		{
 			name:   "derived names beside a plain field",
 			fields: []string{"user_name", "ts_iso", "text"},
 			row:    messageRow(),
@@ -254,6 +260,7 @@ func TestFields_UnrequestedSourcesAreNotEnriched(t *testing.T) {
 		{[]string{"ts_iso"}, 0},
 		{[]string{"user_name"}, 1},
 		{[]string{"user_name", "channel_name"}, 2},
+		{[]string{"user", "ts_iso"}, 1},
 	}
 	for _, tt := range tests {
 		lookups := 0
@@ -290,9 +297,10 @@ func TestFields_UnrequestedSiblingOfABorrowedSource(t *testing.T) {
 	if got, want := run("user_name"), map[string]any{"user_name": "Alice Adams"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	// A requested source keeps every sibling.
+	// A requested source keeps every sibling, including while another key is
+	// borrowed (ts, for ts_iso), which is what sends the row through the drop.
 	want := map[string]any{"user": "U01XYZ", "user_name": "Alice Adams", "user_handle": "alice"}
-	if got := run("user", "user_name"); !reflect.DeepEqual(got, want) {
+	if got := run("user", "ts_iso"); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
