@@ -90,6 +90,19 @@ func DraftNotFound(id string) *Error {
 	}
 }
 
+// DraftLookupIncomplete is returned when a draft ID is absent from the lookup
+// page and Slack reported more drafts beyond it. drafts.list has no cursor, so
+// the lookup cannot tell a draft that does not exist from one past the page.
+func DraftLookupIncomplete(id string) *Error {
+	return &Error{
+		Err:    "draft_lookup_incomplete",
+		Detail: fmt.Sprintf("Draft %s is not among the newest 100 drafts, and more drafts exist that cannot be read", id),
+		Hint:   "Slack's drafts.list has no pagination, so only the newest 100 drafts are reachable. The draft may exist beyond them or not at all, and no CLI command can tell which. Check the id against the Drafts panel in the Slack app.",
+		Input:  id,
+		Code:   ExitGeneral,
+	}
+}
+
 // SectionNotFound is returned when a sidebar section ID is unknown.
 func SectionNotFound(id string) *Error {
 	return &Error{

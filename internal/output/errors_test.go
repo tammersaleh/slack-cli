@@ -150,3 +150,16 @@ func TestError_AsItem_OmitsEmpty(t *testing.T) {
 		t.Error("input should be omitted when Input is empty")
 	}
 }
+
+func TestDraftLookupIncomplete(t *testing.T) {
+	e := DraftLookupIncomplete("Dr01234")
+	if e.Err != "draft_lookup_incomplete" {
+		t.Errorf("Err = %q", e.Err)
+	}
+	if e.Input != "Dr01234" || e.Code != ExitGeneral {
+		t.Errorf("Input = %q, Code = %d", e.Input, e.Code)
+	}
+	if !strings.Contains(e.Hint, "newest 100") {
+		t.Errorf("hint should explain the reach, got %q", e.Hint)
+	}
+}

@@ -225,7 +225,8 @@ Response:
 
 No cursor pagination. `has_more` indicates there are more drafts, but
 there is no documented way to reach them. Raise `limit` to get more in
-one call.
+one call. The CLI caps `limit` at 100 and never measured a higher value, so
+an account with more than 100 drafts cannot be fully listed.
 
 ### drafts.create
 

@@ -38,7 +38,7 @@ const skillHint = "For the rich_text shape, load the slack-cli skill (install: '
 
 type DraftListCmd struct {
 	Active         bool `help:"Send is_active=true to drafts.list, a server-side filter whose exact meaning is unverified. Do not use it to check that a draft exists."`
-	Limit          int  `help:"Page size." default:"50"`
+	Limit          int  `help:"Page size, 1-100. drafts.list has no cursor, so only the newest 100 drafts are reachable." default:"50"`
 	IncludeSent    bool `help:"Include drafts already sent (hidden by default; the trailer's suppressed_sent counts them)."`
 	IncludeDeleted bool `help:"Include drafts marked deleted server-side (hidden by default; the trailer's suppressed_deleted counts them)."`
 }
@@ -104,7 +104,14 @@ type draftsListResponse struct {
 	HasMore bool        `json:"has_more"`
 }
 
+// draftPageMax is the largest page drafts.list is asked for. The endpoint has
+// no cursor, so it is also how many drafts any command can reach.
+const draftPageMax = 100
+
 func (c *DraftListCmd) Run(cli *CLI) error {
+	if c.Limit < 1 || c.Limit > draftPageMax {
+		return &output.Error{Err: "invalid_input", Detail: fmt.Sprintf("--limit must be between 1 and %d", draftPageMax), Code: output.ExitGeneral}
+	}
 	client, err := cli.NewSessionClient()
 	if err != nil {
 		return err
@@ -113,12 +120,7 @@ func (c *DraftListCmd) Run(cli *CLI) error {
 	defer cancel()
 	p := cli.NewPrinter()
 
-	limit := c.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-
-	drafts, hasMore, err := fetchDrafts(ctx, client, c.Active, limit)
+	drafts, hasMore, err := fetchDrafts(ctx, client, c.Active, c.Limit)
 	if err != nil {
 		return cli.ClassifyError(err)
 	}
@@ -701,7 +703,7 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	drafts, _, err := fetchDrafts(ctx, client, false, 100)
+	drafts, hasMore, err := fetchDrafts(ctx, client, false, draftPageMax)
 	if err != nil {
 		return cli.ClassifyError(err)
 	}
@@ -715,7 +717,7 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 		d, ok := byID[id]
 		if !ok {
 			errorCount++
-			if err := p.PrintItem(output.DraftNotFound(id).AsItem()); err != nil {
+			if err := p.PrintItem(draftLookupMiss(id, hasMore).AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -754,11 +756,11 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 	return nil
 }
 
-// findDraftByID fetches all drafts and returns the one with the given ID.
-// Returns a draft_not_found error if no match. The caller is responsible
-// for wrapping fetch errors via cli.ClassifyError.
+// findDraftByID fetches the newest draftPageMax drafts and returns the one
+// with the given ID. A miss is an *output.Error from draftLookupMiss. The
+// caller is responsible for wrapping fetch errors via cli.ClassifyError.
 func findDraftByID(ctx context.Context, client *api.Client, id string) (*draftData, error) {
-	drafts, _, err := fetchDrafts(ctx, client, false, 100)
+	drafts, hasMore, err := fetchDrafts(ctx, client, false, draftPageMax)
 	if err != nil {
 		return nil, err
 	}
@@ -767,7 +769,18 @@ func findDraftByID(ctx context.Context, client *api.Client, id string) (*draftDa
 			return &drafts[i], nil
 		}
 	}
-	return nil, output.DraftNotFound(id)
+	return nil, draftLookupMiss(id, hasMore)
+}
+
+// draftLookupMiss is the error for a draft id absent from the lookup page.
+// When Slack said the page was truncated the draft may exist beyond it, and
+// drafts.list offers no way to read further, so "not found" would be a claim
+// the lookup cannot back.
+func draftLookupMiss(id string, hasMore bool) *output.Error {
+	if hasMore {
+		return output.DraftLookupIncomplete(id)
+	}
+	return output.DraftNotFound(id)
 }
 
 // padDraftTS normalises a Slack timestamp to exactly 7 decimal places.

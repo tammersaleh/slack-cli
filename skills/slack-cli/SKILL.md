@@ -58,6 +58,7 @@ Common errors and their recovery:
 | `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `filter_exhaustive` |
 | `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `filter_exhaustive`) or `slack user info <id-or-email>` |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
+| `draft_lookup_incomplete` | The id is not in the newest 100 drafts and more exist. Slack's `drafts.list` has no paging, so the CLI cannot tell whether the draft exists. Do not recreate it on this evidence; ask the user to check the Drafts panel |
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
@@ -416,7 +417,10 @@ nonzero count means the drafts exist and are hidden. Rows carry `is_sent`,
 unknown, not false). To check that a draft exists, read
 `slack draft list --include-sent --include-deleted --limit 100` and match on
 `id`. Do not use `--active` for that: it is a server-side `is_active` filter
-whose meaning is unverified.
+whose meaning is unverified. `--limit` is 1-100 (anything else is
+`invalid_input`) and there is no cursor: when the trailer says
+`has_more: true` at `--limit 100`, older drafts exist that no command can
+read.
 
 Write the body as Markdown with `--markdown` unless you need a block shape
 the subset below cannot express. Hand-rolled rich_text JSON is where the

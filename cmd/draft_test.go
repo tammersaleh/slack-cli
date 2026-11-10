@@ -2173,3 +2173,115 @@ func TestDraftDelete_PartialFailure(t *testing.T) {
 		t.Errorf("expected error_count=1, got %v", metaField["error_count"])
 	}
 }
+
+// An out-of-range --limit used to fall back to the default 50, so --limit 200
+// returned fewer rows than --limit 100. It is rejected before any request.
+func TestDraftList_RejectsLimitOutOfRange(t *testing.T) {
+	for _, limit := range []string{"0", "-1", "101", "200"} {
+		t.Run(limit, func(t *testing.T) {
+			var called bool
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": []any{}})
+			})
+			out, err := runWithMockSession(t, mux, "draft", "list", "--limit="+limit)
+			var oErr *output.Error
+			if !errors.As(err, &oErr) || oErr.Err != "invalid_input" {
+				t.Fatalf("expected invalid_input, got %v", err)
+			}
+			if !strings.Contains(oErr.Detail, "between 1 and 100") {
+				t.Errorf("detail should name the range, got %q", oErr.Detail)
+			}
+			if called {
+				t.Error("drafts.list was called for a rejected --limit")
+			}
+			if out != "" {
+				t.Errorf("expected no stdout, got %q", out)
+			}
+		})
+	}
+}
+
+func TestDraftList_SendsLimitInRange(t *testing.T) {
+	for _, limit := range []string{"1", "100"} {
+		var got string
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
+			_ = r.ParseForm()
+			got = r.PostForm.Get("limit")
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": []any{}})
+		})
+		if _, err := runWithMockSession(t, mux, "draft", "list", "--limit="+limit); err != nil {
+			t.Fatal(err)
+		}
+		if got != limit {
+			t.Errorf("limit sent = %q, want %q", got, limit)
+		}
+	}
+}
+
+// drafts.list has no cursor, so a lookup sees only the newest 100 drafts. A
+// miss on a truncated page cannot say the draft does not exist.
+func TestDraftUpdate_LookupMissOnTruncatedPage(t *testing.T) {
+	other := map[string]any{
+		"id": "Dr09999", "last_updated_ts": "1709251200.12", "blocks": richTextBlocks("x"),
+		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	var writes int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", draftsListHandler(t, []map[string]any{other}, true))
+	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) { writes++ })
+	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) { writes++ })
+
+	out, err := runWithMockSessionStdin(t, richTextBlocksJSON("x"), mux, "draft", "update", "DrMISSING")
+	var oErr *output.Error
+	if !errors.As(err, &oErr) || oErr.Err != "draft_lookup_incomplete" {
+		t.Fatalf("expected draft_lookup_incomplete, got %v", err)
+	}
+	if oErr.Input != "DrMISSING" {
+		t.Errorf("input = %q, want DrMISSING", oErr.Input)
+	}
+	if !strings.Contains(oErr.Hint, "newest 100") {
+		t.Errorf("hint should explain the 100-draft reach, got %q", oErr.Hint)
+	}
+	if writes != 0 {
+		t.Errorf("expected no writes, got %d", writes)
+	}
+	if out != "" {
+		t.Errorf("expected no stdout, got %q", out)
+	}
+}
+
+func TestDraftDelete_LookupMissOnTruncatedPage(t *testing.T) {
+	existing := map[string]any{
+		"id": "Dr01234", "last_updated_ts": "1709251200.12", "blocks": richTextBlocks("a"),
+		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", draftsListHandler(t, []map[string]any{existing}, true))
+	mux.HandleFunc("/api/drafts.delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+
+	out, err := runWithMockSession(t, mux, "draft", "delete", "DrMISSING", "Dr01234")
+	assertExitError(t, err)
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), out)
+	}
+	missing := parseJSON(t, lines[0])
+	if missing["error"] != "draft_lookup_incomplete" || missing["input"] != "DrMISSING" {
+		t.Errorf("expected draft_lookup_incomplete for DrMISSING, got %v", missing)
+	}
+	if hint, _ := missing["hint"].(string); !strings.Contains(hint, "newest 100") {
+		t.Errorf("row should carry the hint, got %v", missing)
+	}
+	if done := parseJSON(t, lines[1]); done["deleted"] != true {
+		t.Errorf("the reachable draft should still be deleted, got %v", done)
+	}
+	meta, _ := parseJSON(t, lines[2])["_meta"].(map[string]any)
+	if meta["error_count"] != float64(1) {
+		t.Errorf("expected error_count=1, got %v", meta["error_count"])
+	}
+}

@@ -2266,7 +2266,7 @@ and `users.channelSections.*`.
 ```
 slack draft list [flags]
   --active            Send is_active=true to drafts.list (server-side filter, semantics unverified).
-  --limit             Page size. Default: 50. Max 100.
+  --limit             Page size, 1-100. Default: 50.
   --include-sent      Include drafts already sent.
   --include-deleted   Include drafts marked deleted server-side.
 ```
@@ -2277,8 +2277,18 @@ scheduled drafts, or something else). Do not use it to check that a draft
 exists: read the unfiltered listing with `--include-sent --include-deleted`
 and match on `id`.
 
-The `drafts.list` API does not support cursor pagination. Raise `--limit`
-to fetch more per call; `has_more` in `_meta` indicates truncation.
+The `drafts.list` API does not support cursor pagination, and the page is
+capped at 100. An account holding more than 100 drafts (sent and deleted ones
+count) cannot be enumerated: `--limit 100` returns the first 100 and
+`has_more: true`, and no flag reaches the rest. The CLI assumes those are the
+newest 100; the order is not verified. A `--limit` outside 1-100 is
+`invalid_input` with no request made (it used to fall back to 50, so
+`--limit 200` returned fewer rows than `--limit 100`).
+
+`draft update` and `draft delete` find the draft in that same 100-draft page.
+When the id is absent and Slack reported `has_more: true`, the error is
+`draft_lookup_incomplete`, not `draft_not_found`: the draft may exist beyond
+the page.
 
 ```
 $ slack draft list
@@ -2548,7 +2558,8 @@ $ slack draft update Dr01234 --at 2026-04-21T09:00:00-04:00
 
 Errors:
 
-- `draft_not_found` (exit 1): No draft with the given id.
+- `draft_not_found` (exit 1): No draft with the given id, and the lookup saw every draft.
+- `draft_lookup_incomplete` (exit 1): The id is not among the newest 100 drafts and Slack reported more. The draft may exist out of reach. Nothing was written.
 - `invalid_input` (exit 1): No change specified, conflicting schedule flags, or `--table` together with stdin attachments.
 - `invalid_blocks` (exit 1): stdin isn't a valid blocks array / `{blocks, attachments}` object, or the resulting draft has no renderable content.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset (see `draft create`).
@@ -2581,6 +2592,9 @@ $ slack draft delete Dr01234 Dr05678
 ```
 
 Per-draft errors appear inline; `error_count` in `_meta` indicates partial failure.
+An id that the lookup page does not hold is `draft_not_found`, or
+`draft_lookup_incomplete` when Slack reported more drafts than the 100 the
+lookup can read.
 
 Slack API: `drafts.delete`
 
