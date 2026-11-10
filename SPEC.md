@@ -2379,7 +2379,7 @@ converter defect.
 
 Rejected with `invalid_markdown` (exit 1), detail prefixed `line N:`:
 
-- `@name` and `<@name>` where the name is not a `U`/`W` id - "mention people as `<@Uxxx>`". Symbolic resolution is deferred until name collisions resolve deterministically (see `todo/at-name-resolution-picks-a-random-user-when-names-collide.md`).
+- `@name` and `<@name>` where the name is not a `U`/`W` id - "mention people as `<@Uxxx>`". The detail tells the caller to get the id by email or handle with `slack user info <email or @handle> --fields id,name,deleted` and to use it only when `deleted` is false and `name` is the handle expected, since a display-name lookup can return a deactivated duplicate account. `draft create` and `draft update` do not check a mentioned id themselves: a `<@Uxxx>` naming a deactivated account is staged as written. Symbolic resolution is deferred until name collisions resolve deterministically (see `todo/at-name-resolution-picks-a-random-user-when-names-collide.md`).
 - Image, HTML block, inline HTML, pipe table (points at `--table`).
 - A list nested deeper than indent 2, a list item holding more than one paragraph, a quote inside a quote, a quote holding anything but paragraphs, lists, and code blocks.
 - A mention, channel, emoji, or image inside link text (Slack `link` elements hold text only).
