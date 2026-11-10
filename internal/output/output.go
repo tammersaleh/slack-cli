@@ -89,8 +89,13 @@ type Printer struct {
 	Out        io.Writer
 	Err        io.Writer
 	Quiet      bool
-	Fields     []string                // top-level field whitelist; empty means all fields
-	EnrichFunc func(m map[string]any)  // optional enrichment called on each item
+	Fields     []string               // top-level field whitelist; empty means all fields
+	EnrichFunc func(m map[string]any) // optional enrichment called on each item
+	// EnrichSources maps each key EnrichFunc can add to the source keys it reads
+	// (user_name: user, user_id). It is what lets --fields name a derived key:
+	// the projection keeps the sources long enough to derive from them.
+	// Timestamp siblings need no entry; X_iso reverses to X by rule.
+	EnrichSources map[string][]string
 }
 
 // PrintItem writes a single data line as compact JSON with timestamp enrichment
@@ -118,14 +123,17 @@ func (p *Printer) PrintItem(v any) error {
 		return err
 	}
 
-	// Filter first, then enrich: enrichment fields (`user_name`,
-	// `channel_name`, `ts_iso`) are always attached to surviving source
-	// fields, so `--fields=user` keeps the resolved `user_name` too.
-	m = filterFields(m, p.Fields)
+	// Project, then enrich, then drop what the projection only borrowed.
+	// Enrichment runs on the projected row so it spends lookups only on ids
+	// the caller asked about, and a requested source key keeps its derived
+	// sibling: --fields=user emits user_name too.
+	proj := newProjection(p.Fields, p.EnrichSources)
+	m = proj.filter(m)
 	enrichTimestamps(m)
 	if p.EnrichFunc != nil {
 		p.EnrichFunc(m)
 	}
+	proj.dropBorrowed(m)
 
 	out, err := json.Marshal(m)
 	if err != nil {
@@ -173,26 +181,104 @@ var alwaysKeptFields = map[string]bool{
 	"replaced_draft_id": true,
 }
 
-// filterFields returns a copy of m containing only the specified fields.
-// If fields is empty, returns m unchanged. alwaysKeptFields survive regardless.
-func filterFields(m map[string]any, fields []string) map[string]any {
+// projection is one row's --fields selection. A derived name (user_name,
+// ts_iso) is not in the row until enrichment runs, so naming one borrows its
+// source keys: they pass the filter, enrichment derives from them, and
+// dropBorrowed removes them again.
+type projection struct {
+	active    bool
+	requested map[string]bool
+	borrowed  map[string]bool     // source keys kept only to derive from
+	sources   map[string][]string // derived name -> source keys
+	present   map[string]bool     // keys in the row before enrichment
+}
+
+func newProjection(fields []string, sources map[string][]string) *projection {
+	p := &projection{sources: sources}
 	if len(fields) == 0 {
+		return p
+	}
+	p.active = true
+	p.requested = make(map[string]bool, len(fields))
+	for _, f := range fields {
+		p.requested[strings.TrimSpace(f)] = true
+	}
+	p.borrowed = map[string]bool{}
+	for f := range p.requested {
+		for _, src := range p.sourcesOf(f) {
+			if !p.requested[src] && !alwaysKeptFields[src] {
+				p.borrowed[src] = true
+			}
+		}
+	}
+	return p
+}
+
+// sourcesOf returns the keys a derived name is built from, or nil when the
+// name is not derived. It reads the same table enrichment is wired with, and
+// reverses the timestamp rule enrichMap applies, so neither can drift.
+func (p *projection) sourcesOf(name string) []string {
+	srcs := p.sources[name]
+	if key, ok := strings.CutSuffix(name, isoSuffix); ok && isTimestampKey(key) {
+		srcs = append(srcs[:len(srcs):len(srcs)], key)
+	}
+	return srcs
+}
+
+// filter returns the row cut down to the requested keys, the borrowed source
+// keys, and alwaysKeptFields. With no --fields it returns m unchanged.
+func (p *projection) filter(m map[string]any) map[string]any {
+	if !p.active {
 		return m
 	}
-
-	allowed := make(map[string]bool, len(fields)+len(alwaysKeptFields))
-	for _, f := range fields {
-		allowed[strings.TrimSpace(f)] = true
-	}
-	for f := range alwaysKeptFields {
-		allowed[f] = true
-	}
-
-	filtered := make(map[string]any, len(allowed))
+	filtered := make(map[string]any, len(p.requested)+len(p.borrowed))
+	p.present = make(map[string]bool, len(m))
 	for k, v := range m {
-		if allowed[k] {
+		if p.requested[k] || p.borrowed[k] || alwaysKeptFields[k] {
 			filtered[k] = v
+			p.present[k] = true
 		}
 	}
 	return filtered
+}
+
+// dropBorrowed removes, after enrichment, the source keys the projection
+// borrowed and any derived key that exists only because of them and was not
+// requested. A key enrichment added from a requested source stays, and so does
+// one no table explains.
+func (p *projection) dropBorrowed(m map[string]any) {
+	if len(p.borrowed) == 0 {
+		return
+	}
+	for k := range m {
+		switch {
+		case p.borrowed[k]:
+			delete(m, k)
+		case p.present[k] || p.requested[k]:
+		case p.onlyFromBorrowed(k):
+			delete(m, k)
+		}
+	}
+}
+
+// onlyFromBorrowed reports whether every source of derived key k that the row
+// held was borrowed. False when k has no source in the row.
+func (p *projection) onlyFromBorrowed(k string) bool {
+	found := false
+	for _, src := range p.sourcesOf(k) {
+		if !p.present[src] {
+			continue
+		}
+		if !p.borrowed[src] {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+// filterFields returns a copy of m containing only the specified fields.
+// If fields is empty, returns m unchanged. alwaysKeptFields survive regardless.
+func filterFields(m map[string]any, fields []string) map[string]any {
+	return newProjection(fields, nil).filter(m)
 }

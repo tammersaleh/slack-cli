@@ -76,6 +76,15 @@ $ slack channel list --limit=2 --fields=id,name,is_private
 
 Nested objects are returned whole when their parent field is selected (`--fields=topic` returns the full topic object). No dot-notation for nested field access - use `jq` for that.
 
+Enrichment-derived names are requestable. `--fields=user_name` emits `user_name` without `user`, and `--fields=ts_iso` emits `ts_iso` without `ts`: the printer keeps the source key long enough to derive from it, then drops it. This covers `user_name` (from `user` or `user_id`), `from_user_name`, `created_by_name`, `channel_name` (from `channel` or `channel_id`), and `X_iso` for any top-level `ts` or `*_ts` key. A requested source key still brings its derived sibling, so `--fields=user` emits both `user` and `user_name`. Name lookups run only for ids whose key or derived name was requested.
+
+```
+$ slack message list #general --fields=user_name,ts_iso,text
+{"text":"Hey team, the deploy is done.","ts_iso":"2024-03-01T00:00:00Z","user_name":"alice"}
+```
+
+A derived name is absent from a row whose source key is absent, is not a timestamp, or names an id that could not be resolved. A name that matches no top-level key and no derived name selects nothing, with no error: a row where every requested name misses is `{}`. That includes a dotted path and a key that exists only inside a nested object.
+
 Four fields survive filtering regardless of what was asked for: `input`, the
 row-level error markers `error` and `enrich_error`, and `replaced_draft_id`. A
 marker is a row's only signal that its data is incomplete, so filtering one

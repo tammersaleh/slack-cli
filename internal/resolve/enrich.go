@@ -3,6 +3,7 @@ package resolve
 import (
 	"context"
 	"regexp"
+	"sort"
 )
 
 var (
@@ -22,6 +23,23 @@ var enrichUserFields = map[string]string{
 var enrichChannelFields = map[string]string{
 	"channel":    "channel_name",
 	"channel_id": "channel_name",
+}
+
+// EnrichSources returns, for each name Enrich can add, the source keys it
+// reads: the two tables above reversed, sources sorted. The printer uses it to
+// let --fields name a derived key, so it is built from the tables rather than
+// listed beside them.
+func EnrichSources() map[string][]string {
+	out := map[string][]string{}
+	for _, table := range []map[string]string{enrichUserFields, enrichChannelFields} {
+		for field, nameField := range table {
+			out[nameField] = append(out[nameField], field)
+		}
+	}
+	for _, fields := range out {
+		sort.Strings(fields)
+	}
+	return out
 }
 
 // Enrich adds resolved names to a map for any recognized user/channel ID fields.

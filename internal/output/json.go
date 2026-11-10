@@ -20,13 +20,16 @@ func enrichTimestamps(v any) {
 	}
 }
 
+// isoSuffix names the sibling enrichMap adds beside a timestamp key.
+const isoSuffix = "_iso"
+
 func enrichMap(m map[string]any) {
 	additions := map[string]string{}
 	for k, v := range m {
 		if isTimestampKey(k) {
 			if s, ok := v.(string); ok {
 				if iso, ok := slackTsToISO(s); ok {
-					additions[k+"_iso"] = iso
+					additions[k+isoSuffix] = iso
 				}
 			}
 		}

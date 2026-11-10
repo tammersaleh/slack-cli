@@ -18,7 +18,7 @@ import (
 type CLI struct {
 	Workspace    string        `short:"w" help:"Select workspace by team ID (e.g. T01ABC)." env:"SLACK_WORKSPACE"`
 	WorkspaceOrg string        `hidden:"" env:"SLACK_WORKSPACE_ORG" help:"Enterprise Grid org workspace for internal APIs."`
-	Fields       string        `help:"Comma-separated list of top-level fields to include." env:"SLACK_FIELDS"`
+	Fields       string        `help:"Comma-separated list of top-level fields to include. Derived names (user_name, channel_name, ts_iso) are accepted." env:"SLACK_FIELDS"`
 	Quiet        bool          `short:"q" help:"Suppress stdout output (exit code and stderr only)."`
 	Timeout      time.Duration `help:"Overall command timeout (e.g. 30s, 2m). Zero means no timeout." env:"SLACK_TIMEOUT"`
 	Trace        bool          `help:"Emit structured diagnostics (endpoint, latency, retries) to stderr as JSONL."`
@@ -142,6 +142,9 @@ func (c *CLI) NewPrinter() *output.Printer {
 		Err:    errW,
 		Quiet:  c.Quiet,
 		Fields: c.ParsedFields(),
+		// Derived from the tables Enrich walks, so --fields user_name can
+		// borrow the id it is resolved from.
+		EnrichSources: resolve.EnrichSources(),
 		EnrichFunc: func(m map[string]any) {
 			if c.resolver == nil {
 				return

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -170,5 +172,60 @@ func TestEnrich_ChannelNamePresentSkipsLookup(t *testing.T) {
 
 	if m["channel_name"] != "preset" {
 		t.Errorf("got channel_name=%v, want %q", m["channel_name"], "preset")
+	}
+}
+
+// TestEnrichSources_CoversEveryNameEnrichAdds runs Enrich on a row holding
+// every source key and checks each name it adds is in EnrichSources with that
+// source listed. A table entry added without the reverse mapping following it
+// would leave --fields unable to request the new name.
+func TestEnrichSources_CoversEveryNameEnrichAdds(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"user": map[string]any{"id": "U01XYZ", "name": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"channel": map[string]any{"id": "C01ABC", "name": "general"},
+		})
+	})
+	r := NewResolver(newTestClient(t, mux), "T123", t.TempDir())
+	sources := EnrichSources()
+
+	check := func(field, id string) {
+		t.Helper()
+		m := map[string]any{field: id}
+		r.Enrich(context.Background(), m)
+		if len(m) != 2 {
+			t.Fatalf("Enrich on %q produced %v, want one added name", field, m)
+		}
+		for name := range m {
+			if name == field {
+				continue
+			}
+			if !slices.Contains(sources[name], field) {
+				t.Errorf("Enrich derives %q from %q, but EnrichSources()[%q] = %v", name, field, name, sources[name])
+			}
+		}
+	}
+	for field := range enrichUserFields {
+		check(field, "U01XYZ")
+	}
+	for field := range enrichChannelFields {
+		check(field, "C01ABC")
+	}
+
+	want := map[string][]string{
+		"user_name":       {"user", "user_id"},
+		"from_user_name":  {"from_user"},
+		"created_by_name": {"created_by"},
+		"channel_name":    {"channel", "channel_id"},
+	}
+	if !reflect.DeepEqual(sources, want) {
+		t.Errorf("EnrichSources() = %v, want %v", sources, want)
 	}
 }

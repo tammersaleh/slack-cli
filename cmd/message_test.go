@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"sync/atomic"
 	"sort"
 	"strconv"
 	"strings"
@@ -656,5 +657,63 @@ func TestMessageList_AllKeepsUnreadBound(t *testing.T) {
 		if req.Get("oldest") != "1700000008.000000" {
 			t.Errorf("request %d dropped the last_read bound: oldest=%q", i, req.Get("oldest"))
 		}
+	}
+}
+
+// TestMessageList_FieldsDerivedNames runs --fields through the real printer
+// and resolver: a derived name comes back without its source id, a requested
+// source keeps its derived sibling, and an id nobody asked about is not looked
+// up.
+func TestMessageList_FieldsDerivedNames(t *testing.T) {
+	tests := []struct {
+		fields      string
+		want        map[string]any
+		wantLookups int
+	}{
+		{"user_name,ts_iso", map[string]any{"user_name": "alice", "ts_iso": "2024-03-01T00:00:00Z"}, 1},
+		{"user_name,text", map[string]any{"user_name": "alice", "text": "hello"}, 1},
+		{"ts_iso,text", map[string]any{"ts_iso": "2024-03-01T00:00:00Z", "text": "hello"}, 0},
+		{"user", map[string]any{"user": "U01XYZ", "user_name": "alice"}, 1},
+		{"ts", map[string]any{"ts": "1709251200.000100", "ts_iso": "2024-03-01T00:00:00Z"}, 0},
+		{"bogus", map[string]any{}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.fields, func(t *testing.T) {
+			var lookups atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/conversations.history", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok": true,
+					"messages": []map[string]any{
+						{"type": "message", "user": "U01XYZ", "text": "hello", "ts": "1709251200.000100"},
+					},
+				})
+			})
+			mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
+				lookups.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok": true,
+					"user": map[string]any{
+						"id": "U01XYZ", "name": "alice",
+						"profile": map[string]any{"display_name": "alice"},
+					},
+				})
+			})
+
+			out, err := runWithMock(t, mux, "message", "list", "C01ABC", "--fields", tt.fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := nonEmptyLines(out)
+			if len(lines) != 2 {
+				t.Fatalf("expected a row and a trailer, got:\n%s", out)
+			}
+			if got := parseJSON(t, lines[0]); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+			if got := int(lookups.Load()); got != tt.wantLookups {
+				t.Errorf("%d users.info calls, want %d", got, tt.wantLookups)
+			}
+		})
 	}
 }

@@ -987,8 +987,16 @@ Output automatically includes resolved names alongside IDs:
 - `channel` / `channel_id` fields gain a `channel_name` sibling
 - `ts` and `*_ts` fields gain a `*_iso` sibling (RFC3339)
 
-Enrichment runs after `--fields`, so `--fields user` keeps the
-resolved `user_name` too (no need to list both).
+`--fields` accepts the derived names. `--fields user_name,ts_iso,text` emits
+exactly those three keys, without `user` or `ts`. Naming the source key also
+works and brings the sibling: `--fields user` emits `user` and `user_name`.
+The derived names are `user_name`, `from_user_name`, `created_by_name`,
+`channel_name`, and `<key>_iso` for a top-level `ts` or `*_ts` key.
+
+`--fields` matches top-level keys only. A misspelled name, a dotted path
+(`channel.name`), or a key that lives inside a nested object selects nothing
+and raises no error, so a row of `{}` means the field names are wrong, not
+that the data is missing. Check the names against an unfiltered row.
 
 ## Pagination
 
