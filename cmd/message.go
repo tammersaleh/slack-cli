@@ -193,7 +193,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 		if err != nil {
 			oErr := cli.ClassifyError(err)
 			if oErr.Code != output.ExitGeneral {
-				return oErr
+				return abortWithTrailer(p, oErr, errorCount)
 			}
 			errorCount++
 			if err := p.PrintItem(map[string]any{
@@ -215,7 +215,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 			if ferr != nil {
 				oErr := cli.ClassifyError(ferr)
 				if !isMessageMiss(oErr) {
-					return oErr
+					return abortWithTrailer(p, oErr, errorCount)
 				}
 				// A semantic miss just means "not a reply either" - fall
 				// through to the message_not_found row below.

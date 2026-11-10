@@ -141,7 +141,8 @@ carries `ts`, `kind`, and kind-specific attributes. Current kinds:
   `latency_ms`, `has_more`, `error`)
 - `call` - one per single-shot request through the shared retry (`endpoint`,
   `attempt`, `latency_ms`, `error`); `channel invite`, `channel kick`, the
-  `users.profile.get` fetches of `user info --full` and `user manager-chain`,
+  `users.info` and `users.profile.get` fetches of `user info` and
+  `user manager-chain`,
   and the retried internal calls (each also emits its `internal_api` event)
 - `retry` - emitted before each rate-limit sleep (`endpoint`, `attempt`,
   `wait_ms`); `attempt` is the request that was rate limited
@@ -412,8 +413,16 @@ the start instead.
 
 The trailer is not guaranteed in every circumstance: if stdout itself fails
 (broken pipe) nothing further can be written, and a fatal error raised before
-any data line - bad input, an unresolvable channel, auth failure - is reported
-on stderr with no trailer, as it always has been.
+the command starts its work - bad input, an unresolvable channel, no
+credentials - is reported on stderr with no trailer, as it always has been.
+
+Multi-input commands (`message get`, `message permalink`, `reaction list`,
+`channel info`, `file info`, `dnd info`, `presence get`, `user info`,
+`user manager-chain`, `draft delete`, `channel invite`/`kick`) follow the same
+rule without a cursor. A fatal error on any input - auth, `missing_scope`, a
+rate limit, network - stops the run, goes to stderr with its exit code, and
+stdout ends with `{"_meta":{"has_more":true,"error":"<code>","error_count":N}}`.
+Rows above it are good. Inputs with no row were not processed: rerun those.
 
 Rate-limited pages are retried automatically: up to 5 attempts per page,
 honoring Slack's `Retry-After`, with no wait after the final failure. A
@@ -435,7 +444,7 @@ Some endpoints are not paginated by Slack (usergroup list, emoji list). These re
 
 Slack reports a rate limit in two shapes, and the CLI treats them as one condition: an HTTP 429, usually with a `Retry-After` header, or a 200 whose body is `{"ok":false,"error":"ratelimited"}` (`users.profile.get` answers this way). Both surface as `rate_limited`, exit 3.
 
-Requests that go through the shared retry are attempted up to 5 times: every paginated page, `channel invite`/`kick` calls, the `user info --full` and `user manager-chain` profile lookups, and the internal API calls that are safe to repeat (listed below). The wait between attempts is `Retry-After`, or one second when Slack sent none (the body shape never carries one). There is no wait after the last failure, and the command then exits 3:
+Requests that go through the shared retry are attempted up to 5 times: every paginated page, `channel invite`/`kick` calls, the `user info` and `user manager-chain` lookups (`users.info`, `users.profile.get`), and the internal API calls that are safe to repeat (listed below). The wait between attempts is `Retry-After`, or one second when Slack sent none (the body shape never carries one). There is no wait after the last failure, and the command then exits 3:
 
 ```json
 {"error":"rate_limited","detail":"Rate limited after 5 attempts on conversations.history","endpoint":"conversations.history"}
@@ -986,9 +995,13 @@ The rows printed are authoritative. `has_more:true` means some inputs have no
 row and were not looked up. There is no cursor: rerun the inputs that have no
 row (every row carries `input`).
 
+Resolving an email input can stop the run the same way (`users.lookupByEmail`
+answering `missing_scope`, for example). An `@name` that fails to resolve is
+always `user_not_found`.
+
 `users.profile.get` is rate-limited after a few calls, and reports it in the
-response body with no `Retry-After`. Each profile fetch goes through the shared
-retry (5 attempts, one second apart), which rides out a brief limit. It does
+response body with no `Retry-After`. Each `users.info` and profile fetch goes
+through the shared retry (5 attempts, one second apart), which rides out a brief limit. It does
 not pace a long list: a bulk `--full` run can still exhaust the retries and
 stop with the trailer above. Spacing calls about 15 seconds apart has worked.
 

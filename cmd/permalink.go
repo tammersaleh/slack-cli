@@ -35,7 +35,7 @@ func (c *MessagePermalinkCmd) Run(cli *CLI) error {
 		if err != nil {
 			oErr := cli.ClassifyError(err)
 			if oErr.Code != output.ExitGeneral {
-				return oErr
+				return abortWithTrailer(p, oErr, errorCount)
 			}
 			errorCount++
 			if err := p.PrintItem(map[string]any{

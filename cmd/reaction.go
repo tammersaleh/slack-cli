@@ -66,7 +66,7 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 				}
 				continue
 			}
-			return oErr
+			return abortWithTrailer(p, oErr, errorCount)
 		}
 
 		for _, reaction := range item.Reactions {

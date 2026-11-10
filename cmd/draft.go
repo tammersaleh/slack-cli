@@ -708,7 +708,7 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 		if _, err := client.PostInternalForm(ctx, "drafts.delete", params); err != nil {
 			oErr := cli.ClassifyError(err)
 			if oErr.Code != output.ExitGeneral {
-				return oErr
+				return abortWithTrailer(p, oErr, errorCount)
 			}
 			errorCount++
 			if err := p.PrintItem(map[string]any{
