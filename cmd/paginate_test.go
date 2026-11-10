@@ -496,7 +496,7 @@ func TestChannelList_RecoverableFailuresKeepResumeCursor(t *testing.T) {
 		wantCode int
 	}{
 		{"token_revoked", output.ExitAuth},
-		{"missing_scope", output.ExitGeneral},
+		{"missing_scope", output.ExitAuth},
 		{"team_is_restricted", output.ExitGeneral},
 	}
 

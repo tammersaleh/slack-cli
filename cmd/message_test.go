@@ -276,7 +276,7 @@ func TestMessageGet_NotFound(t *testing.T) {
 }
 
 // TestMessageGet_FallbackSystemicError: a non-miss error from the fallback
-// (here missing_scope, which classifies as ExitGeneral just like
+// (here no_permission, which classifies as ExitGeneral just like
 // message_not_found) must abort fatally, NOT collapse into a soft
 // message_not_found row. Guards the isMessageMiss gate against being reduced
 // to an exit-code check.
@@ -286,12 +286,12 @@ func TestMessageGet_FallbackSystemicError(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "messages": []map[string]any{}})
 	})
 	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing_scope"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "no_permission"})
 	})
 
 	out, err := runWithMock(t, mux, "message", "get", "C01ABC", "1783406403.451509")
 	if err == nil {
-		t.Fatal("expected a fatal error when the fallback hits missing_scope")
+		t.Fatal("expected a fatal error when the fallback hits no_permission")
 	}
 	if strings.Contains(out, "message_not_found") {
 		t.Errorf("systemic error must not be masked as message_not_found; got:\n%s", out)

@@ -116,6 +116,12 @@ unchanged. The codes the CLI raises for failures Slack did not name:
   fetched, which would loop forever (exit 1).
 - `unknown_error` - the CLI did not recognize the failure. Read `detail` (exit 1).
 
+`missing_scope` is the one Slack string that exits 2 without being a login
+problem. Its `hint` depends on the credential: an OAuth token gets the scopes
+the CLI requests now by re-running `slack auth login`, while a desktop session
+token carries whatever Slack gives the account, so logging in again adds
+nothing. `no_permission` and `not_allowed_token_type` exit 1.
+
 Exit codes:
 
 - `0`: All items succeeded

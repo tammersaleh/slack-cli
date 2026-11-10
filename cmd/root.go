@@ -197,6 +197,9 @@ func (c *CLI) NewClient() (*api.Client, error) {
 // the authentication method used for this session.
 func (c *CLI) ClassifyError(err error) *output.Error {
 	oErr := api.ClassifyError(err)
+	if oErr.Err == "missing_scope" && oErr.Hint == "" {
+		oErr.Hint = c.missingScopeHint()
+	}
 	if oErr.Code == output.ExitAuth && oErr.Hint == "" {
 		switch c.authMethod {
 		case "desktop":
@@ -208,6 +211,20 @@ func (c *CLI) ClassifyError(err error) *output.Error {
 		}
 	}
 	return oErr
+}
+
+// missingScopeHint differs from the re-auth hint because logging in again only
+// helps an OAuth token: the OAuth flow grants the scopes the CLI requests now,
+// while a desktop session token carries whatever Slack gives the account.
+func (c *CLI) missingScopeHint() string {
+	switch c.authMethod {
+	case "desktop":
+		return "The session token lacks a scope this method needs. Logging in again does not add scopes to a desktop session token; the method needs an OAuth credential ('slack auth login') or is not available to this account"
+	case "oauth":
+		return "The token predates a scope this command needs. Run 'slack auth login' to authorize the current scope set"
+	default:
+		return "The token lacks a scope this command needs. Run 'slack auth login', or put a token that has the scope in SLACK_TOKEN"
+	}
 }
 
 // NewResolver creates a channel/user name resolver from the API client.

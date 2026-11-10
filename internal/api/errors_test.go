@@ -296,8 +296,12 @@ func classifyCorpus(t *testing.T) []classifyCase {
 			wantDetail: "cursor", wantHint: "--cursor",
 		},
 		{
-			name: "other slack error", err: slack.SlackErrorResponse{Err: "missing_scope"},
-			wantErr: "missing_scope", wantCode: output.ExitGeneral, wantDetail: "missing_scope",
+			name: "missing scope", err: slack.SlackErrorResponse{Err: "missing_scope"},
+			wantErr: "missing_scope", wantCode: output.ExitAuth, wantDetail: "missing_scope",
+		},
+		{
+			name: "other slack error", err: slack.SlackErrorResponse{Err: "no_permission"},
+			wantErr: "no_permission", wantCode: output.ExitGeneral, wantDetail: "no_permission",
 		},
 		{
 			name: "connection refused",

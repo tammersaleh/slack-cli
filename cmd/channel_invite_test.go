@@ -453,7 +453,7 @@ func TestChannelMembership_FatalAbortsRun(t *testing.T) {
 		wantExit int
 	}{
 		{"invalid_auth", output.ExitAuth},
-		{"missing_scope", output.ExitGeneral},
+		{"missing_scope", output.ExitAuth},
 		{"no_permission", output.ExitGeneral},
 		{"restricted_action", output.ExitGeneral},
 		{"some_code_slack_invents_next_year", output.ExitGeneral},

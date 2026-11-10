@@ -12,13 +12,20 @@ import (
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
-// authErrors are Slack API error strings that indicate authentication problems.
+// authErrors are Slack API error strings that indicate authentication
+// problems, and they classify as ExitAuth.
+//
+// missing_scope is here because the credential, not the request, is what has
+// to change. no_permission and not_allowed_token_type stay out: no_permission
+// can describe one target rather than the token (conversations.invite uses it
+// both ways), and neither is fixed by logging in again.
 var authErrors = map[string]bool{
-	"invalid_auth":    true,
-	"token_revoked":   true,
-	"not_authed":      true,
+	"invalid_auth":     true,
+	"token_revoked":    true,
+	"not_authed":       true,
 	"account_inactive": true,
-	"token_expired":   true,
+	"token_expired":    true,
+	"missing_scope":    true,
 }
 
 // nonResumableErrors are Slack API error strings that invalidate the

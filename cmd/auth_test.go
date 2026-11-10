@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	slack "github.com/slack-go/slack"
@@ -12,6 +13,7 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/tammersaleh/slack-cli/cmd"
 	"github.com/tammersaleh/slack-cli/internal/auth"
+	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
 // runWithMockCookie runs a CLI command with a credentials file containing
@@ -90,6 +92,40 @@ func TestClassifyError_AuthHints(t *testing.T) {
 			oErr := cli.ClassifyError(slack.SlackErrorResponse{Err: "invalid_auth"})
 			if oErr.Hint != tt.wantHint {
 				t.Errorf("got hint %q, want %q", oErr.Hint, tt.wantHint)
+			}
+		})
+	}
+}
+
+// missing_scope exits 2 like the other auth codes, but its hint differs:
+// re-running the OAuth flow grants the scopes the CLI now requests, while a
+// desktop session token has whatever Slack gives the account and logging in
+// again changes nothing.
+func TestClassifyError_MissingScopeHints(t *testing.T) {
+	tests := []struct {
+		authMethod string
+		want       string
+		wantNot    string
+	}{
+		{"oauth", "slack auth login", "--desktop"},
+		{"desktop", "does not add scopes", "auth login --desktop"},
+		{"", "SLACK_TOKEN", "--desktop"},
+	}
+
+	for _, tt := range tests {
+		t.Run("method="+tt.authMethod, func(t *testing.T) {
+			var cli cmd.CLI
+			cli.SetAuthMethod(tt.authMethod)
+
+			oErr := cli.ClassifyError(slack.SlackErrorResponse{Err: "missing_scope"})
+			if oErr.Code != output.ExitAuth {
+				t.Errorf("got exit %d, want %d", oErr.Code, output.ExitAuth)
+			}
+			if !strings.Contains(oErr.Hint, tt.want) {
+				t.Errorf("hint %q should contain %q", oErr.Hint, tt.want)
+			}
+			if strings.Contains(oErr.Hint, tt.wantNot) {
+				t.Errorf("hint %q must not contain %q", oErr.Hint, tt.wantNot)
 			}
 		})
 	}

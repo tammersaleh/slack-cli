@@ -77,7 +77,7 @@ rows and set `_meta.error_count` in the trailer. Exit code is 1.
 
 - 0 - success
 - 1 - general error (including partial failure in bulk commands)
-- 2 - authentication required / not authed
+- 2 - authentication required, not authed, or `missing_scope` (read the `hint`: re-login fixes an OAuth token, not a desktop session token)
 - 3 - rate limited
 - 4 - network error
 
