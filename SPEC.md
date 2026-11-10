@@ -314,6 +314,8 @@ Output enrichment (resolving a `channel_id` to a `channel_name` on emitted rows)
 
 Both enrichment lookups go through the shared retry, so each emits a `call` trace event and a rate limit is retried (see Rate limiting). They run while rows are being printed, so the retry is bounded: once `users.info` or `conversations.info` has exhausted its attempts, no further enrichment lookup of that method is made in the process and the remaining rows are printed without the name. The stop and the failure memo apply to enrichment only: `user info` and `status get` always make their own `users.info` request for a user that is not cached. A row that lacks `user_name` or `channel_name` carries no marker saying why.
 
+A name that an exhausted `conversations.list` walk did not find is not walked for again in the same process: for the 5-minute in-memory TTL a repeat lookup of an absent name (or `channel info a b` with both absent) answers `channel_not_found` with no request. Only a walk whose `users.conversations` scan also completed counts, and the conversations that scan saw stay resolvable. The proof is not kept across invocations.
+
 ### Users
 
 Anywhere a user is required, the CLI accepts:

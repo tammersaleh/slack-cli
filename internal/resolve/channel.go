@@ -216,6 +216,17 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 		}
 	}
 
+	// An exhausted conversations.list walk inside the memory TTL already
+	// proved this name absent. Walking again would spend the most expensive
+	// path in the CLI to learn the same thing. The maps hold that walk's rows
+	// plus the member list's, so a miss here is a miss on both endpoints. The window is the memory TTL,
+	// not the file cache's day, so a channel created since is hidden for
+	// minutes at most; this runs after the file cache read, which can only
+	// add hits.
+	if r.channelsComplete && time.Since(r.channelsAt) < memoryCacheTTL {
+		return "", fmt.Errorf("channel %q not found", name)
+	}
+
 	bot := r.client.Bot()
 
 	found, seen, err := scanForName(ctx, "users.conversations", name, func(cursor string) ([]slack.Channel, string, error) {
@@ -233,11 +244,12 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 		r.addChannelsToCache(seen)
 		return found, nil
 	}
-	if err != nil {
+	memberErr := err
+	if memberErr != nil {
 		api.TracerFrom(ctx).Event("fallback", map[string]any{
 			"from":   "users.conversations",
 			"to":     "conversations.list",
-			"reason": err.Error(),
+			"reason": memberErr.Error(),
 		})
 	}
 
@@ -258,6 +270,15 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 	if found == "" {
 		r.setChannelMaps(channels)
 		r.saveFileCache(channels)
+		// The proof of absence needs both walks. conversations.list can omit
+		// a conversation the member list holds, so the member rows join the
+		// maps (memory only), and a member scan that failed leaves the maps
+		// unable to prove a miss: the next lookup scans again.
+		if memberErr == nil {
+			r.addChannelsToCache(seen)
+		} else {
+			r.channelsComplete = false
+		}
 		return "", fmt.Errorf("channel %q not found", name)
 	}
 
@@ -302,11 +323,16 @@ func (r *Resolver) addChannelsToCache(channels map[string]string) {
 	}
 }
 
-// setChannelMaps populates forward and reverse channel maps.
+// setChannelMaps replaces the forward and reverse channel maps with a complete
+// conversations.list snapshot and records that they are complete. Only an
+// exhausted walk may call it, and that walk withdraws the mark when its member
+// scan failed; a partial view extends the maps through addChannelsToCache,
+// which never marks them complete.
 // Must be called with r.mu held.
 func (r *Resolver) setChannelMaps(channels map[string]string) {
 	r.channels = channels
 	r.channelsAt = time.Now()
+	r.channelsComplete = true
 	r.channelsByID = make(map[string]string, len(channels))
 	for name, id := range channels {
 		r.channelsByID[id] = name

@@ -49,6 +49,13 @@ type Resolver struct {
 	// wait out its own run of Retry-After sleeps.
 	usersInfoDown         error
 	conversationsInfoDown bool
+
+	// channelsComplete records that the channel maps came from an exhausted
+	// conversations.list walk at channelsAt whose member scan also ran clean. Within memoryCacheTTL of it, a
+	// name the maps do not hold is proven absent. Partial views (a member
+	// scan, an early exit, a conversations.info insert) only extend the maps,
+	// so they stay complete once they are.
+	channelsComplete bool
 }
 
 // NewResolver creates a Resolver using the given API client. If teamID and

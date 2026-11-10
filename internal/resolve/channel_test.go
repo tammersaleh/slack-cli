@@ -874,3 +874,176 @@ func TestChannelInputNeedsLookup(t *testing.T) {
 		}
 	}
 }
+
+// absentNameMux serves a member list and an org list that never hold the name
+// under test, so every lookup of it exhausts both walks.
+func absentNameMux() *resolverMux {
+	return newResolverMux(
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeChannelPage(w, "", []map[string]any{channelRow("C01ABC", "general")})
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeChannelPage(w, "", []map[string]any{
+				channelRow("C01ABC", "general"),
+				channelRow("C02DEF", "random"),
+			})
+		},
+	)
+}
+
+// An exhausted conversations.list walk proves a name absent. The resolver used
+// to store that proof and then re-walk the workspace for the same name: 176
+// requests and 460s per miss on a large org.
+func TestResolveChannel_ProvenMissIsNotWalkedTwice(t *testing.T) {
+	rm := absentNameMux()
+	r := NewResolver(newTestClient(t, rm.handler), "", "")
+	ctx := context.Background()
+
+	for i := range 2 {
+		if _, err := r.ResolveChannel(ctx, "nonexistent"); err == nil {
+			t.Fatalf("lookup %d: an absent name resolved", i)
+		}
+	}
+	if rm.orgCalls != 1 {
+		t.Errorf("got %d conversations.list walks for two lookups of one absent name, want 1", rm.orgCalls)
+	}
+	if rm.memberCalls != 1 {
+		t.Errorf("got %d users.conversations scans, want 1 (the second lookup makes no request)", rm.memberCalls)
+	}
+
+	// The proof covers every absent name, and hits still come from the map.
+	if _, err := r.ResolveChannel(ctx, "also-absent"); err == nil {
+		t.Fatal("a second absent name resolved")
+	}
+	if id, err := r.ResolveChannel(ctx, "random"); err != nil || id != "C02DEF" {
+		t.Errorf("got %q, %v, want C02DEF from the complete map", id, err)
+	}
+	if rm.orgCalls != 1 || rm.memberCalls != 1 {
+		t.Errorf("got %d org and %d member requests, want 1 and 1", rm.orgCalls, rm.memberCalls)
+	}
+}
+
+// The proof expires with the memory TTL: a channel created since must become
+// resolvable again.
+func TestResolveChannel_ProvenMissExpiresWithMemoryTTL(t *testing.T) {
+	rm := absentNameMux()
+	r := NewResolver(newTestClient(t, rm.handler), "", "")
+	ctx := context.Background()
+
+	if _, err := r.ResolveChannel(ctx, "nonexistent"); err == nil {
+		t.Fatal("an absent name resolved")
+	}
+	r.channelsAt = wellOutsideTTL()
+	if _, err := r.ResolveChannel(ctx, "nonexistent"); err == nil {
+		t.Fatal("an absent name resolved")
+	}
+	if rm.orgCalls != 2 {
+		t.Errorf("got %d conversations.list walks, want 2 (the proof had expired)", rm.orgCalls)
+	}
+}
+
+// Only an exhausted walk is proof. An early-exit hit, a member scan, and an
+// enrichment-time conversations.info insert each hold a partial view, and a
+// miss against one must still go to Slack.
+func TestResolveChannel_PartialMapDoesNotProveAMiss(t *testing.T) {
+	rm := newResolverMux(
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeChannelPage(w, "", []map[string]any{channelRow("C01ABC", "general")})
+		},
+		func(w http.ResponseWriter, req *http.Request) {
+			_ = req.ParseForm()
+			if req.FormValue("cursor") == "" {
+				writeChannelPage(w, "p2", []map[string]any{channelRow("C02DEF", "random")})
+				return
+			}
+			writeChannelPage(w, "", []map[string]any{channelRow("C03GHI", "later")})
+		},
+	)
+	r := NewResolver(newTestClient(t, rm.handler), "", "")
+	ctx := context.Background()
+
+	// A member-scan hit, then an org walk that exits on its first page.
+	if _, err := r.ResolveChannel(ctx, "general"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ResolveChannel(ctx, "random"); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.addChannelToCache("C04JKL", "enriched")
+	r.mu.Unlock()
+
+	// "later" sits on the page the early exit never fetched.
+	id, err := r.ResolveChannel(ctx, "later")
+	if err != nil {
+		t.Fatalf("a name beyond the early exit was reported absent: %v", err)
+	}
+	if id != "C03GHI" {
+		t.Errorf("got %q, want C03GHI", id)
+	}
+}
+
+// conversations.list can omit a conversation the member list holds. The member
+// scan that missed saw it, so the proof of absence must not hide it.
+func TestResolveChannel_ProvenMissKeepsMemberOnlyChannels(t *testing.T) {
+	rm := newResolverMux(
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeChannelPage(w, "", []map[string]any{channelRow("C05MNO", "member-only")})
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeChannelPage(w, "", []map[string]any{channelRow("C01ABC", "general")})
+		},
+	)
+	r := NewResolver(newTestClient(t, rm.handler), "", "")
+	ctx := context.Background()
+
+	if _, err := r.ResolveChannel(ctx, "nonexistent"); err == nil {
+		t.Fatal("an absent name resolved")
+	}
+	id, err := r.ResolveChannel(ctx, "member-only")
+	if err != nil || id != "C05MNO" {
+		t.Fatalf("got %q, %v, want C05MNO: a channel only the member list holds was reported absent", id, err)
+	}
+	if rm.memberCalls != 1 || rm.orgCalls != 1 {
+		t.Errorf("got %d member and %d org requests, want 1 and 1", rm.memberCalls, rm.orgCalls)
+	}
+	// A partial insert after the walk does not withdraw the proof.
+	r.mu.Lock()
+	r.addChannelToCache("C04JKL", "enriched")
+	r.mu.Unlock()
+	if _, err := r.ResolveChannel(ctx, "nonexistent"); err == nil {
+		t.Fatal("an absent name resolved")
+	}
+	if rm.memberCalls != 1 || rm.orgCalls != 1 {
+		t.Errorf("got %d member and %d org requests after a repeat miss, want 1 and 1", rm.memberCalls, rm.orgCalls)
+	}
+}
+
+// A member scan that failed proves nothing about the member list, so the org
+// walk alone is not proof and the next lookup scans again.
+func TestResolveChannel_FailedMemberScanDoesNotProveAMiss(t *testing.T) {
+	memberDown := true
+	rm := newResolverMux(
+		func(w http.ResponseWriter, _ *http.Request) {
+			if memberDown {
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "fatal_error"})
+				return
+			}
+			writeChannelPage(w, "", []map[string]any{channelRow("C05MNO", "member-only")})
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			writeChannelPage(w, "", []map[string]any{channelRow("C01ABC", "general")})
+		},
+	)
+	r := NewResolver(newTestClient(t, rm.handler), "", "")
+	ctx := context.Background()
+
+	if _, err := r.ResolveChannel(ctx, "member-only"); err == nil {
+		t.Fatal("resolved a name neither answering endpoint held")
+	}
+	memberDown = false
+	id, err := r.ResolveChannel(ctx, "member-only")
+	if err != nil || id != "C05MNO" {
+		t.Errorf("got %q, %v, want C05MNO once the member scan answers", id, err)
+	}
+}
