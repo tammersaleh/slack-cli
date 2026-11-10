@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -225,4 +226,90 @@ func TestManagerChain_RateLimitedProfileIsRetried(t *testing.T) {
 	if got := m.profileCalls("U01"); got != 2 {
 		t.Errorf("profile fetches = %d, want 2", got)
 	}
+}
+
+// The abort trailer carries the per-input failures counted before the abort.
+func TestUserInfo_Full_AbortTrailerCountsEarlierErrors(t *testing.T) {
+	m := &profileMock{profileErr: func(user string, _ int) string {
+		switch user {
+		case "U01":
+			return "user_not_found"
+		case "U02":
+			return "missing_scope"
+		}
+		return ""
+	}}
+
+	r := runWithMockFull(t, m.mux(), "user", "info", "--full", "U01", "U02", "U03")
+	meta := assertFatalAbort(t, r.err, r.stdout, "missing_scope", output.ExitAuth, 1)
+	if meta["error_count"] != float64(1) {
+		t.Errorf("_meta.error_count = %v, want 1", meta["error_count"])
+	}
+}
+
+// Slack's not-found spellings all become user_not_found with its discovery
+// hint; that is the one case the label is right.
+func TestUserInfo_NotFoundCodesBecomeUserNotFound(t *testing.T) {
+	for _, code := range []string{"user_not_found", "users_not_found", "user_not_visible"} {
+		t.Run(code, func(t *testing.T) {
+			m := &profileMock{infoErr: func(string) string { return code }}
+			r := runWithMockFull(t, m.mux(), "user", "info", "U01")
+			assertExitError(t, r.err)
+			rows, _ := rowsAndMeta(t, r.stdout)
+			if len(rows) != 1 || rows[0]["error"] != "user_not_found" || rows[0]["hint"] == nil {
+				t.Errorf("expected a user_not_found row with a hint, got %v", rows)
+			}
+		})
+	}
+}
+
+// The users.info stage aborts on a systemic error too, and retries a rate
+// limit like the profile fetch does.
+func TestUserInfo_UsersInfoSystemicAbortWritesTrailer(t *testing.T) {
+	m := &profileMock{infoErr: func(user string) string {
+		if user == "U02" {
+			return "invalid_auth"
+		}
+		return ""
+	}}
+	r := runWithMockFull(t, m.mux(), "user", "info", "U01", "U02", "U03")
+	assertFatalAbort(t, r.err, r.stdout, "invalid_auth", output.ExitAuth, 1)
+}
+
+func TestUserInfo_RateLimitedUsersInfoIsRetried(t *testing.T) {
+	// The resolver's cache lookup spends users.info call 1 and swallows its
+	// error; the command's own fetch is call 2, limited, and call 3 succeeds.
+	var calls atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) <= 2 {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "ratelimited"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "user": map[string]any{"id": "U01", "name": "alice"}})
+	})
+
+	r := runWithMockFull(t, mux, "user", "info", "U01")
+	if r.err != nil {
+		t.Fatalf("a transient rate limit must be recovered, got %T: %v", r.err, r.err)
+	}
+	rows, _ := rowsAndMeta(t, r.stdout)
+	if len(rows) != 1 || rows[0]["name"] != "alice" {
+		t.Errorf("expected alice's row, got:\n%s", r.stdout)
+	}
+}
+
+// An email that cannot be resolved because the lookup itself failed
+// systemically stops the run; it is not a missing user.
+func TestUserInfo_ResolveSystemicAbortWritesTrailer(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "members": []any{}})
+	})
+	mux.HandleFunc("/api/users.lookupByEmail", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "missing_scope"})
+	})
+
+	r := runWithMockFull(t, mux, "user", "info", "alice@example.com", "U02")
+	assertFatalAbort(t, r.err, r.stdout, "missing_scope", output.ExitAuth, 0)
 }

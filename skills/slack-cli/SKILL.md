@@ -62,7 +62,7 @@ Common errors and their recovery:
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
 | `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. |
-| `rate_limited` | Exit 3. Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait. Reads and `section move`/`rename`/`emoji` are retried too. Creates and draft and list writes are not: wait (`detail` names Slack's `Retry-After` when it sent one) and rerun. Slack's raw `ratelimited` string is always reported as `rate_limited` |
+| `rate_limited` | Exit 3. Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait. `user info` lookups, internal reads (`section list`, `draft list`, `saved counts`, `channel managers`), and `section move`/`rename`/`emoji` are retried too. Other single-shot commands (`message get`, `reaction list`, `channel info`, `file info`) and creates and draft and list writes are not: wait (`detail` names Slack's `Retry-After` when it sent one) and rerun. Slack's raw `ratelimited` string is always reported as `rate_limited` |
 | `invalid_cursor` | The cursor is void. Rerun without `--cursor`; a cursor only works for the same command, flags, and workspace that produced it |
 | `timeout` | The `--timeout` budget expired. Raise it, drop it, or resume from `_meta.next_cursor` |
 | `http_error` | Slack answered with a non-200. Read `detail` for the status; usually transient, so wait and resume |

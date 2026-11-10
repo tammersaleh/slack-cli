@@ -136,6 +136,9 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 	for _, input := range c.Users {
 		userID, err := r.ResolveUser(ctx, input)
 		if err != nil {
+			if fatal := systemicResolveError(cli, err); fatal != nil {
+				return abortWithTrailer(p, fatal, errorCount)
+			}
 			errorCount++
 			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
 				return err
@@ -157,7 +160,12 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 		// Try cached profile first, fall back to direct API call.
 		user, found, lookupErr := r.LookupUser(ctx, userID)
 		if lookupErr != nil || !found {
-			apiUser, err := client.Bot().GetUserInfoContext(ctx, userID)
+			var apiUser *slack.User
+			err := api.Call(ctx, "users.info", func() error {
+				var err error
+				apiUser, err = client.Bot().GetUserInfoContext(ctx, userID)
+				return err
+			})
 			if err != nil {
 				if abort := lookupFailed(err); abort != nil {
 					return abort
@@ -254,6 +262,21 @@ func isSystemicErr(e *output.Error) bool {
 		return true
 	}
 	return e.Err == "timeout"
+}
+
+// systemicResolveError returns the classified error when resolving an input
+// failed for a whole-command reason, or nil when it is this input's problem.
+// Only the email path surfaces one: users.lookupByEmail's error comes back
+// raw, while the @name path reports every failure as not found (see
+// todo/resolver-errors-are-reported-as-channel-not-found.md).
+func systemicResolveError(cli *CLI, err error) *output.Error {
+	if isBadURLErr(err) {
+		return nil
+	}
+	if cErr := cli.ClassifyError(err); isSystemicErr(cErr) {
+		return cErr
+	}
+	return nil
 }
 
 // userNotFoundCodes are Slack's ways of saying the user does not exist or is
@@ -406,6 +429,9 @@ func (c *UserManagerChainCmd) Run(cli *CLI) error {
 	for _, input := range c.Users {
 		rootID, err := r.ResolveUser(ctx, input)
 		if err != nil {
+			if fatal := systemicResolveError(cli, err); fatal != nil {
+				return abortWithTrailer(p, fatal, errorCount)
+			}
 			errorCount++
 			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
 				return err
