@@ -437,8 +437,9 @@ nothing is written; use draft create for a new message.
 
 If Slack Desktop has already tombstoned the draft (is_deleted=true), the
 CLI transparently creates a replacement at the same destination - carrying
-its blocks and attachments - and emits the new draft ID to stdout. A changed
-id means a tombstone was replaced, never that a sent draft was.
+its blocks and attachments - and emits the new draft to stdout with
+replaced_draft_id naming the old one. A changed id means a tombstone was
+replaced, never that a sent draft was.
 
 Examples:
 
@@ -687,7 +688,11 @@ func (c *DraftUpdateCmd) createReplacement(ctx context.Context, cli *CLI, client
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return &output.Error{Err: "parse_error", Detail: "Failed to parse drafts.create response", Code: output.ExitGeneral}
 	}
-	if err := p.PrintItem(formatDraft(resp.Draft)); err != nil {
+	// The row's id is not the one the caller passed. Say so on stdout, where
+	// a JSONL consumer reads it, not only in the stderr warning.
+	row := formatDraft(resp.Draft)
+	row["replaced_draft_id"] = c.DraftID
+	if err := p.PrintItem(row); err != nil {
 		return err
 	}
 	return p.PrintMeta(output.Meta{})

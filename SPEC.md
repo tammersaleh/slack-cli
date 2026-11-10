@@ -2542,7 +2542,16 @@ Auto-replace on tombstoned drafts: when Slack Desktop marks a draft
 Desktop client), `drafts.update` and `drafts.delete` both reject the
 draft. This CLI detects the tombstone and transparently creates a fresh
 draft at the same destination, carrying its blocks and attachments. The
-warning goes to stderr; the new draft object lands on stdout as usual.
+warning goes to stderr; the new draft object lands on stdout as usual,
+with one extra key: `replaced_draft_id`, the id the caller passed. An
+in-place update never carries that key, so its presence is the stdout signal
+that the draft was re-keyed. The old draft stays behind as a tombstone.
+
+```
+$ slack draft update Dr01234 < blocks.json
+{"id":"Dr05678","replaced_draft_id":"Dr01234","destinations":[{"channel_id":"C01ABC"}],"date_scheduled":0,"last_updated_ts":"1713300100.1234567"}
+{"_meta":{"has_more":false}}
+```
 
 A sent draft is refused: `draft_already_sent`, nothing written, no
 replacement. `is_sent` is checked before `is_deleted`, so a draft that is

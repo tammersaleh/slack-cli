@@ -424,8 +424,10 @@ whose meaning is unverified. `--limit` is 1-100 (anything else is
 read.
 
 `draft update` on a draft Slack has tombstoned (`is_deleted`) creates a
-replacement at the same destination and prints it with a new `id`, exit 0,
-with a `draft_tombstoned` warning on stderr. Track the new id. On a draft
+replacement at the same destination and prints it with a new `id` and
+`replaced_draft_id` (the id you passed), exit 0, with a `draft_tombstoned`
+warning on stderr. Check for `replaced_draft_id` on every update and track
+the new id (keep both keys if you use `--fields`). On a draft
 that was already sent it fails with `draft_already_sent` and writes nothing.
 
 Write the body as Markdown with `--markdown` unless you need a block shape

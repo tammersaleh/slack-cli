@@ -715,8 +715,8 @@ through `drafts.update` and ghost or strip again.
 
 `DraftUpdateCmd.Run` detects `is_deleted=true` on the existing draft and
 transparently calls `drafts.create` at the same destination. The new
-draft's ID lands on stdout. A `warnTombstoned` warning lands on
-stderr so the caller knows the ID changed.
+draft lands on stdout with `replaced_draft_id` naming the old ID, and a
+`warnTombstoned` warning lands on stderr, so the caller knows the ID changed.
 
 When the lookup showed a live draft and `drafts.update` then fails, the
 command lists the drafts a second time and branches on what it finds, not on

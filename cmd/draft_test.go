@@ -2455,3 +2455,45 @@ func TestDraftDelete_SlackErrorRow(t *testing.T) {
 		t.Errorf("unexpected row: %v", row)
 	}
 }
+
+// A replacement row names the draft it replaced, so a caller reading stdout
+// alone can see the id changed. An ordinary update row does not carry the key.
+func TestDraftUpdate_ReplacementRowNamesReplacedDraft(t *testing.T) {
+	t.Run("tombstoned at lookup", func(t *testing.T) {
+		var creates int
+		mux := updateRaceMux(liveDraft(map[string]any{"is_deleted": true}), nil, "unused", &creates)
+		out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := parseJSON(t, nonEmptyLines(out)[0])
+		if row["id"] != "DrNEW" || row["replaced_draft_id"] != "Dr01234" {
+			t.Errorf("expected id DrNEW replacing Dr01234, got id=%v replaced_draft_id=%v", row["id"], row["replaced_draft_id"])
+		}
+	})
+	t.Run("tombstoned between lookup and update", func(t *testing.T) {
+		var creates int
+		mux := updateRaceMux(liveDraft(nil), liveDraft(map[string]any{"is_deleted": true}), "draft_update_invalid", &creates)
+		out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := parseJSON(t, nonEmptyLines(out)[0])
+		if row["id"] != "DrNEW" || row["replaced_draft_id"] != "Dr01234" {
+			t.Errorf("expected id DrNEW replacing Dr01234, got id=%v replaced_draft_id=%v", row["id"], row["replaced_draft_id"])
+		}
+	})
+	t.Run("ordinary update", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, liveDraft(nil)))
+		mux.HandleFunc("/api/drafts.update", draftCreateResponder(t, liveDraft(nil)))
+		out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := parseJSON(t, nonEmptyLines(out)[0])
+		if _, present := row["replaced_draft_id"]; present {
+			t.Errorf("an in-place update must not carry replaced_draft_id, got %v", row)
+		}
+	})
+}
