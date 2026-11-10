@@ -439,6 +439,8 @@ Requests that go through the shared retry are attempted up to 5 times: every pag
 {"error":"rate_limited","detail":"Rate limited after 5 attempts on conversations.history","endpoint":"conversations.history"}
 ```
 
+The internal API methods (`saved.*`, `users.channelSections.*`, `drafts.*`, `lists.*`, `client.counts`, `admin.roles.entity.listAssignments`) follow the same rules. `saved list` pages are retried. A 429 that carries no `Retry-After` still counts as a rate limit.
+
 Other single-shot calls are not retried. A rate limit on one of them is reported at once, with the wait Slack asked for in `detail` when it sent one:
 
 ```json

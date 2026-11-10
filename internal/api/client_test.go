@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/slack-go/slack"
 )
@@ -371,4 +372,105 @@ func TestPostInternal_ErrorCarriesResponseMetadataMessages(t *testing.T) {
 			}
 		})
 	}
+}
+
+// postInternalBoth runs one scenario through both internal helpers, which
+// share their response handling.
+func postInternalBoth(t *testing.T, handler http.HandlerFunc, check func(t *testing.T, data json.RawMessage, err error)) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	c := New("xoxc-test", WithAPIURL(srv.URL+"/api/"))
+
+	t.Run("json", func(t *testing.T) {
+		data, err := c.PostInternal(context.Background(), "saved.list", map[string]any{})
+		check(t, data, err)
+	})
+	t.Run("form", func(t *testing.T) {
+		data, err := c.PostInternalForm(context.Background(), "users.channelSections.list", map[string]string{})
+		check(t, data, err)
+	})
+}
+
+// A rate-limited internal call must come back as *slack.RateLimitedError in
+// every wire shape, because that type is what the shared retry loop and the
+// exit-3 classification key on. Before this the helpers ignored the HTTP
+// status and returned SlackErrorResponse{"ratelimited"}: no retry, exit 1.
+func TestPostInternal_RateLimited(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		retryAfter string
+		body       string
+		wantWait   time.Duration
+	}{
+		{"429 with Retry-After", http.StatusTooManyRequests, "30", `{"ok":false,"error":"ratelimited"}`, 30 * time.Second},
+		// slack-go drops a 429 without the header to a plain status error.
+		// Here it is still a rate limit; the retry loop floors the wait.
+		{"429 without Retry-After", http.StatusTooManyRequests, "", `{"ok":false,"error":"ratelimited"}`, 0},
+		{"429 with a non-JSON body", http.StatusTooManyRequests, "2", `<html>slow down</html>`, 2 * time.Second},
+		{"429 with an unparseable Retry-After", http.StatusTooManyRequests, "soon", ``, 0},
+		{"200 with a ratelimited envelope", http.StatusOK, "", `{"ok":false,"error":"ratelimited"}`, 0},
+		{"200 with a ratelimited envelope and Retry-After", http.StatusOK, "5", `{"ok":false,"error":"ratelimited"}`, 5 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			postInternalBoth(t, func(w http.ResponseWriter, r *http.Request) {
+				if tt.retryAfter != "" {
+					w.Header().Set("Retry-After", tt.retryAfter)
+				}
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}, func(t *testing.T, data json.RawMessage, err error) {
+				var rlErr *slack.RateLimitedError
+				if !errors.As(err, &rlErr) {
+					t.Fatalf("expected *slack.RateLimitedError, got %T: %v", err, err)
+				}
+				if rlErr.RetryAfter != tt.wantWait {
+					t.Errorf("RetryAfter = %v, want %v", rlErr.RetryAfter, tt.wantWait)
+				}
+				if data != nil {
+					t.Errorf("expected no data on error, got %s", data)
+				}
+			})
+		})
+	}
+}
+
+// A non-200 whose body is not an envelope is an HTTP failure, not a parse
+// failure: the parse_error hint (proxy, captive portal) is wrong for a 502.
+func TestPostInternal_NonOKStatusWithoutEnvelope(t *testing.T) {
+	postInternalBoth(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("<html>bad gateway</html>"))
+	}, func(t *testing.T, _ json.RawMessage, err error) {
+		var statusErr slack.StatusCodeError
+		if !errors.As(err, &statusErr) || statusErr.Code != http.StatusBadGateway {
+			t.Fatalf("expected slack.StatusCodeError 502, got %T: %v", err, err)
+		}
+	})
+}
+
+// A non-200 that does carry an envelope keeps Slack's own error code.
+func TestPostInternal_NonOKStatusWithEnvelope(t *testing.T) {
+	postInternalBoth(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"ok":false,"error":"team_is_restricted"}`))
+	}, func(t *testing.T, _ json.RawMessage, err error) {
+		if code, ok := SlackErrorCode(err); !ok || code != "team_is_restricted" {
+			t.Fatalf("expected team_is_restricted, got %T: %v", err, err)
+		}
+	})
+}
+
+// A 200 that is not JSON stays a parse error.
+func TestPostInternal_OKStatusNonJSON(t *testing.T) {
+	postInternalBoth(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html>login</html>"))
+	}, func(t *testing.T, _ json.RawMessage, err error) {
+		var syntaxErr *json.SyntaxError
+		if !errors.As(err, &syntaxErr) {
+			t.Fatalf("expected a JSON syntax error, got %T: %v", err, err)
+		}
+	})
 }

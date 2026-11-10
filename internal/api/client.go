@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,17 +120,7 @@ func (c *Client) User() *slack.Client { return c.user }
 // PostInternal calls an internal Slack API method via raw HTTP POST with
 // a JSON body. The token is included in the request body. Returns the raw
 // JSON response body. Returns an error if the response has ok:false.
-func (c *Client) PostInternal(ctx context.Context, method string, body map[string]any) (data json.RawMessage, err error) {
-	start := time.Now()
-	defer func() {
-		TracerFrom(ctx).Event("internal_api", map[string]any{
-			"endpoint":   method,
-			"latency_ms": time.Since(start).Milliseconds(),
-			"bytes":      len(data),
-			"error":      errString(err),
-		})
-	}()
-
+func (c *Client) PostInternal(ctx context.Context, method string, body map[string]any) (json.RawMessage, error) {
 	// Clone to avoid mutating the caller's map.
 	out := make(map[string]any, len(body)+1)
 	for k, v := range body {
@@ -137,57 +128,34 @@ func (c *Client) PostInternal(ctx context.Context, method string, body map[strin
 	}
 	out["token"] = c.token
 
-	payload, marshalErr := json.Marshal(out)
-	if marshalErr != nil {
-		err = fmt.Errorf("marshalling request: %w", marshalErr)
-		return nil, err
-	}
-
-	url := c.apiURL + method
-	req, reqErr := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
-	if reqErr != nil {
-		err = fmt.Errorf("creating request: %w", reqErr)
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	client := c.httpClient
-	if client == nil {
-		client = http.DefaultClient
-	}
-
-	resp, doErr := client.Do(req)
-	if doErr != nil {
-		err = doErr
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body2, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		err = fmt.Errorf("reading response: %w", readErr)
-		return nil, err
-	}
-	data = json.RawMessage(body2)
-
-	var envelope internalEnvelope
-	if unmarshalErr := json.Unmarshal(data, &envelope); unmarshalErr != nil {
-		err = fmt.Errorf("parsing response: %w", unmarshalErr)
-		return nil, err
-	}
-	if !envelope.OK {
-		err = envelope.slackError()
-		return nil, err
-	}
-
-	return data, nil
+	return c.postInternal(ctx, method, "application/json; charset=utf-8", func() (io.Reader, error) {
+		payload, err := json.Marshal(out)
+		if err != nil {
+			return nil, fmt.Errorf("marshalling request: %w", err)
+		}
+		return bytes.NewReader(payload), nil
+	})
 }
 
 // PostInternalForm calls an internal Slack API method via form-encoded POST
 // at the default API URL. Used by endpoints that expect
 // application/x-www-form-urlencoded.
-func (c *Client) PostInternalForm(ctx context.Context, method string, params map[string]string) (data json.RawMessage, err error) {
+func (c *Client) PostInternalForm(ctx context.Context, method string, params map[string]string) (json.RawMessage, error) {
+	form := url.Values{}
+	form.Set("token", c.token)
+	for k, v := range params {
+		form.Set(k, v)
+	}
+
+	return c.postInternal(ctx, method, "application/x-www-form-urlencoded", func() (io.Reader, error) {
+		return strings.NewReader(form.Encode()), nil
+	})
+}
+
+// postInternal sends one internal API request and reads its answer. It makes
+// exactly one attempt; retrying is the caller's choice (FetchPage, Call),
+// since not every internal write is safe to repeat.
+func (c *Client) postInternal(ctx context.Context, method, contentType string, body func() (io.Reader, error)) (data json.RawMessage, err error) {
 	start := time.Now()
 	defer func() {
 		TracerFrom(ctx).Event("internal_api", map[string]any{
@@ -198,19 +166,15 @@ func (c *Client) PostInternalForm(ctx context.Context, method string, params map
 		})
 	}()
 
-	form := url.Values{}
-	form.Set("token", c.token)
-	for k, v := range params {
-		form.Set(k, v)
-	}
-
-	reqURL := c.apiURL + method
-	req, reqErr := http.NewRequestWithContext(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
-	if reqErr != nil {
-		err = fmt.Errorf("creating request: %w", reqErr)
+	payload, err := body()
+	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req, err := http.NewRequestWithContext(ctx, "POST", c.apiURL+method, payload)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	client := c.httpClient
@@ -218,31 +182,63 @@ func (c *Client) PostInternalForm(ctx context.Context, method string, params map
 		client = http.DefaultClient
 	}
 
-	resp, doErr := client.Do(req)
-	if doErr != nil {
-		err = doErr
+	resp, err := client.Do(req)
+	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	body2, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		err = fmt.Errorf("reading response: %w", readErr)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	if err := internalResponseError(resp, raw); err != nil {
 		return nil, err
 	}
-	data = json.RawMessage(body2)
+	return json.RawMessage(raw), nil
+}
+
+// internalResponseError turns an internal API answer into its error, or nil
+// for ok:true.
+//
+// A rate limit is reported as *slack.RateLimitedError in both shapes Slack
+// uses - an HTTP 429, or an ok:false envelope naming the limit - because that
+// type is what the shared retry loop and the exit-3 classification key on.
+// RetryAfter comes from the header and is zero when Slack sent none; the retry
+// loop floors the wait. slack-go itself treats a 429 without the header as a
+// plain status error and never retries it, which is not mirrored here: the
+// status alone says to slow down.
+func internalResponseError(resp *http.Response, raw []byte) error {
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return &slack.RateLimitedError{RetryAfter: retryAfter(resp)}
+	}
 
 	var envelope internalEnvelope
-	if unmarshalErr := json.Unmarshal(data, &envelope); unmarshalErr != nil {
-		err = fmt.Errorf("parsing response: %w", unmarshalErr)
-		return nil, err
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		// A non-200 with no envelope is an HTTP failure. Reporting it as a
+		// parse error would point the caller at a proxy or captive portal.
+		if resp.StatusCode != http.StatusOK {
+			return slack.StatusCodeError{Code: resp.StatusCode, Status: resp.Status}
+		}
+		return fmt.Errorf("parsing response: %w", err)
 	}
-	if !envelope.OK {
-		err = envelope.slackError()
-		return nil, err
+	if envelope.OK {
+		return nil
 	}
+	if bodyRateLimitCodes[envelope.Error] {
+		return &slack.RateLimitedError{RetryAfter: retryAfter(resp)}
+	}
+	return envelope.slackError()
+}
 
-	return data, nil
+// retryAfter reads the Retry-After header as whole seconds, the only form
+// Slack sends. Absent or unparseable is zero.
+func retryAfter(resp *http.Response) time.Duration {
+	secs, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+	if err != nil || secs < 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // AuthTestResult contains validated token metadata.
