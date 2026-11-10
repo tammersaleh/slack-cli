@@ -726,3 +726,22 @@ func TestChannelList_UnparseableBodyTrailerCarriesAStableCode(t *testing.T) {
 		t.Errorf("detail must keep the parse failure the code omits, got %q", oErr.Detail)
 	}
 }
+
+// A single un-retried call that Slack rate-limits in the body (200,
+// ok:false, "ratelimited") reports the CLI's rate_limited code at exit 3, the
+// same as a 429, instead of passing Slack's spelling through at exit 1.
+func TestMessagePermalink_BodyRateLimitIsRateLimited(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/chat.getPermalink", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "ratelimited"})
+	})
+
+	r := runWithMockFull(t, mux, "message", "permalink", "C01ABC", "1709251200.000100")
+	var oErr *output.Error
+	if !errors.As(r.err, &oErr) {
+		t.Fatalf("expected *output.Error, got %T: %v", r.err, r.err)
+	}
+	if oErr.Err != "rate_limited" || oErr.Code != output.ExitRateLimit {
+		t.Errorf("got %q exit %d, want rate_limited exit %d", oErr.Err, oErr.Code, output.ExitRateLimit)
+	}
+}

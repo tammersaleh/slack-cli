@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -275,8 +276,14 @@ func classifyCorpus(t *testing.T) []classifyCase {
 		// Cases classified before the fallback. Pinned here so adding a
 		// recognizer above can't shadow one of them.
 		{
-			name: "rate limited", err: &slack.RateLimitedError{},
-			wantErr: "rate_limited", wantCode: output.ExitRateLimit, wantDetail: "retry after",
+			name: "rate limited", err: &slack.RateLimitedError{RetryAfter: 30 * time.Second},
+			wantErr: "rate_limited", wantCode: output.ExitRateLimit, wantDetail: "retry after 30s",
+		},
+		{
+			// A 200 whose body says ratelimited: same condition, same code and
+			// exit as the 429 form, and the detail must not invent a wait.
+			name: "rate limited in the body", err: slack.SlackErrorResponse{Err: "ratelimited"},
+			wantErr: "rate_limited", wantCode: output.ExitRateLimit, wantDetail: "no Retry-After",
 		},
 		{
 			name: "rate limit budget exhausted",

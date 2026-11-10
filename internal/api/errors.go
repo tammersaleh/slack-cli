@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -111,6 +112,30 @@ func slackErrorCode(err error) (string, bool) {
 	return "", false
 }
 
+// bodyRateLimitCodes are the error strings Slack puts in an ok:false body when
+// it rate-limits a request without answering 429. users.profile.get does this;
+// so do the internal methods at times.
+var bodyRateLimitCodes = map[string]bool{
+	"ratelimited":  true,
+	"rate_limited": true,
+}
+
+// RateLimitWait reports whether err is a rate limit, and how long Slack asked
+// the caller to wait. Two shapes qualify: slack-go's RateLimitedError (an HTTP
+// 429, with Retry-After) and a typed Slack error whose code is a rate limit (a
+// 200 with ok:false). The second carries no wait, so it reports zero and the
+// retry loop applies its floor.
+func RateLimitWait(err error) (time.Duration, bool) {
+	var rlErr *slack.RateLimitedError
+	if errors.As(err, &rlErr) {
+		return rlErr.RetryAfter, true
+	}
+	if code, ok := slackErrorCode(err); ok && bodyRateLimitCodes[code] {
+		return 0, true
+	}
+	return 0, false
+}
+
 // IsNonResumablePageError reports whether err voids the continuation, meaning a
 // paginated command must not report a resume cursor for the page that failed.
 // Only a typed Slack API error can qualify: a local error that happens to spell
@@ -174,11 +199,16 @@ func ClassifyError(err error) *output.Error {
 
 	// A bare rate-limit error comes from a single un-retried call, not from
 	// an exhausted retry budget - don't claim retries that never happened.
-	var rateLimitErr *slack.RateLimitedError
-	if errors.As(err, &rateLimitErr) {
+	// Both wire shapes get the one code: a consumer told to branch on
+	// rate_limited must not also have to know Slack's "ratelimited" spelling.
+	if wait, ok := RateLimitWait(err); ok {
+		detail := "Rate limited; Slack sent no Retry-After"
+		if wait > 0 {
+			detail = fmt.Sprintf("Rate limited; Slack asked to retry after %s", wait)
+		}
 		return &output.Error{
 			Err:    "rate_limited",
-			Detail: fmt.Sprintf("Rate limited; Slack asked to retry after %s", rateLimitErr.RetryAfter),
+			Detail: detail,
 			Code:   output.ExitRateLimit,
 		}
 	}

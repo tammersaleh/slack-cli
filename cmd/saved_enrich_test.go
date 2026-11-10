@@ -449,11 +449,8 @@ func TestSavedListEnrich_SystemicErrorsAreFatal(t *testing.T) {
 	}{
 		{"missing scope", "missing_scope"},
 		{"revoked token", "token_revoked"},
-		// Not a rate-limit test: an ok:false body yields a SlackErrorResponse,
-		// never a *slack.RateLimitedError, so no 429 / Retry-After / FetchPage
-		// retry path is exercised here. It belongs in this table only as
-		// "another unallowlisted code aborts".
-		{"ratelimited string", "ratelimited"},
+		// "ratelimited" is not here: a body-level rate limit is retried by
+		// the page retry, see saved_retry_test.go.
 		// Fail-closed: an unenumerated code must abort rather than degrade
 		// into a silently unenriched row.
 		{"unknown code", "some_future_slack_error"},

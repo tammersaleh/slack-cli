@@ -101,7 +101,9 @@ specific cause, `detail` on stderr carries the specifics. Slack's own API error
 strings (`missing_scope`, `not_in_channel`, ...) pass through as the code
 unchanged. The codes the CLI raises for failures Slack did not name:
 
-- `rate_limited` - retries exhausted, or a 429 on an un-retried call (exit 3).
+- `rate_limited` - retries exhausted, or a rate limit on an un-retried call
+  (exit 3). Slack's own body-level `ratelimited` string is reported under this
+  code too, so `ratelimited` never appears as an `error` value.
 - `network_error` - the request never reached Slack: DNS, connection refused,
   connection reset, TLS (exit 4).
 - `timeout` - the `--timeout` budget expired (exit 1). Raise the budget, drop
@@ -429,10 +431,18 @@ Some endpoints are not paginated by Slack (usergroup list, emoji list). These re
 
 ## Rate Limiting
 
-The CLI retries on HTTP 429 responses. It reads the `Retry-After` header and waits accordingly, with jitter. After 5 consecutive rate limit hits on the same request, it exits with code 3 and an error to stderr:
+Slack reports a rate limit in two shapes, and the CLI treats them as one condition: an HTTP 429, usually with a `Retry-After` header, or a 200 whose body is `{"ok":false,"error":"ratelimited"}` (`users.profile.get` answers this way). Both surface as `rate_limited`, exit 3.
+
+Requests that go through the shared retry are attempted up to 5 times: every paginated page, `channel invite`/`kick` calls, and the `user info --full` and `user manager-chain` profile lookups. The wait between attempts is `Retry-After`, or one second when Slack sent none (the body shape never carries one). There is no wait after the last failure, and the command then exits 3:
 
 ```json
-{"error":"rate_limited","detail":"Rate limited after 5 retries","endpoint":"conversations.history"}
+{"error":"rate_limited","detail":"Rate limited after 5 attempts on conversations.history","endpoint":"conversations.history"}
+```
+
+Other single-shot calls are not retried. A rate limit on one of them is reported at once, with the wait Slack asked for in `detail` when it sent one:
+
+```json
+{"error":"rate_limited","detail":"Rate limited; Slack asked to retry after 30s"}
 ```
 
 Retries are logged to stderr when `--trace` is set.

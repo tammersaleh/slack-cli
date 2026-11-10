@@ -607,11 +607,16 @@ func TestListRecordUpdate_SlackErrorOnWrite(t *testing.T) {
 
 func TestListRecordUpdate_RereadFailureIsPartialRow(t *testing.T) {
 	s := newRecordStore(t).seedRecord()
+	// Slack's body-level spelling; the row carries the CLI's one code for it.
 	s.fail["lists.records.info"] = "ratelimited"
 	out, err := runWithMockSession(t, s.mux(), "list", "record", "update", "F01ABC", seededRecID, "Status=Done")
-	assertExitError(t, err)
+	// The partial row's exit code is the classified one: 3 for a rate limit.
+	var exitErr *output.ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != output.ExitRateLimit {
+		t.Fatalf("expected *output.ExitError with code %d, got %T: %v", output.ExitRateLimit, err, err)
+	}
 	rows := rowsOf(t, out)
-	if len(rows) != 1 || rows[0]["id"] != seededRecID || rows[0]["list_id"] != "F01ABC" || rows[0]["error"] != "ratelimited" {
+	if len(rows) != 1 || rows[0]["id"] != seededRecID || rows[0]["list_id"] != "F01ABC" || rows[0]["error"] != "rate_limited" {
 		t.Errorf("rows = %v", rows)
 	}
 	// The write did land.

@@ -22,11 +22,10 @@ import (
 // comment all describe, so a future change that "fixes" the duplicate
 // saved.list call should fail here and be a deliberate decision.
 //
-// The 429 must be a real HTTP status *with* a Retry-After header: that is the
-// only shape slack-go turns into a *slack.RateLimitedError, and only that type
-// enters fetchWithRetry's retry branch. An {"ok":false,"error":"ratelimited"}
-// body becomes a slack.SlackErrorResponse and aborts the page instead - that
-// string form is covered by TestSavedListEnrich_SystemicErrorsAreFatal.
+// This is the HTTP form: a 429 *with* a Retry-After header, the only shape
+// slack-go turns into a *slack.RateLimitedError. The body form, an
+// {"ok":false,"error":"ratelimited"} answer, is retried the same way and is
+// covered by TestSavedListEnrich_BodyRateLimitedLookupRetriesThePage.
 //
 // Retry-After: 1 is the smallest value slack-go can parse, so this test costs
 // about a second of wall clock. Worth it - the retry path is otherwise
@@ -101,5 +100,36 @@ func TestSavedListEnrich_RateLimitedLookupRetriesTheWholePage(t *testing.T) {
 	}
 	if meta["has_more"] != false {
 		t.Errorf("_meta.has_more = %v, want false", meta["has_more"])
+	}
+}
+
+// TestSavedListEnrich_BodyRateLimitedLookupRetriesThePage is the body form of
+// the test above: conversations.history answers 200 with
+// {"ok":false,"error":"ratelimited"}. Before the retry loop recognized that
+// shape it aborted the page as an unallowlisted Slack error and exited 1.
+func TestSavedListEnrich_BodyRateLimitedLookupRetriesThePage(t *testing.T) {
+	var historyCalls atomic.Int64
+	m := &enrichMock{
+		historyErr: func(string) string {
+			if historyCalls.Add(1) == 1 {
+				return "ratelimited"
+			}
+			return ""
+		},
+	}
+
+	out, err := runWithMockSession(t, m.mux(t, savedItemsFor(rootTS), ""), "saved", "list", "--enrich")
+	if err != nil {
+		t.Fatalf("a body-level rate limit must be recovered by the page retry, got %T: %v", err, err)
+	}
+	if got := historyCalls.Load(); got != 2 {
+		t.Errorf("conversations.history requests = %d, want 2", got)
+	}
+	rows, meta := rowsAndMeta(t, out)
+	if len(rows) != 1 || rows[0]["text"] != "root message" {
+		t.Fatalf("expected the one enriched row, got:\n%s", out)
+	}
+	if meta["error"] != nil || meta["has_more"] != false {
+		t.Errorf("_meta = %v, want a clean complete trailer", meta)
 	}
 }

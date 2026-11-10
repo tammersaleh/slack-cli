@@ -2,10 +2,7 @@ package api
 
 import (
 	"context"
-	"errors"
 	"time"
-
-	"github.com/slack-go/slack"
 )
 
 // maxAttempts is the number of requests made for a single page before giving
@@ -101,7 +98,8 @@ func fetchWithRetry[T any](ctx context.Context, endpoint, cursor string, fetch P
 
 // retry runs attempt up to maxAttempts times, waiting Retry-After (floor one
 // second) between rate-limited attempts and giving up with a
-// RateLimitExhaustedError. Any other error returns immediately. Each attempt
+// RateLimitExhaustedError. A rate limit is either wire shape RateLimitWait
+// recognizes: an HTTP 429 or an ok:false body naming the limit. Any other error returns immediately. Each attempt
 // emits a trace event of the given kind carrying the attempt's own fields.
 func retry(ctx context.Context, endpoint, event string, attempt func() (fields map[string]any, err error)) error {
 	tracer := TracerFrom(ctx)
@@ -122,8 +120,8 @@ func retry(ctx context.Context, endpoint, event string, attempt func() (fields m
 			return nil
 		}
 
-		var rlErr *slack.RateLimitedError
-		if !errors.As(err, &rlErr) {
+		wait, limited := RateLimitWait(err)
+		if !limited {
 			return err
 		}
 
@@ -132,7 +130,6 @@ func retry(ctx context.Context, endpoint, event string, attempt func() (fields m
 			return &RateLimitExhaustedError{Err: err, Endpoint: endpoint, Attempts: maxAttempts}
 		}
 
-		wait := rlErr.RetryAfter
 		if wait == 0 {
 			wait = time.Second
 		}

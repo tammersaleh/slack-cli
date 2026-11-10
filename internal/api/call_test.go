@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -186,5 +187,55 @@ func TestCall_RateLimitContextCancelled(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("got %d calls, want 1", calls)
+	}
+}
+
+// Slack reports some rate limits as a 200 with {"ok":false,"error":"ratelimited"}
+// (users.profile.get does), which slack-go hands back as a SlackErrorResponse
+// rather than a RateLimitedError. That shape has to retry too, at the
+// no-Retry-After floor since the body carries no wait.
+func TestCall_BodyLevelRateLimitRetries(t *testing.T) {
+	calls := 0
+	start := time.Now()
+	err := Call(context.Background(), testEndpoint, func() error {
+		calls++
+		if calls == 1 {
+			return slack.SlackErrorResponse{Err: "ratelimited"}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("got %d calls, want 2", calls)
+	}
+	if elapsed := time.Since(start); elapsed < 500*time.Millisecond {
+		t.Errorf("retried after %v, want the 1s floor", elapsed)
+	}
+}
+
+func TestRateLimitWait(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantWait time.Duration
+		wantOK   bool
+	}{
+		{"typed", &slack.RateLimitedError{RetryAfter: 7 * time.Second}, 7 * time.Second, true},
+		{"typed, wrapped", fmt.Errorf("page: %w", &slack.RateLimitedError{RetryAfter: time.Second}), time.Second, true},
+		{"body ratelimited", slack.SlackErrorResponse{Err: "ratelimited"}, 0, true},
+		{"body rate_limited", slack.SlackErrorResponse{Err: "rate_limited"}, 0, true},
+		{"other slack error", slack.SlackErrorResponse{Err: "invalid_auth"}, 0, false},
+		// Only a typed Slack error counts, as with every other code.
+		{"local error spelling the code", errors.New("ratelimited"), 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wait, ok := RateLimitWait(tt.err)
+			if wait != tt.wantWait || ok != tt.wantOK {
+				t.Errorf("got (%v, %v), want (%v, %v)", wait, ok, tt.wantWait, tt.wantOK)
+			}
+		})
 	}
 }
