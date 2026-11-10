@@ -430,3 +430,81 @@ func TestSearchMessages_UnresolvedUserModifierFails(t *testing.T) {
 		t.Errorf("expected no stdout, got %q", out)
 	}
 }
+
+// --trace shows the query as sent, after from:/to:/in: names became <@Uxxx>.
+// Without it there is no way to tell a wrong resolution from a wrong query:
+// the rows show who Slack matched, not who the CLI asked for.
+func TestSearch_TraceCarriesTheRewrittenQuery(t *testing.T) {
+	tests := []struct {
+		command  string
+		endpoint string
+		response map[string]any
+	}{
+		{"messages", "search.messages", searchResponse(nil, 1, 1, 0)},
+		{"files", "search.files", searchFilesResponse(nil, 1, 1, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			mux := http.NewServeMux()
+			usersListAlice(mux)
+			var sent string
+			mux.HandleFunc("/api/"+tt.endpoint, func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				sent = r.Form.Get("query")
+				_ = json.NewEncoder(w).Encode(tt.response)
+			})
+
+			t.Setenv("SLACK_USER_TOKEN", "xoxp-test")
+			r := runWithMockFull(t, mux, "--trace", "search", tt.command, "skypilot from:@Alice Adams")
+			if r.err != nil {
+				t.Fatal(r.err)
+			}
+
+			var events []map[string]any
+			for _, line := range nonEmptyLines(r.stderr) {
+				if evt := parseJSON(t, line); evt["kind"] == "search_query" {
+					events = append(events, evt)
+				}
+			}
+			if len(events) != 1 {
+				t.Fatalf("expected one search_query event, got %d:\n%s", len(events), r.stderr)
+			}
+			evt := events[0]
+			if evt["query"] != "skypilot from:<@U01XYZ>" || evt["query"] != sent {
+				t.Errorf("traced query = %q, sent %q, want both skypilot from:<@U01XYZ>", evt["query"], sent)
+			}
+			if evt["input"] != "skypilot from:@Alice Adams" {
+				t.Errorf("traced input = %q, want the query as typed", evt["input"])
+			}
+			if evt["endpoint"] != tt.endpoint {
+				t.Errorf("endpoint = %q, want %q", evt["endpoint"], tt.endpoint)
+			}
+			for _, line := range nonEmptyLines(r.stdout) {
+				if _, ok := parseJSON(t, line)["kind"]; ok {
+					t.Errorf("trace event leaked into stdout: %s", line)
+				}
+			}
+		})
+	}
+}
+
+// The rewritten query stays out of the trailer: it is diagnostics, and _meta
+// is the contract a consumer parses.
+func TestSearch_RewrittenQueryIsNotInTheTrailer(t *testing.T) {
+	mux := http.NewServeMux()
+	usersListAlice(mux)
+	mux.HandleFunc("/api/search.messages", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(searchResponse(nil, 1, 1, 0))
+	})
+	t.Setenv("SLACK_USER_TOKEN", "xoxp-test")
+	r := runWithMockFull(t, mux, "search", "messages", "from:@alice")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if _, ok := metaOf(t, r.stdout)["query"]; ok {
+		t.Errorf("_meta must not carry the query:\n%s", r.stdout)
+	}
+	if r.stderr != "" {
+		t.Errorf("expected empty stderr without --trace, got: %s", r.stderr)
+	}
+}

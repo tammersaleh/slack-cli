@@ -155,6 +155,9 @@ Query supports Slack's search modifiers. Combine freely:
   CLI resolves it and sends Slack `<@Uxxx>`. Multi-word names work unquoted
   (`from:@Alice Adams`) or quoted (`from:"Alice Adams"`). An unknown name
   fails with `user_not_found` rather than an empty result.
+- Repeated `from:` modifiers are ORed by Slack: `from:@alice from:@bob` returns
+  both people's messages. Add `--trace` to see the query as sent (the
+  `search_query` event on stderr), with each name resolved to its `<@Uxxx>`.
 - `after:YYYY-MM-DD` / `before:YYYY-MM-DD` / `on:YYYY-MM-DD` / `during:month`
 - `has:link` / `has:pin` / `has:reaction` / `has:file` / `has:image`
 - `has::eyes:` - has a specific emoji reaction (emoji code with its colons);

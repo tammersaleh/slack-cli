@@ -156,6 +156,11 @@ carries `ts`, `kind`, and kind-specific attributes. Current kinds:
   `wait_ms`); `attempt` is the request that was rate limited
 - `internal_api` - one per internal API POST (`endpoint`, `latency_ms`,
   `bytes`, `error`)
+- `search_query` - one per `search messages` or `search files` run, before the
+  first request (`endpoint`, `input`, `query`). `input` is the query as typed
+  and `query` is what was sent, with every `from:`/`to:`/`in:` name already
+  rewritten to `<@Uxxx>`. It is the only place the sent query is visible; the
+  trailer does not carry it.
 
 ```json
 {"ts":"2024-03-01T00:00:00.000Z","kind":"page","endpoint":"conversations.list","attempt":1,"items":200,"latency_ms":182,"has_more":true,"error":""}
@@ -1159,6 +1164,12 @@ keeps `skypilot` as free text. Quoted forms `from:"Alice Adams"`, `from:"@Alice 
 resolve fails with `user_not_found` (exit 1) before any search call. A name two
 users share resolves to whichever the cache indexed first. Applies to `search
 files` too.
+
+Slack ORs repeated `from:` modifiers: `from:@alice from:@bob` returns messages
+from either person (measured 2026-11-10: one such query returned 24 rows from
+one author and 68 from the other on its first page). The CLI sends both values
+as written. To check which user a name resolved to, run with `--trace` and read
+the `search_query` event.
 
 ##### `total` in the trailer
 

@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/slack-go/slack"
+	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
 
@@ -45,6 +47,10 @@ that resolves wins, so 'from:@Alice Adams skypilot' works. Quote it to
 be explicit: from:"Alice Adams". An unresolvable name fails with
 user_not_found instead of returning an empty page.
 
+Slack ORs repeated from: modifiers: 'from:@alice from:@bob' returns both
+people's messages. Run with --trace to see the query as sent, with every
+name already resolved to its <@Uxxx>.
+
 Each hit includes channel{id,name}, user, ts, text, and permalink.
 Page with --cursor (a raw page number, pass-through from _meta.next_cursor)
 or use --all to fetch every page. Slack serves pages 1-100 only: a page above
@@ -76,7 +82,7 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	query, err := rewriteUserModifiers(ctx, resolver, c.Query)
+	query, err := searchQuery(ctx, resolver, "search.messages", c.Query)
 	if err != nil {
 		return err
 	}
@@ -151,7 +157,7 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	query, err := rewriteUserModifiers(ctx, resolver, c.Query)
+	query, err := searchQuery(ctx, resolver, "search.files", c.Query)
 	if err != nil {
 		return err
 	}
@@ -191,6 +197,24 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 		}
 		return nil
 	}, walk.report())
+}
+
+// searchQuery rewrites the user modifiers of a search query and traces the
+// result. The search_query event is the only place the query as sent is
+// visible: rows show who Slack matched, not which <@Uxxx> the CLI asked for,
+// so without it a wrong resolution and a wrongly built query look the same.
+// It is trace-only by design - _meta is a contract, this is diagnostics.
+func searchQuery(ctx context.Context, r userResolver, endpoint, input string) (string, error) {
+	query, err := rewriteUserModifiers(ctx, r, input)
+	if err != nil {
+		return "", err
+	}
+	api.TracerFrom(ctx).Event("search_query", map[string]any{
+		"endpoint": endpoint,
+		"input":    input,
+		"query":    query,
+	})
+	return query, nil
 }
 
 func fileToMap(f slack.File) map[string]any          { return toMap(f) }
