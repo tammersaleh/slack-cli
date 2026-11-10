@@ -2046,12 +2046,18 @@ func TestDraftUpdate_AutoReplaceOnTombstone(t *testing.T) {
 // lookup and the write. A nil refetch returns an empty list.
 func updateRaceMux(first, refetch map[string]any, updateErr string, creates *int) *http.ServeMux {
 	var lists int
+	return updateRaceMuxCounting(first, refetch, updateErr, creates, &lists)
+}
+
+// updateRaceMuxCounting is updateRaceMux that also reports how many times
+// drafts.list was called.
+func updateRaceMuxCounting(first, refetch map[string]any, updateErr string, creates, lists *int) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
-		lists++
+		*lists++
 		drafts := []map[string]any{}
 		switch {
-		case lists == 1:
+		case *lists == 1:
 			drafts = append(drafts, first)
 		case refetch != nil:
 			drafts = append(drafts, refetch)
@@ -2495,5 +2501,135 @@ func TestDraftUpdate_ReplacementRowNamesReplacedDraft(t *testing.T) {
 		if _, present := row["replaced_draft_id"]; present {
 			t.Errorf("an in-place update must not carry replaced_draft_id, got %v", row)
 		}
+	})
+}
+
+// A whole-command failure on drafts.update (auth here) is reported as is. The
+// draft is not looked up again, so a state it happens to be in cannot rewrite
+// the error: the re-fetch here would have said "sent".
+func TestDraftUpdate_SystemicUpdateErrorSkipsRefetch(t *testing.T) {
+	var creates, lists int
+	mux := updateRaceMuxCounting(liveDraft(nil), liveDraft(map[string]any{"is_sent": true}), "invalid_auth", &creates, &lists)
+
+	_, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+	var oErr *output.Error
+	if !errors.As(err, &oErr) || oErr.Err != "invalid_auth" || oErr.Code != output.ExitAuth {
+		t.Fatalf("expected invalid_auth (exit 2), got %v", err)
+	}
+	if lists != 1 {
+		t.Errorf("drafts.list calls = %d, want 1 (no second look)", lists)
+	}
+	if creates != 0 {
+		t.Errorf("expected no drafts.create, got %d", creates)
+	}
+}
+
+// When the second look cannot be made, the answer is Slack's error from the
+// update, not the lookup's failure and not a replacement.
+func TestDraftUpdate_RefetchFailureSurfacesUpdateError(t *testing.T) {
+	tests := []struct {
+		name    string
+		refetch map[string]any // the whole drafts.list response on the second call
+	}{
+		{"list fails", map[string]any{"ok": false, "error": "internal_error"}},
+		{"draft beyond a truncated page", map[string]any{"ok": true, "drafts": []any{}, "has_more": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var lists, creates int
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
+				lists++
+				if lists == 1 {
+					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": []map[string]any{liveDraft(nil)}})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(tt.refetch)
+			})
+			mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "draft_update_invalid"})
+			})
+			mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) { creates++ })
+
+			_, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+			var oErr *output.Error
+			if !errors.As(err, &oErr) || oErr.Err != "draft_update_invalid" {
+				t.Fatalf("expected draft_update_invalid, got %v", err)
+			}
+			if lists != 2 {
+				t.Errorf("drafts.list calls = %d, want 2", lists)
+			}
+			if creates != 0 {
+				t.Errorf("expected no drafts.create, got %d", creates)
+			}
+		})
+	}
+}
+
+// --fields cannot strip replaced_draft_id: without it a filtered row shows a
+// new id with nothing to say the draft was re-keyed.
+func TestDraftUpdate_ReplacedDraftIDSurvivesFields(t *testing.T) {
+	var creates int
+	mux := updateRaceMux(liveDraft(map[string]any{"is_deleted": true}), nil, "unused", &creates)
+	out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234", "--fields", "id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := parseJSON(t, nonEmptyLines(out)[0])
+	if row["id"] != "DrNEW" || row["replaced_draft_id"] != "Dr01234" {
+		t.Errorf("expected id and replaced_draft_id, got %v", row)
+	}
+	if len(row) != 2 {
+		t.Errorf("expected only the two keys, got %v", row)
+	}
+}
+
+// create, update, and the replacement print through the same formatter as
+// list: state flags Slack sent are on the row, ones it omitted are not.
+func TestDraftWrites_EmitStateFieldsSlackSent(t *testing.T) {
+	sent := map[string]any{
+		"id": "DrNEW", "client_msg_id": "uuid-new", "date_created": 1709260000,
+		"last_updated_ts": "1709260000.1234567", "blocks": richTextBlocks("new"),
+		"destinations": []map[string]any{{"channel_id": "C01ABC"}},
+		"is_sent":      false, "is_from_composer": true,
+	}
+	check := func(t *testing.T, out string) {
+		t.Helper()
+		row := parseJSON(t, nonEmptyLines(out)[0])
+		if row["is_sent"] != false || row["is_from_composer"] != true {
+			t.Errorf("expected is_sent=false and is_from_composer=true, got %v", row)
+		}
+		if _, present := row["is_deleted"]; present {
+			t.Errorf("is_deleted was not sent and must be absent, got %v", row)
+		}
+	}
+	t.Run("create", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/drafts.create", draftCreateResponder(t, sent))
+		out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "create", "C01ABC")
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, out)
+	})
+	t.Run("update", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, liveDraft(nil)))
+		mux.HandleFunc("/api/drafts.update", draftCreateResponder(t, sent))
+		out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, out)
+	})
+	t.Run("replacement", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, liveDraft(map[string]any{"is_deleted": true})))
+		mux.HandleFunc("/api/drafts.create", draftCreateResponder(t, sent))
+		out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, out)
 	})
 }

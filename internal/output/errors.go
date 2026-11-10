@@ -93,6 +93,7 @@ func DraftNotFound(id string) *Error {
 // DraftLookupIncomplete is returned when a draft ID is absent from the lookup
 // page and Slack reported more drafts beyond it. drafts.list has no cursor, so
 // the lookup cannot tell a draft that does not exist from one past the page.
+// The "100" in the text is draftPageMax in cmd/draft.go; change them together.
 func DraftLookupIncomplete(id string) *Error {
 	return &Error{
 		Err:    "draft_lookup_incomplete",

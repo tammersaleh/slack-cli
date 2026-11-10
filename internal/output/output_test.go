@@ -460,11 +460,13 @@ func TestFilterFields_AlwaysKeptFields(t *testing.T) {
 		"enrich_error": "not_in_channel",
 		"name":         "general",
 		"is_private":   false,
+		// draft update: this row's id is not the one the caller passed.
+		"replaced_draft_id": "Dr01234",
 	}
 
 	got := filterFields(row, []string{"name"})
 
-	for _, key := range []string{"input", "error", "enrich_error", "name"} {
+	for _, key := range []string{"input", "error", "enrich_error", "replaced_draft_id", "name"} {
 		if _, ok := got[key]; !ok {
 			t.Errorf("%q was filtered out; a row-level marker is its only signal "+
 				"that the data is incomplete", key)

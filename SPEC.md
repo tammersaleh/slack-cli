@@ -76,10 +76,12 @@ $ slack channel list --limit=2 --fields=id,name,is_private
 
 Nested objects are returned whole when their parent field is selected (`--fields=topic` returns the full topic object). No dot-notation for nested field access - use `jq` for that.
 
-Three fields survive filtering regardless of what was asked for: `input`, and
-the row-level error markers `error` and `enrich_error`. A marker is a row's only
-signal that its data is incomplete, so filtering one away would produce a row
-that looks whole - and the nonzero exit code cannot say which row was affected.
+Four fields survive filtering regardless of what was asked for: `input`, the
+row-level error markers `error` and `enrich_error`, and `replaced_draft_id`. A
+marker is a row's only signal that its data is incomplete, so filtering one
+away would produce a row that looks whole - and the nonzero exit code cannot
+say which row was affected. `replaced_draft_id` is the same kind of signal on a
+success row: `draft update` printed a draft whose `id` is not the one passed in.
 
 ### Errors
 
@@ -2545,7 +2547,7 @@ draft at the same destination, carrying its blocks and attachments. The
 warning goes to stderr; the new draft object lands on stdout as usual,
 with one extra key: `replaced_draft_id`, the id the caller passed. An
 in-place update never carries that key, so its presence is the stdout signal
-that the draft was re-keyed. The old draft stays behind as a tombstone.
+that the draft was re-keyed. `--fields` cannot strip it. The old draft stays behind as a tombstone.
 
 ```
 $ slack draft update Dr01234 < blocks.json

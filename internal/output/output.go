@@ -162,10 +162,15 @@ func (p *Printer) PrintError(e *Error) error {
 // one away leaves a row that looks whole, which is the failure mode --fields
 // should never be able to manufacture. The command still exits nonzero, but the
 // exit code cannot say which row was affected.
+//
+// "replaced_draft_id" is the same kind of marker on a success row: draft update
+// printed a different draft from the one the caller named. Without it a
+// filtered row shows a new id and nothing to say the draft was re-keyed.
 var alwaysKeptFields = map[string]bool{
-	"input":        true,
-	"error":        true,
-	"enrich_error": true,
+	"input":             true,
+	"error":             true,
+	"enrich_error":      true,
+	"replaced_draft_id": true,
 }
 
 // filterFields returns a copy of m containing only the specified fields.
