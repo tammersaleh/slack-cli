@@ -1194,10 +1194,12 @@ $ slack search messages "deploy failed after:2030-01-01"
 ```
 
 It is there so an empty or short result can be checked against what Slack said
-exists. `total:0` beside zero rows is Slack stating that nothing matched. A
-nonzero `total` beside zero rows, or a finished `--all` walk
-(`has_more:false`, no `error`) with fewer rows than `total`, means rows went
-missing and the output is not the result set.
+exists. `total:0` beside zero rows is Slack stating that nothing matched. On a
+run started without `--cursor`, a nonzero `total` beside zero rows, or a
+finished `--all` walk (`has_more:false`, no `error`) with fewer rows than
+`total`, means rows went missing and the output is not the result set. A run
+started with `--cursor` reads one later page, so its row count says nothing
+about `total`.
 
 What it does not promise:
 

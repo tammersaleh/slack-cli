@@ -49,8 +49,8 @@ type ListRecordsCmd struct {
 
 type ListFindCmd struct {
 	Title  string `arg:"" required:"" help:"List title to search for."`
-	Limit  int    `help:"Page size." default:"20"`
-	Cursor string `help:"Continue from previous page."`
+	Limit  int    `help:"Page size, 1-100. Slack serves at most 100 pages per query, so --all reaches 100 times this many results (10,000 at --limit 100) and then fails with search_page_limit." default:"20"`
+	Cursor string `help:"Continue from previous page (a page number, 1-100)."`
 	All    bool   `help:"Fetch all pages."`
 }
 

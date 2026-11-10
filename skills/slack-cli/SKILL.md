@@ -163,9 +163,9 @@ above the trailer are real. That is the one case for date windows: split the
 query with `before:`/`after:` and run each window with `--all --limit 100`.
 
 The trailer carries `total`, Slack's own count of the result set. Zero rows
-with `"total":0` means Slack said nothing matched. A clean `--all` run that
-printed fewer rows than `total` is missing rows: rerun before concluding
-anything.
+with `"total":0` means Slack said nothing matched. On a run started without
+`--cursor`, a clean `--all` that printed fewer rows than `total`, or zero rows
+beside a nonzero `total`, is missing rows: rerun before concluding anything.
 
 Query supports Slack's search modifiers. Combine freely:
 
