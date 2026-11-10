@@ -2040,21 +2040,29 @@ func TestDraftUpdate_AutoReplaceOnTombstone(t *testing.T) {
 	}
 }
 
-func TestDraftUpdate_AutoReplaceOnAPIError(t *testing.T) {
-	existing := map[string]any{
-		"id": "Dr01234", "is_deleted": false, "client_msg_id": "uuid-old",
-		"last_updated_ts": "1709251200.12",
-		"blocks":          richTextBlocks("old"),
-		"destinations":    []map[string]any{{"channel_id": "C01"}},
-	}
+// updateRaceMux serves drafts.list with first on the lookup and refetch on
+// every later call, fails drafts.update with updateErr, and counts
+// drafts.create calls. It models a draft whose state changed between the
+// lookup and the write. A nil refetch returns an empty list.
+func updateRaceMux(first, refetch map[string]any, updateErr string, creates *int) *http.ServeMux {
+	var lists int
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": []map[string]any{existing}})
+		lists++
+		drafts := []map[string]any{}
+		switch {
+		case lists == 1:
+			drafts = append(drafts, first)
+		case refetch != nil:
+			drafts = append(drafts, refetch)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": drafts})
 	})
 	mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "draft_update_invalid"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": updateErr})
 	})
 	mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) {
+		*creates++
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ok": true,
 			"draft": map[string]any{
@@ -2065,6 +2073,27 @@ func TestDraftUpdate_AutoReplaceOnAPIError(t *testing.T) {
 			},
 		})
 	})
+	return mux
+}
+
+func liveDraft(extra map[string]any) map[string]any {
+	m := map[string]any{
+		"id": "Dr01234", "client_msg_id": "uuid-old",
+		"last_updated_ts": "1709251200.12",
+		"blocks":          richTextBlocks("old"),
+		"destinations":    []map[string]any{{"channel_id": "C01"}},
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
+}
+
+// The list said the draft was live, drafts.update failed, and a second look
+// shows it tombstoned: the race the replacement path exists for.
+func TestDraftUpdate_AutoReplaceOnAPIError(t *testing.T) {
+	var creates int
+	mux := updateRaceMux(liveDraft(nil), liveDraft(map[string]any{"is_deleted": true}), "draft_update_invalid", &creates)
 
 	out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux,
 		"draft", "update", "Dr01234",
@@ -2072,10 +2101,97 @@ func TestDraftUpdate_AutoReplaceOnAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success (auto-replace on API error), got %v", err)
 	}
+	if creates != 1 {
+		t.Errorf("expected one drafts.create, got %d", creates)
+	}
 	lines := nonEmptyLines(out)
 	item := parseJSON(t, lines[0])
 	if item["id"] != "DrNEW" {
 		t.Errorf("expected new id, got %q", item["id"])
+	}
+}
+
+// A sent draft is never updated and never replaced: a replacement is a
+// ready-to-send copy of a message the recipient already has.
+func TestDraftUpdate_RefusesSentDraft(t *testing.T) {
+	tests := []struct {
+		name  string
+		state map[string]any
+	}{
+		{"sent", map[string]any{"is_sent": true}},
+		{"sent and deleted", map[string]any{"is_sent": true, "is_deleted": true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var writes int
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/drafts.list", singleDraftListHandler(t, liveDraft(tt.state)))
+			mux.HandleFunc("/api/drafts.update", func(w http.ResponseWriter, r *http.Request) { writes++ })
+			mux.HandleFunc("/api/drafts.create", func(w http.ResponseWriter, r *http.Request) { writes++ })
+
+			out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+			var oErr *output.Error
+			if !errors.As(err, &oErr) || oErr.Err != "draft_already_sent" {
+				t.Fatalf("expected draft_already_sent, got %v", err)
+			}
+			if oErr.Input != "Dr01234" || oErr.Code != output.ExitGeneral {
+				t.Errorf("input = %q, code = %d", oErr.Input, oErr.Code)
+			}
+			if writes != 0 {
+				t.Errorf("expected no drafts.update or drafts.create, got %d calls", writes)
+			}
+			if out != "" {
+				t.Errorf("expected no stdout, got %q", out)
+			}
+		})
+	}
+}
+
+// What a failed drafts.update means is read from the draft's state on a second
+// drafts.list, never from Slack's error string.
+func TestDraftUpdate_FailedUpdateBranchesOnRefetchedState(t *testing.T) {
+	tests := []struct {
+		name      string
+		refetch   map[string]any
+		updateErr string
+		wantErr   string
+	}{
+		{"sent since the lookup", liveDraft(map[string]any{"is_sent": true}), "draft_update_invalid", "draft_already_sent"},
+		{"sent and deleted since the lookup", liveDraft(map[string]any{"is_sent": true, "is_deleted": true}), "draft_update_invalid", "draft_already_sent"},
+		{"still live", liveDraft(nil), "draft_update_invalid", "draft_update_invalid"},
+		{"gone from the list", nil, "draft_update_invalid", "draft_update_invalid"},
+		{"another error, still live", liveDraft(nil), "invalid_message", "invalid_message"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var creates int
+			mux := updateRaceMux(liveDraft(nil), tt.refetch, tt.updateErr, &creates)
+
+			out, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234")
+			var oErr *output.Error
+			if !errors.As(err, &oErr) || oErr.Err != tt.wantErr {
+				t.Fatalf("expected %s, got %v", tt.wantErr, err)
+			}
+			if creates != 0 {
+				t.Errorf("expected no drafts.create, got %d", creates)
+			}
+			if out != "" {
+				t.Errorf("expected no stdout, got %q", out)
+			}
+		})
+	}
+}
+
+// Any failed update of a draft that turns out to be tombstoned is replaced,
+// whatever code Slack used.
+func TestDraftUpdate_AutoReplaceKeysOnStateNotErrorString(t *testing.T) {
+	var creates int
+	mux := updateRaceMux(liveDraft(nil), liveDraft(map[string]any{"is_deleted": true}), "some_future_code", &creates)
+	if _, err := runWithMockSessionStdin(t, richTextBlocksJSON("new"), mux, "draft", "update", "Dr01234"); err != nil {
+		t.Fatalf("expected replacement, got %v", err)
+	}
+	if creates != 1 {
+		t.Errorf("expected one drafts.create, got %d", creates)
 	}
 }
 

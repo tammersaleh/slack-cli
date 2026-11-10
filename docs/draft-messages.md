@@ -262,8 +262,10 @@ Body fields, in addition to the create set:
   handles this.
 
 Errors: `draft_update_invalid` when the draft is already tombstoned
-(`is_deleted=true`). The CLI treats this as a signal to auto-replace:
-create a fresh draft at the same destination and return the new ID.
+(`is_deleted=true`). A report on 2026-10-13 points at the same code for a
+draft that was already sent (inferred from the code path taken, not
+captured), so the CLI does not read the code. On any failed update it lists
+the drafts again and acts on the draft's state: see Auto-replace below.
 
 ### drafts.delete
 
@@ -273,8 +275,8 @@ Body fields:
 - `draft_id`
 - `client_last_updated_ts` (padded, same as update)
 
-Errors: `draft_delete_invalid` when already tombstoned - same
-auto-replace path applies.
+Errors: `draft_delete_invalid` when already tombstoned. `draft delete`
+reports it as a per-draft error row.
 
 ### Draft shape
 
@@ -711,12 +713,23 @@ through `drafts.update` and ghost or strip again.
 
 ### Auto-replace
 
-`DraftUpdateCmd.Run` detects `is_deleted=true` on the existing draft
-(or `draft_update_invalid` from the server response, which indicates a
-race where the tombstone landed between our list and update) and
+`DraftUpdateCmd.Run` detects `is_deleted=true` on the existing draft and
 transparently calls `drafts.create` at the same destination. The new
 draft's ID lands on stdout. A `warnTombstoned` warning lands on
 stderr so the caller knows the ID changed.
+
+When the lookup showed a live draft and `drafts.update` then fails, the
+command lists the drafts a second time and branches on what it finds, not on
+Slack's error string. `is_sent` is `draft_already_sent`. `is_deleted` (the
+tombstone landed between the list and the update) takes the replacement
+path. Neither, or a draft no longer in the list, surfaces Slack's error
+unchanged.
+
+A sent draft is never replaced. `is_sent` is checked first, on the lookup
+and on the second look, so a draft that is both sent and deleted is
+`draft_already_sent`. Before 2026-11-10 a sent draft went down the
+replacement path and the command printed a new unsent draft to the same
+destination, exit 0.
 
 This path still exists as defense-in-depth. Our validation prevents
 the CLI from creating ghost-prone drafts, but a second Slack client on
@@ -774,7 +787,7 @@ Diagnostic steps, in order:
 Source:
 
 - `cmd/draft.go` - `DraftCreateCmd`, `DraftUpdateCmd`, `DraftDeleteCmd`,
-  `validateBlocksShape`, `padDraftTS`, `normalizeDestinationsForWrite`,
+  `validateBlockShapes`, `padDraftTS`, `normalizeDestinationsForWrite`,
   auto-replace path.
 - `skills/slack-cli/SKILL.md` - rich_text schema docs shipped to agents.
 - `internal/api/client.go` - `PostInternalForm`, the shared internal-API

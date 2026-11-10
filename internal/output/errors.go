@@ -103,6 +103,19 @@ func DraftLookupIncomplete(id string) *Error {
 	}
 }
 
+// DraftAlreadySent is returned when `draft update` is pointed at a draft the
+// user has already sent. The command writes nothing: a replacement would be an
+// unsent copy of a delivered message.
+func DraftAlreadySent(id string) *Error {
+	return &Error{
+		Err:    "draft_already_sent",
+		Detail: fmt.Sprintf("Draft %s was already sent and cannot be updated", id),
+		Hint:   "The message is delivered, so nothing was changed and no replacement draft was created. Stop tracking this draft id. If a new message to the same destination is wanted, stage one with 'slack draft create'.",
+		Input:  id,
+		Code:   ExitGeneral,
+	}
+}
+
 // SectionNotFound is returned when a sidebar section ID is unknown.
 func SectionNotFound(id string) *Error {
 	return &Error{

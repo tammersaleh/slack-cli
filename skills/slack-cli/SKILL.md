@@ -58,6 +58,7 @@ Common errors and their recovery:
 | `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `filter_exhaustive` |
 | `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `filter_exhaustive`) or `slack user info <id-or-email>` |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
+| `draft_already_sent` | `draft update` on a draft the user already sent. Nothing was written. Stop tracking the id; do not recreate the draft unless a new message is wanted |
 | `draft_lookup_incomplete` | The id is not in the newest 100 drafts and more exist. Slack's `drafts.list` has no paging, so the CLI cannot tell whether the draft exists. Do not recreate it on this evidence; ask the user to check the Drafts panel |
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
@@ -421,6 +422,11 @@ whose meaning is unverified. `--limit` is 1-100 (anything else is
 `invalid_input`) and there is no cursor: when the trailer says
 `has_more: true` at `--limit 100`, older drafts exist that no command can
 read.
+
+`draft update` on a draft Slack has tombstoned (`is_deleted`) creates a
+replacement at the same destination and prints it with a new `id`, exit 0,
+with a `draft_tombstoned` warning on stderr. Track the new id. On a draft
+that was already sent it fails with `draft_already_sent` and writes nothing.
 
 Write the body as Markdown with `--markdown` unless you need a block shape
 the subset below cannot express. Hand-rolled rich_text JSON is where the

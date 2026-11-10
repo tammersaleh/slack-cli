@@ -2544,6 +2544,19 @@ draft. This CLI detects the tombstone and transparently creates a fresh
 draft at the same destination, carrying its blocks and attachments. The
 warning goes to stderr; the new draft object lands on stdout as usual.
 
+A sent draft is refused: `draft_already_sent`, nothing written, no
+replacement. `is_sent` is checked before `is_deleted`, so a draft that is
+both is refused. A changed id therefore always means a tombstone was
+replaced.
+
+When the lookup shows a live draft and `drafts.update` fails anyway, the
+draft's state may have changed in between. The command reads `drafts.list`
+once more and decides on that state, not on Slack's error string: sent is
+`draft_already_sent`, deleted takes the replacement path, and anything else
+(the draft still live, or gone from the list) surfaces Slack's error as
+returned. A rate limit, auth failure, or timeout on `drafts.update` is
+reported directly with no second look.
+
 ```
 $ slack draft update Dr01234 < blocks.json
 {"id":"Dr01234","destinations":[{"channel_id":"C01ABC"}],"date_scheduled":0,"last_updated_ts":"1713300000.1234567"}
@@ -2559,6 +2572,7 @@ $ slack draft update Dr01234 --at 2026-04-21T09:00:00-04:00
 Errors:
 
 - `draft_not_found` (exit 1): No draft with the given id, and the lookup saw every draft.
+- `draft_already_sent` (exit 1): The draft was already sent. Nothing was written and no replacement was created.
 - `draft_lookup_incomplete` (exit 1): The id is not among the newest 100 drafts and Slack reported more. The draft may exist out of reach. Nothing was written.
 - `invalid_input` (exit 1): No change specified, conflicting schedule flags, or `--table` together with stdin attachments.
 - `invalid_blocks` (exit 1): stdin isn't a valid blocks array / `{blocks, attachments}` object, or the resulting draft has no renderable content.

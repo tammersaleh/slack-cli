@@ -163,3 +163,16 @@ func TestDraftLookupIncomplete(t *testing.T) {
 		t.Errorf("hint should explain the reach, got %q", e.Hint)
 	}
 }
+
+func TestDraftAlreadySent(t *testing.T) {
+	e := DraftAlreadySent("Dr01234")
+	if e.Err != "draft_already_sent" {
+		t.Errorf("Err = %q", e.Err)
+	}
+	if e.Input != "Dr01234" || e.Code != ExitGeneral {
+		t.Errorf("Input = %q, Code = %d", e.Input, e.Code)
+	}
+	if !strings.Contains(e.Detail, "Dr01234") || !strings.Contains(e.Hint, "slack draft create") {
+		t.Errorf("Detail = %q, Hint = %q", e.Detail, e.Hint)
+	}
+}

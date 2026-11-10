@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/api"
 	"github.com/tammersaleh/slack-cli/internal/mdblocks"
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -434,9 +432,13 @@ from a CSV/TSV file. Same rich_text-only rule for top-level blocks as draft
 create. --print-payload prints what this invocation would submit (not the
 merged draft - the existing draft is not fetched) and updates nothing.
 
+A draft that was already sent is refused with draft_already_sent and
+nothing is written; use draft create for a new message.
+
 If Slack Desktop has already tombstoned the draft (is_deleted=true), the
 CLI transparently creates a replacement at the same destination - carrying
-its blocks and attachments - and emits the new draft ID to stdout.
+its blocks and attachments - and emits the new draft ID to stdout. A changed
+id means a tombstone was replaced, never that a sent draft was.
 
 Examples:
 
@@ -504,6 +506,13 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 		return cli.ClassifyError(err)
 	}
 
+	// A sent draft is refused, and checked before the tombstone branch: a
+	// replacement would be an unsent copy of a message the recipient already
+	// has, one click from being sent twice.
+	if existing.sent() {
+		return output.DraftAlreadySent(c.DraftID)
+	}
+
 	intent, err := c.buildIntent(existing, payload)
 	if err != nil {
 		return err
@@ -513,9 +522,9 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 	// Desktop's Drafts-panel reconciliation tombstones any server draft
 	// whose blocks lack a rich_text body (see validateBlockShapes), and
 	// a second Slack client (browser, another Desktop) can tombstone one
-	// out of band too. Once tombstoned, drafts.update returns
-	// draft_update_invalid and drafts.delete returns draft_delete_invalid.
-	// The only path forward is to create a fresh draft at the same destination.
+	// out of band too. Once tombstoned, drafts.update and drafts.delete both
+	// reject the draft. The only path forward is to create a fresh draft at
+	// the same destination.
 	if existing.deleted() {
 		warnTombstoned(p.Err, c.DraftID)
 		return c.createReplacement(ctx, cli, client, p, intent)
@@ -537,13 +546,26 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 
 	data, err := client.PostInternalForm(ctx, "drafts.update", params)
 	if err != nil {
-		// The list might say is_deleted=false while the API already treats
-		// the draft as tombstoned - race between our list and update.
-		if isDraftTombstoneError(err) {
+		oErr := cli.ClassifyError(err)
+		if isSystemicErr(oErr) {
+			return oErr
+		}
+		// The draft may have been sent or tombstoned between the lookup and
+		// the write. Slack's error string does not say which (a sent draft
+		// and a tombstone were both seen as draft_update_invalid), so the
+		// draft's state on a second look decides: sent is refused, deleted is
+		// replaced, and anything else is Slack's own error.
+		current, lookupErr := findDraftByID(ctx, client, c.DraftID)
+		switch {
+		case lookupErr != nil:
+			return oErr
+		case current.sent():
+			return output.DraftAlreadySent(c.DraftID)
+		case current.deleted():
 			warnTombstoned(p.Err, c.DraftID)
 			return c.createReplacement(ctx, cli, client, p, intent)
 		}
-		return cli.ClassifyError(err)
+		return oErr
 	}
 	var resp struct {
 		Draft draftData `json:"draft"`
@@ -669,15 +691,6 @@ func (c *DraftUpdateCmd) createReplacement(ctx context.Context, cli *CLI, client
 		return err
 	}
 	return p.PrintMeta(output.Meta{})
-}
-
-// isDraftTombstoneError reports whether err signals an is_deleted draft.
-func isDraftTombstoneError(err error) bool {
-	var s slack.SlackErrorResponse
-	if errors.As(err, &s) {
-		return s.Err == "draft_update_invalid" || s.Err == "draft_delete_invalid"
-	}
-	return false
 }
 
 // warnTombstoned writes a structured warning to stderr when a tombstoned
