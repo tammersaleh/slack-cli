@@ -1,5 +1,22 @@
 # Changelog
 
+## [5.13.0](https://github.com/tammersaleh/slack-cli/compare/v5.12.0...v5.13.0) (2026-11-10)
+
+
+### Features
+
+* keep replaced_draft_id on a draft update row under --fields ([3f2eca4](https://github.com/tammersaleh/slack-cli/commit/3f2eca47095c1d060bdd8040a6e7ddbfd72d9d84))
+* name the replaced draft on a draft update replacement row ([d64bcc5](https://github.com/tammersaleh/slack-cli/commit/d64bcc5107d6a36395f53de342dc30bf3bc8908f))
+* report draft state and count the drafts draft list hides ([004f116](https://github.com/tammersaleh/slack-cli/commit/004f116062b3f2988564cfe09375336c8903badc))
+
+
+### Bug Fixes
+
+* keep the hint on draft delete error rows ([99725d8](https://github.com/tammersaleh/slack-cli/commit/99725d828ff8b211c0b366338cb01a8bb3fe9cf7))
+* point the [@name](https://github.com/name) rejection at an email or handle lookup ([ced5e39](https://github.com/tammersaleh/slack-cli/commit/ced5e393ab225cb55ceef7e8276da951061b7018))
+* refuse to update a sent draft instead of creating a new one ([3b41cd6](https://github.com/tammersaleh/slack-cli/commit/3b41cd60cc0c3d07041f08c45b9fdfbbc82e3363))
+* reject draft list --limit above 100 and name an unreachable draft ([e6f865d](https://github.com/tammersaleh/slack-cli/commit/e6f865d63e015d39014113cf9148bf70fce2564b))
+
 ## [5.12.0](https://github.com/tammersaleh/slack-cli/compare/v5.11.2...v5.12.0) (2026-11-10)
 
 
