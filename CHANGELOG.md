@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.11.1](https://github.com/tammersaleh/slack-cli/compare/v5.11.0...v5.11.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* end bulk commands with a _meta trailer when they stop early ([92ca0cc](https://github.com/tammersaleh/slack-cli/commit/92ca0cc6cfa7cdbff10c265b059a7c29ccd6a276))
+* end user info with a _meta trailer when it stops early ([ed5fea9](https://github.com/tammersaleh/slack-cli/commit/ed5fea9f8ad35b039b80a30d1506248299da466a))
+* exit 2 on missing_scope ([2d9dc0b](https://github.com/tammersaleh/slack-cli/commit/2d9dc0b114a12c22428b1049a9d1c5027cf53125))
+* recognize rate limits on internal API calls ([624f81b](https://github.com/tammersaleh/slack-cli/commit/624f81b85a8217a366d74e4e63454e2d42038d94))
+* report a body-level rate limit as rate_limited and retry it ([94418c1](https://github.com/tammersaleh/slack-cli/commit/94418c109df477827655dc15c05ead907fae73a1))
+* retry rate-limited internal reads and section moves ([f191a90](https://github.com/tammersaleh/slack-cli/commit/f191a908c841cdaee1e3bf75faa70d150e098a51))
+* retry users.info and stop user info on a failed email lookup ([e284655](https://github.com/tammersaleh/slack-cli/commit/e284655869b5f24013e7d30744ddbb6617656cd0))
+* stop bulk commands on --timeout and on failed email lookups ([17c2e83](https://github.com/tammersaleh/slack-cli/commit/17c2e83f872241f17938a1627da4c954a78edfdc))
+
 ## [5.11.0](https://github.com/tammersaleh/slack-cli/compare/v5.10.1...v5.11.0) (2026-11-06)
 
 
