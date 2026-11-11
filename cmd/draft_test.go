@@ -101,29 +101,6 @@ func TestDraftList_Basic(t *testing.T) {
 	}
 }
 
-func TestDraftList_ActiveFilter(t *testing.T) {
-	var gotIsActive string
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		form, _ := url.ParseQuery(string(body))
-		gotIsActive = form.Get("is_active")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":       true,
-			"drafts":   []any{},
-			"has_more": false,
-		})
-	})
-
-	_, err := runWithMockSession(t, mux, "draft", "list", "--active")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotIsActive != "true" {
-		t.Errorf("expected is_active=true, got %q", gotIsActive)
-	}
-}
-
 func TestDraftList_ScheduledEnrichment(t *testing.T) {
 	drafts := []map[string]any{
 		{
@@ -2631,11 +2608,13 @@ func TestDraftUpdate_SystemicUpdateErrorSkipsRefetch(t *testing.T) {
 // update, not the lookup's failure and not a replacement.
 func TestDraftUpdate_RefetchFailureSurfacesUpdateError(t *testing.T) {
 	tests := []struct {
-		name    string
-		refetch map[string]any // the whole drafts.list response on the second call
+		name      string
+		refetch   map[string]any // the whole drafts.list response on every later call
+		wantLists int
 	}{
-		{"list fails", map[string]any{"ok": false, "error": "internal_error"}},
-		{"draft beyond a truncated page", map[string]any{"ok": true, "drafts": []any{}, "has_more": true}},
+		{"list fails", map[string]any{"ok": false, "error": "internal_error"}, 2},
+		// A truncated page sends the second look on to the active request.
+		{"draft beyond a truncated page", map[string]any{"ok": true, "drafts": []any{}, "has_more": true}, 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2659,8 +2638,8 @@ func TestDraftUpdate_RefetchFailureSurfacesUpdateError(t *testing.T) {
 			if !errors.As(err, &oErr) || oErr.Err != "draft_update_invalid" {
 				t.Fatalf("expected draft_update_invalid, got %v", err)
 			}
-			if lists != 2 {
-				t.Errorf("drafts.list calls = %d, want 2", lists)
+			if lists != tt.wantLists {
+				t.Errorf("drafts.list calls = %d, want %d", lists, tt.wantLists)
 			}
 			if creates != 0 {
 				t.Errorf("expected no drafts.create, got %d", creates)

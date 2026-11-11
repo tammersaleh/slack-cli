@@ -214,19 +214,76 @@ Cookie: d=xoxd-...
 Body fields:
 
 - `token` - duplicate of the Authorization token. Required.
-- `limit` - page size, observed max ~100. Required in practice.
-- `is_active` - `"true"` applies a server-side filter. What it excludes is unverified (the CLI's `--active` passes it through and makes no claim).
+- `limit` - page size. Omitted, the page is 10. Above 100 it is clamped to 100.
+- `is_active` - `"true"` returns only drafts that are neither sent nor deleted, filtered before `limit` applies. `"false"` is the same as omitting it.
+- `last_updated_ts` - a lower bound: only drafts updated after it are returned. Still newest-first and still capped, so it does not page.
 
 Response:
 
 ```json
-{"ok": true, "drafts": [...], "has_more": false}
+{"ok": true, "drafts": [...], "files": [], "has_more": false}
 ```
 
-No cursor pagination. `has_more` indicates there are more drafts, but
-there is no documented way to reach them. Raise `limit` to get more in
-one call. The CLI caps `limit` at 100 and never measured a higher value, so
-an account with more than 100 drafts cannot be fully listed.
+#### Measured 2026-11-10
+
+Read-only probes through the CLI's session client (the out-of-tree probe
+module described in `CLAUDE.md`) against an account holding more than 100
+drafts. Only counts, key names, and id-set overlaps were recorded.
+
+The page is ordered by `last_updated_ts`, descending. `date_created` is not
+monotonic across it. The order and the id set were identical across some 40
+requests over 15 minutes. `limit` 100, 200, and 1000 each returned the same
+100 drafts in the same order with `has_more: true`, and no `limit` returned
+the first 10 of those.
+
+Nothing continues past the page. Each of these, sent with `limit=100` and a
+value taken from the last draft of the page (its id or its `last_updated_ts`),
+returned the same 100 ids: `cursor`, `page`, `offset`, `skip`, `marker`,
+`after`, `last_id`, `latest`, `oldest` with `latest`, `before`, `before_ts`,
+`max_ts`, `max_last_updated_ts`, `last_updated_ts_before`, `until`, `ts`,
+`start_ts`, `count`. `sort`, `sort_dir`, `order`, and `direction` set to `asc`
+changed nothing, and neither did `is_sent=false`, `is_deleted=false`,
+`include_sent=false`, `include_deleted=false`, or `is_scheduled=true`. The
+response has no cursor and no `response_metadata`: its top-level keys are
+`ok`, `drafts`, `files`, and `has_more`. The Slack web client's own request
+was not captured.
+
+`last_updated_ts` is the one parameter that changed the answer. Set to the
+last draft's value it returned 99 drafts, the page minus that draft. Set to 0
+or to a time before the page it returned the full page. It is a "changed
+since" bound for syncing, and the answer is still the newest 100 above it.
+
+`is_active=true` is what reaches further. The plain page of 100 held 73 sent
+drafts, 26 deleted, and 1 live. `is_active=true` at `limit=100` returned that
+1 draft with `has_more: false`. At `limit=10` it returned the same draft,
+which is not among the newest 10 of the plain listing, so the filter runs
+before the limit. `drafts.listActive` (a separate endpoint that returns
+`active_draft_ids` and no draft bodies) named the same single id.
+
+That one live draft was scheduled, and had `is_from_composer: true`. So two
+things are not measured: whether `is_active=true` also returns an unscheduled
+live draft, and whether it returns a live draft with `is_from_composer:
+false`. To settle the first, leave an unsent, unscheduled draft in any
+conversation and compare `slack draft list --limit 100` with a probe-module
+`is_active=true` request.
+
+Every one of the 100 drafts carried `is_sent`, `is_deleted`, and
+`is_from_composer`, along with `blocks`, `client_msg_id`, `date_created`,
+`date_scheduled`, `destinations`, `file_ids`, `id`, `last_updated_client`,
+`last_updated_ts`, `team_id`, and `user_id`. 10 of the 100 also carried
+`unfurl`, which the CLI does not model. No draft was both sent and deleted.
+
+What the CLI does with this: `draft list` prints the live rows of the plain
+page and, when that page is truncated, adds the `is_active=true` answer.
+`draft update` and `draft delete` look an id up in the plain page of 100 and
+then in the active answer. The plain request stays first because it is what
+shows sent and deleted state, and because the active filter's coverage of
+every live draft is not measured.
+
+Not measured, because both need the owner to send a draft from a client:
+what `drafts.update` answers for a sent draft (the CLI does not depend on the
+code), and whether a sent draft later becomes `is_deleted` as well (the CLI
+checks sent first).
 
 ### drafts.create
 

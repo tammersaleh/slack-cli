@@ -61,7 +61,7 @@ Common errors and their recovery:
 | `ambiguous_user` | The name matches several people. Nothing was picked and nothing was written. Read `candidates` (each has `id`, `name`, `title`), choose one, and rerun with `@<name>` (the handle) or the `id`. If you cannot tell which person is meant, ask the user |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
 | `draft_already_sent` | `draft update` on a draft the user already sent. Nothing was written. Stop tracking the id; do not recreate the draft unless a new message is wanted |
-| `draft_lookup_incomplete` | The id is not in the newest 100 drafts and more exist. Slack's `drafts.list` has no paging, so the CLI cannot tell whether the draft exists. Do not recreate it on this evidence; ask the user to check the Drafts panel |
+| `draft_lookup_incomplete` | The id is not an unsent draft the CLI can see: it is absent from the newest 100 drafts and from Slack's active drafts. It may be a sent or deleted draft older than the newest 100, or not exist. Do not recreate it on this evidence; ask the user to check the Drafts panel |
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
@@ -439,24 +439,25 @@ Slack app. Block Kit JSON is piped on stdin; there is no plain-text
 shortcut.
 
 ```
-slack draft list [--active] [--include-sent] [--include-deleted] [--limit N]
+slack draft list [--include-sent] [--include-deleted] [--limit N]
 slack draft create <recipient>... --markdown [--print-payload] [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] < body.md
 slack draft create <recipient>... [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] < payload.json
 slack draft update <draft-id> [--markdown [--print-payload]] [--at RFC3339] [--clear-schedule] [--table FILE] [< body]
 slack draft delete <draft-id>...
 ```
 
-`draft list` hides sent and deleted drafts by default and says how many in
-the trailer: `suppressed_sent` and `suppressed_deleted`. Zero rows beside a
-nonzero count means the drafts exist and are hidden. Rows carry `is_sent`,
-`is_deleted`, and `is_from_composer` when Slack sent them (an absent key is
-unknown, not false). To check that a draft exists, read
-`slack draft list --include-sent --include-deleted --limit 100` and match on
-`id`. Do not use `--active` for that: it is a server-side `is_active` filter
-whose meaning is unverified. `--limit` is 1-100 (anything else is
-`invalid_input`) and there is no cursor: when the trailer says
-`has_more: true` at `--limit 100`, older drafts exist that no command can
-read.
+`draft list` prints the drafts that are neither sent nor deleted, most
+recently updated first, including ones older than Slack's 100-draft page. The
+trailer's `suppressed_sent` and `suppressed_deleted` count the sent and
+deleted drafts in the newest page. Rows carry `is_sent`, `is_deleted`, and
+`is_from_composer`. `has_more: true` on a plain `draft list` means more
+unsent drafts than `--limit` exist: rerun with `--limit 100`.
+
+`--include-sent` and `--include-deleted` list only the most recently updated
+`--limit` drafts of every state (1-100, no cursor), so `has_more: true` there
+means older sent or deleted drafts exist that no command can read. To check
+that an unsent draft exists, read `slack draft list --limit 100` and match on
+`id`. There is no `--active` flag: the default listing is the active drafts.
 
 `draft update` on a draft Slack has tombstoned (`is_deleted`) creates a
 replacement at the same destination and prints it with a new `id` and

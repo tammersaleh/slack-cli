@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -35,10 +36,23 @@ type DraftCmd struct {
 const skillHint = "For the rich_text shape, load the slack-cli skill (install: 'skills add tammersaleh/slack-cli -g -y')."
 
 type DraftListCmd struct {
-	Active         bool `help:"Send is_active=true to drafts.list, a server-side filter whose exact meaning is unverified. Do not use it to check that a draft exists."`
-	Limit          int  `help:"Page size, 1-100. drafts.list has no cursor, so only the newest 100 drafts are reachable." default:"50"`
-	IncludeSent    bool `help:"Include drafts already sent (hidden by default; the trailer's suppressed_sent counts them)."`
-	IncludeDeleted bool `help:"Include drafts marked deleted server-side (hidden by default; the trailer's suppressed_deleted counts them)."`
+	Limit          int  `help:"Page size, 1-100 (Slack caps drafts.list at 100 and has no cursor). The default listing also asks Slack for its active drafts, so unsent drafts older than the newest page are still listed." default:"50"`
+	IncludeSent    bool `help:"Include drafts already sent (hidden by default; the trailer's suppressed_sent counts them). Lists only the most recently updated --limit drafts."`
+	IncludeDeleted bool `help:"Include drafts marked deleted server-side (hidden by default; the trailer's suppressed_deleted counts them). Lists only the most recently updated --limit drafts."`
+}
+
+func (DraftListCmd) Help() string {
+	return `Lists the drafts that are neither sent nor deleted, most recently updated first.
+
+Slack's drafts.list returns at most 100 drafts of every state and cannot page.
+When that page is truncated, the default listing makes a second request for
+the drafts Slack counts as active (neither sent nor deleted, filtered before
+the limit), so an unsent draft older than the newest page is still listed.
+has_more: true then means more than --limit active drafts exist.
+
+--include-sent and --include-deleted read only the most recently updated
+--limit drafts of every state. has_more: true there means older drafts exist
+that no flag reaches.`
 }
 
 // draftData is the parsed draft object from Slack responses.
@@ -102,8 +116,10 @@ type draftsListResponse struct {
 	HasMore bool        `json:"has_more"`
 }
 
-// draftPageMax is the largest page drafts.list is asked for. The endpoint has
-// no cursor, so it is also how many drafts any command can reach.
+// draftPageMax is the largest page drafts.list returns: a limit above 100 is
+// clamped to 100, and the endpoint has no continuation parameter (measured
+// 2026-11-10, see docs/draft-messages.md). One request therefore reaches the
+// 100 most recently updated drafts, and draftLookup adds the active ones.
 const draftPageMax = 100
 
 func (c *DraftListCmd) Run(cli *CLI) error {
@@ -118,13 +134,14 @@ func (c *DraftListCmd) Run(cli *CLI) error {
 	defer cancel()
 	p := cli.NewPrinter()
 
-	drafts, hasMore, err := fetchDrafts(ctx, client, c.Active, c.Limit)
+	drafts, hasMore, err := fetchDrafts(ctx, client, false, c.Limit)
 	if err != nil {
 		return cli.ClassifyError(err)
 	}
 	// A hidden draft is counted once, under the first filter that hid it, so
-	// the two counts add up to the number of rows withheld.
+	// the two counts add up to the number of rows withheld from this page.
 	var suppressedSent, suppressedDeleted int
+	listed := make(map[string]bool, len(drafts))
 	for _, d := range drafts {
 		if d.sent() && !c.IncludeSent {
 			suppressedSent++
@@ -134,9 +151,31 @@ func (c *DraftListCmd) Run(cli *CLI) error {
 			suppressedDeleted++
 			continue
 		}
+		listed[d.ID] = true
 		if err := p.PrintItem(formatDraft(d)); err != nil {
 			return err
 		}
+	}
+
+	// The page is the most recently updated drafts of every state, so on an
+	// account with many sent and deleted drafts it can hold few live ones, or
+	// none. The default listing asks for live drafts, and is_active=true
+	// filters before the limit, so it reaches the ones the page left out.
+	// Rows already printed are skipped: the two answers overlap.
+	if hasMore && !c.IncludeSent && !c.IncludeDeleted {
+		active, activeMore, err := fetchDrafts(ctx, client, true, c.Limit)
+		if err != nil {
+			return abortWithTrailer(p, cli.ClassifyError(err), 0)
+		}
+		for _, d := range active {
+			if listed[d.ID] || d.sent() || d.deleted() {
+				continue
+			}
+			if err := p.PrintItem(formatDraft(d)); err != nil {
+				return err
+			}
+		}
+		hasMore = activeMore
 	}
 	return p.PrintMeta(output.Meta{
 		HasMore:           hasMore,
@@ -736,21 +775,21 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	drafts, hasMore, err := fetchDrafts(ctx, client, false, draftPageMax)
+	lookup, err := newDraftLookup(ctx, client)
 	if err != nil {
 		return cli.ClassifyError(err)
-	}
-	byID := make(map[string]*draftData, len(drafts))
-	for i := range drafts {
-		byID[drafts[i].ID] = &drafts[i]
 	}
 
 	errorCount := 0
 	for _, id := range c.DraftIDs {
-		d, ok := byID[id]
-		if !ok {
+		d, err := lookup.find(ctx, id)
+		if err != nil {
+			var miss *output.Error
+			if !errors.As(err, &miss) {
+				return abortWithTrailer(p, cli.ClassifyError(err), errorCount)
+			}
 			errorCount++
-			if err := p.PrintItem(draftLookupMiss(id, hasMore).AsItem()); err != nil {
+			if err := p.PrintItem(miss.AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -819,31 +858,74 @@ func draftDeleteRow(id, status string) map[string]any {
 	return map[string]any{"id": id, "status": status}
 }
 
-// findDraftByID fetches the newest draftPageMax drafts and returns the one
-// with the given ID. A miss is an *output.Error from draftLookupMiss. The
-// caller is responsible for wrapping fetch errors via cli.ClassifyError.
-func findDraftByID(ctx context.Context, client *api.Client, id string) (*draftData, error) {
+// draftLookup finds drafts by id across the two answers drafts.list can
+// give: the most recently updated draftPageMax drafts of every state, and the
+// drafts Slack counts as active (neither sent nor deleted), which it filters
+// before the limit. The second is requested once, and only when an id is
+// absent from a truncated first page, so a live draft pushed off that page by
+// newer sent and deleted ones is still found.
+type draftLookup struct {
+	client       *api.Client
+	byID         map[string]*draftData
+	hasMore      bool // the every-state page was truncated
+	activeLoaded bool
+}
+
+func newDraftLookup(ctx context.Context, client *api.Client) (*draftLookup, error) {
 	drafts, hasMore, err := fetchDrafts(ctx, client, false, draftPageMax)
 	if err != nil {
 		return nil, err
 	}
-	for i := range drafts {
-		if drafts[i].ID == id {
-			return &drafts[i], nil
-		}
-	}
-	return nil, draftLookupMiss(id, hasMore)
+	l := &draftLookup{client: client, byID: make(map[string]*draftData, len(drafts)), hasMore: hasMore}
+	l.add(drafts)
+	return l, nil
 }
 
-// draftLookupMiss is the error for a draft id absent from the lookup page.
-// When Slack said the page was truncated the draft may exist beyond it, and
-// drafts.list offers no way to read further, so "not found" would be a claim
-// the lookup cannot back.
-func draftLookupMiss(id string, hasMore bool) *output.Error {
-	if hasMore {
-		return output.DraftLookupIncomplete(id)
+// add indexes drafts, keeping the first record seen for an id.
+func (l *draftLookup) add(drafts []draftData) {
+	for i := range drafts {
+		if _, ok := l.byID[drafts[i].ID]; !ok {
+			l.byID[drafts[i].ID] = &drafts[i]
+		}
 	}
-	return output.DraftNotFound(id)
+}
+
+// find returns the draft with the given id. A miss is an *output.Error:
+// draft_not_found when the first page held every draft, and
+// draft_lookup_incomplete otherwise, because a sent or deleted draft past
+// that page is out of reach and "not found" would be a claim the lookup
+// cannot back. Any other error is a failed request, returned raw for the
+// caller to classify.
+func (l *draftLookup) find(ctx context.Context, id string) (*draftData, error) {
+	if d, ok := l.byID[id]; ok {
+		return d, nil
+	}
+	if !l.hasMore {
+		return nil, output.DraftNotFound(id)
+	}
+	if !l.activeLoaded {
+		active, _, err := fetchDrafts(ctx, l.client, true, draftPageMax)
+		if err != nil {
+			return nil, err
+		}
+		l.activeLoaded = true
+		l.add(active)
+		if d, ok := l.byID[id]; ok {
+			return d, nil
+		}
+	}
+	return nil, output.DraftLookupIncomplete(id)
+}
+
+// findDraftByID looks one draft up with a fresh draftLookup. A miss is an
+// *output.Error. The caller is responsible for wrapping fetch errors via
+// cli.ClassifyError.
+func findDraftByID(ctx context.Context, client *api.Client, id string) (*draftData, error) {
+	l, err := newDraftLookup(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	return l.find(ctx, id)
 }
 
 // padDraftTS normalises a Slack timestamp to exactly 7 decimal places.

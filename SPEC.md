@@ -2413,30 +2413,50 @@ and `users.channelSections.*`.
 
 ```
 slack draft list [flags]
-  --active            Send is_active=true to drafts.list (server-side filter, semantics unverified).
   --limit             Page size, 1-100. Default: 50.
   --include-sent      Include drafts already sent.
   --include-deleted   Include drafts marked deleted server-side.
 ```
 
-`--active` passes `is_active=true` to `drafts.list` and nothing else. Slack
-applies the filter, and what it excludes has not been measured (sent drafts,
-scheduled drafts, or something else). Do not use it to check that a draft
-exists: read the unfiltered listing with `--include-sent --include-deleted`
-and match on `id`.
+Lists the drafts that are neither sent nor deleted, most recently updated
+first.
 
-The `drafts.list` API does not support cursor pagination, and the page is
-capped at 100. An account holding more than 100 drafts (sent and deleted ones
-count) cannot be enumerated: `--limit 100` returns the first 100 and
-`has_more: true`, and no flag reaches the rest. The CLI assumes those are the
-newest 100; the order is not verified. A `--limit` outside 1-100 is
-`invalid_input` with no request made (it used to fall back to 50, so
-`--limit 200` returned fewer rows than `--limit 100`).
+`drafts.list` returns the most recently updated drafts of every state, sent
+and deleted included, ordered by `last_updated_ts` descending. It returns at
+most 100 per request: a larger `limit` is clamped to 100, and no continuation
+parameter exists (measured 2026-11-10, `docs/draft-messages.md`). A `--limit`
+outside 1-100 is `invalid_input` with no request made. On an account with many
+sent and deleted drafts that page can hold few live drafts, or none.
 
-`draft update` and `draft delete` find the draft in that same 100-draft page.
-When the id is absent and Slack reported `has_more: true`, the error is
-`draft_lookup_incomplete`, not `draft_not_found`: the draft may exist beyond
-the page.
+So the default listing makes up to two requests:
+
+1. `drafts.list` at `--limit`. Its live rows are printed, and its sent and
+   deleted rows are counted in `suppressed_sent` and `suppressed_deleted`.
+2. When that answer says `has_more: true`, `drafts.list` again with
+   `is_active=true`, at the same `--limit`. Slack answers with the drafts that
+   are neither sent nor deleted, filtered before the limit applies, so this
+   reaches live drafts older than the first page. Rows already printed are
+   skipped.
+
+`has_more` in the trailer of a default listing is then the second answer's:
+`true` means more than `--limit` active drafts exist. Raise `--limit`. Past
+100 active drafts the oldest cannot be listed.
+
+`is_active=true` was measured on an account whose one live draft was a
+scheduled composer draft. That it returns every live draft (unscheduled ones,
+and ones with `is_from_composer: false`) is not measured. The first request
+is why a live draft in the newest page is listed either way.
+
+With `--include-sent` or `--include-deleted` only the first request is made:
+the listing is the most recently updated `--limit` drafts of every state,
+minus whichever kind is still hidden. `has_more: true` there means older
+drafts exist that no flag reaches.
+
+`draft update` and `draft delete` look a draft up the same way: the newest
+100 drafts of every state, then the active drafts when the id is absent and
+the first answer was truncated. An id in neither, with the first answer
+truncated, is `draft_lookup_incomplete`, not `draft_not_found`: it may be a
+sent or deleted draft older than the newest 100.
 
 ```
 $ slack draft list
@@ -2445,14 +2465,16 @@ $ slack draft list
 ```
 
 Every draft row (from `list`, `create`, and `update`) carries `is_sent`,
-`is_deleted`, and `is_from_composer` when Slack sent them. A key Slack
-omitted is omitted from the row, never reported as `false`.
+`is_deleted`, and `is_from_composer` when Slack sent them. `drafts.list` sent
+all three on every one of 100 drafts measured 2026-11-10. A key Slack omitted
+is omitted from the row, never reported as `false`.
 
 Sent and deleted drafts are suppressed by default. Use `--include-sent`
 and `--include-deleted` to see them (Slack keeps tombstones in the list
 after drafts are sent or when the desktop client marks them deleted). The
-trailer counts the rows the page held and the listing withheld:
-`suppressed_sent` and `suppressed_deleted`. Both are always present on
+trailer counts the rows the first request's page held and the listing
+withheld: `suppressed_sent` and `suppressed_deleted`. They describe that page
+(at most `--limit` drafts), not the whole account. Both are always present on
 `draft list`, zero included. A draft that is both sent and deleted is counted
 once, as sent, or as deleted under `--include-sent`. Zero rows beside a
 nonzero count means the drafts exist and are hidden, not that there are none.
@@ -2732,7 +2754,7 @@ Errors:
 
 - `draft_not_found` (exit 1): No draft with the given id, and the lookup saw every draft.
 - `draft_already_sent` (exit 1): The draft was already sent. Nothing was written and no replacement was created.
-- `draft_lookup_incomplete` (exit 1): The id is not among the newest 100 drafts and Slack reported more. The draft may exist out of reach. Nothing was written.
+- `draft_lookup_incomplete` (exit 1): The id is not among the newest 100 drafts or the active drafts, and Slack reported more. It may be a sent or deleted draft out of reach, or not exist. Nothing was written.
 - `invalid_input` (exit 1): No change specified, conflicting schedule flags, or `--table` together with stdin attachments.
 - `invalid_blocks` (exit 1): stdin isn't a valid blocks array / `{blocks, attachments}` object, or the resulting draft has no renderable content.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset (see `draft create`).
