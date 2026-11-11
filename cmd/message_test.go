@@ -754,6 +754,46 @@ func TestMessageList_NoBoundsSendsNone(t *testing.T) {
 	}
 }
 
+// TestMessageList_BoundsSentPerMode pins which bounds each mode sends when it
+// has no lower bound to open: --before alone sends latest and no oldest, and
+// --unread on a channel with no last_read marker sends neither.
+func TestMessageList_BoundsSentPerMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantLatest string
+	}{
+		{"before alone", []string{"--before", "1700000006"}, "1700000006.000000"},
+		{"unread without a marker", []string{"--unread"}, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var reqs []url.Values
+			mux := historyWindowMux(t, windowTimestamps(), &reqs)
+			mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"ok":      true,
+					"channel": map[string]any{"id": "C01ABC", "name": "general"},
+				})
+			})
+
+			args := append([]string{"message", "list", "C01ABC", "--all", "--limit", "4"}, tt.args...)
+			if _, err := runWithMock(t, mux, args...); err != nil {
+				t.Fatal(err)
+			}
+			if len(reqs) < 2 {
+				t.Fatalf("expected at least 2 requests, got %d", len(reqs))
+			}
+			for i, req := range reqs {
+				if req.Get("oldest") != "" || req.Get("latest") != tt.wantLatest {
+					t.Errorf("request %d: oldest=%q latest=%q, want oldest empty and latest=%q",
+						i, req.Get("oldest"), req.Get("latest"), tt.wantLatest)
+				}
+			}
+		})
+	}
+}
+
 // TestMessageList_FieldsDerivedNames runs --fields through the real printer
 // and resolver: a derived name comes back without its source id, a requested
 // source keeps its derived sibling, and an id nobody asked about is not looked
