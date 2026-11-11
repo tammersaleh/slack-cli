@@ -109,6 +109,9 @@ account over a deactivated one. Two or more still tied is an
 "ambiguous_user" row listing each candidate's id, name (handle), and title:
 rerun with one's @handle or id. Nothing is picked for you.
 
+A deactivated account has deleted: true and an empty real_name. --fields
+cannot strip deleted while it is true, so a blank name is never unexplained.
+
 Email and @name need the whole user directory. When the user cache is
 missing or older than its TTL (24h, SLACK_CACHE_TTL), the lookup first
 walks users.list to rebuild it, which prints nothing until it finishes and
@@ -145,6 +148,7 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 	}
 
 	p := cli.NewPrinter()
+	p.KeepWhenTrue = deactivatedMarker
 	r := cli.NewResolver(client)
 	ctx, cancel := cli.Context()
 	defer cancel()
@@ -210,6 +214,12 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 	}
 	return nil
 }
+
+// deactivatedMarker keeps "deleted" on a user row through --fields when it
+// is true. A deactivated account comes back with an empty real_name, so a
+// projection such as --fields id,real_name would otherwise print a blank
+// name with nothing to say why.
+var deactivatedMarker = []string{"deleted"}
 
 func userToMap(u slack.User) map[string]any { return toMap(u) }
 
@@ -380,6 +390,10 @@ stop_reason:
   profile_lookup_failed               a hop's profile fetch failed (error)
 
 Error stop_reasons increment _meta.error_count and set a nonzero exit code.
+
+A row whose account is deactivated carries deleted: true, and --fields
+cannot strip it. A live account's row has no deleted key.
+
 The manager reference is read from the "Manager" custom profile field by
 default; override the label with --manager-field.`
 }
@@ -404,6 +418,7 @@ func (c *UserManagerChainCmd) Run(cli *CLI) error {
 	}
 
 	p := cli.NewPrinter()
+	p.KeepWhenTrue = deactivatedMarker
 	r := cli.NewResolver(client)
 	ctx, cancel := cli.Context()
 	defer cancel()
@@ -450,6 +465,9 @@ func (c *UserManagerChainCmd) Run(cli *CLI) error {
 			errorCount++
 		}
 		for _, row := range rows {
+			if fatal := markDeactivated(ctx, cli, r, row); fatal != nil {
+				return abortWithTrailer(p, fatal, errorCount)
+			}
 			if err := p.PrintItem(row); err != nil {
 				return err
 			}
@@ -461,6 +479,30 @@ func (c *UserManagerChainCmd) Run(cli *CLI) error {
 	}
 	if errorCount > 0 {
 		return &output.ExitError{Code: output.ExitGeneral}
+	}
+	return nil
+}
+
+// markDeactivated sets deleted: true on a chain row whose account is
+// deactivated. The chain is built from users.profile.get, which does not say,
+// so this reads the user record: from the cache when the directory is loaded,
+// otherwise one users.info per chain member. The key is absent for a live
+// account. A systemic failure is returned to stop the run, like a failed
+// profile fetch; any other failure leaves the row unmarked.
+func markDeactivated(ctx context.Context, cli *CLI, r *resolve.Resolver, row map[string]any) *output.Error {
+	id, ok := row["id"].(string)
+	if !ok {
+		return nil
+	}
+	user, err := r.FetchUser(ctx, id)
+	if err != nil {
+		if cErr := cli.ClassifyError(err); isSystemicErr(cErr) {
+			return cErr
+		}
+		return nil
+	}
+	if user.Deleted {
+		row["deleted"] = true
 	}
 	return nil
 }

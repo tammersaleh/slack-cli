@@ -514,3 +514,47 @@ func TestPrintItem_NumbersRoundTripVerbatim(t *testing.T) {
 		t.Errorf("got %q, want %q", out.String(), want)
 	}
 }
+
+// KeepWhenTrue keeps a key through --fields only while its value is the
+// boolean true, and only on a printer that names it.
+func TestPrintItem_KeepWhenTrue(t *testing.T) {
+	tests := []struct {
+		name string
+		keep []string
+		row  map[string]any
+		want string
+	}{
+		{"true survives", []string{"deleted"}, map[string]any{"id": "U01XYZ", "deleted": true, "name": "alice"}, `{"deleted":true,"id":"U01XYZ"}`},
+		{"false is dropped", []string{"deleted"}, map[string]any{"id": "U01XYZ", "deleted": false}, `{"id":"U01XYZ"}`},
+		{"a truthy non-bool is dropped", []string{"deleted"}, map[string]any{"id": "U01XYZ", "deleted": "true"}, `{"id":"U01XYZ"}`},
+		{"not configured, not kept", nil, map[string]any{"id": "U01XYZ", "deleted": true}, `{"id":"U01XYZ"}`},
+		{"other true keys are dropped", []string{"deleted"}, map[string]any{"id": "U01XYZ", "is_bot": true}, `{"id":"U01XYZ"}`},
+		{"requested false stays", []string{"deleted"}, map[string]any{"id": "U01XYZ", "deleted": false}, `{"deleted":false,"id":"U01XYZ"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			p := &Printer{Out: &buf, Fields: []string{"id"}, KeepWhenTrue: tt.keep}
+			if tt.name == "requested false stays" {
+				p.Fields = []string{"id", "deleted"}
+			}
+			if err := p.PrintItem(tt.row); err != nil {
+				t.Fatal(err)
+			}
+			if got := string(bytes.TrimSpace(buf.Bytes())); got != tt.want {
+				t.Errorf("got %s, want %s", got, tt.want)
+			}
+		})
+	}
+
+	t.Run("no --fields prints the row whole", func(t *testing.T) {
+		var buf bytes.Buffer
+		p := &Printer{Out: &buf, KeepWhenTrue: []string{"deleted"}}
+		if err := p.PrintItem(map[string]any{"id": "U01XYZ", "deleted": false}); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(bytes.TrimSpace(buf.Bytes())); got != `{"deleted":false,"id":"U01XYZ"}` {
+			t.Errorf("got %s", got)
+		}
+	})
+}

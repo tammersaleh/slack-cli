@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -107,6 +108,12 @@ type Printer struct {
 	// the projection keeps the sources long enough to derive from them.
 	// Timestamp siblings need no entry; X_iso reverses to X by rule.
 	EnrichSources map[string][]string
+	// KeepWhenTrue names keys that survive --fields on this printer's rows
+	// when their value is true, and only then. It is for a flag that changes
+	// how the rest of the row reads (user info's "deleted"): a projection may
+	// drop it while it says nothing, never while it is the explanation. Set
+	// per command; alwaysKeptFields is for keys that are markers everywhere.
+	KeepWhenTrue []string
 }
 
 // PrintItem writes a single data line as compact JSON with timestamp enrichment
@@ -139,6 +146,7 @@ func (p *Printer) PrintItem(v any) error {
 	// the caller asked about, and a requested source key keeps its derived
 	// sibling: --fields=user emits user_name too.
 	proj := newProjection(p.Fields, p.EnrichSources)
+	proj.keepWhenTrue = p.KeepWhenTrue
 	m = proj.filter(m)
 	enrichTimestamps(m)
 	if p.EnrichFunc != nil {
@@ -206,6 +214,8 @@ type projection struct {
 	borrowed  map[string]bool     // source keys kept only to derive from
 	sources   map[string][]string // derived name -> source keys
 	present   map[string]bool     // keys in the row before enrichment
+	// keepWhenTrue is Printer.KeepWhenTrue: keys kept when their value is true.
+	keepWhenTrue []string
 }
 
 func newProjection(fields []string, sources map[string][]string) *projection {
@@ -241,7 +251,7 @@ func (p *projection) sourcesOf(name string) []string {
 }
 
 // filter returns the row cut down to the requested keys, the borrowed source
-// keys, and alwaysKeptFields. With no --fields it returns m unchanged.
+// keys, alwaysKeptFields, and any keepWhenTrue key whose value is true. With no --fields it returns m unchanged.
 func (p *projection) filter(m map[string]any) map[string]any {
 	if !p.active {
 		return m
@@ -249,12 +259,16 @@ func (p *projection) filter(m map[string]any) map[string]any {
 	filtered := make(map[string]any, len(p.requested)+len(p.borrowed))
 	p.present = make(map[string]bool, len(m))
 	for k, v := range m {
-		if p.requested[k] || p.borrowed[k] || alwaysKeptFields[k] {
+		if p.requested[k] || p.borrowed[k] || alwaysKeptFields[k] || p.keptWhenTrue(k, v) {
 			filtered[k] = v
 			p.present[k] = true
 		}
 	}
 	return filtered
+}
+
+func (p *projection) keptWhenTrue(k string, v any) bool {
+	return v == true && slices.Contains(p.keepWhenTrue, k)
 }
 
 // dropBorrowed removes, after enrichment, the source keys the projection

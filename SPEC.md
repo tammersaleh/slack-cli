@@ -85,12 +85,19 @@ $ slack message list #general --fields=user_name,ts_iso,text
 
 A derived name is absent from a row whose source key is absent, is not a timestamp, or names an id that could not be resolved. A name that matches no top-level key and no derived name selects nothing, with no error: a row where every requested name misses is `{}`. That includes a dotted path and a key that exists only inside a nested object.
 
-Four fields survive filtering regardless of what was asked for: `input`, the
-row-level error markers `error` and `enrich_error`, and `replaced_draft_id`. A
+Five fields survive filtering regardless of what was asked for: `input`, the
+row-level error markers `error` and `enrich_error`, `candidates` (the users an
+`ambiguous_user` row matched), and `replaced_draft_id`. A
 marker is a row's only signal that its data is incomplete, so filtering one
 away would produce a row that looks whole - and the nonzero exit code cannot
 say which row was affected. `replaced_draft_id` is the same kind of signal on a
 success row: `draft update` printed a draft whose `id` is not the one passed in.
+
+One field survives by value, on two commands only. `user info` and
+`user manager-chain` keep `deleted` when it is `true`. Slack empties a
+deactivated account's `real_name`, so `--fields id,real_name` would otherwise
+print a blank name with nothing to explain it. `deleted: false` is filtered
+like any other field, and no other command keeps `deleted`.
 
 ### Errors
 
@@ -1049,6 +1056,15 @@ $ slack user info --full @alice
 `--full` needs the `users.profile:read` scope. Desktop session tokens have it;
 OAuth tokens issued before this scope was added must re-auth (`slack auth login`).
 
+A deactivated account's row has `deleted: true` and, as Slack returns it, an
+empty `real_name` (`profile.display_name` usually still holds the name).
+`deleted: true` survives `--fields`:
+
+```
+$ slack user info U02OLD --fields id,real_name
+{"deleted":true,"id":"U02OLD","input":"U02OLD","real_name":""}
+```
+
 A failed lookup for one input is an error row, `{"input","error","detail","hint"}`,
 counted in `_meta.error_count`, exit 1. `error` is `user_not_found` when Slack
 says the user does not exist or is not visible (`user_not_found`,
@@ -1138,6 +1154,14 @@ The terminal row carries a `stop_reason`:
 
 Error stop_reasons increment `_meta.error_count` and set exit code 1.
 
+A row whose account is deactivated carries `deleted: true`, which survives
+`--fields`. A live account's row has no `deleted` key. The chain itself comes
+from `users.profile.get`, which does not report deactivation, so each chain
+member's user record is read as well: from the user cache when the directory
+is loaded, otherwise one `users.info` per member, retried like the profile
+fetch. A rate limit that outlasts those retries stops the run like any
+systemic failure. Any other failure of that read leaves the row unmarked.
+
 A root lookup that fails for a reason other than "no such user" keeps Slack's
 own code on its error row. Systemic failures stop the run the way `user info`
 does: classified error on stderr, and stdout ends with
@@ -1154,7 +1178,7 @@ Errors:
 - `rate_limited` (exit 3): Rate limit outlasted the retries.
 - `not_authed` (exit 2): No token.
 
-Slack API: `users.profile.get`
+Slack API: `users.profile.get`, `users.info` (a chain member the user cache does not hold)
 
 #### slack user lookup (Phase 2)
 

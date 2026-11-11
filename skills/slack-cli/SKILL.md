@@ -279,6 +279,13 @@ the custom profile fields and adds a top-level `custom_fields` object
 `value_name`. For "who is X / what's their role / who do they report to",
 reach for `--full` first.
 
+A deactivated account's row has `deleted: true` and an empty `real_name`.
+On `user info` and `user manager-chain`, `deleted: true` survives `--fields`,
+so a blank name beside `deleted: true` means "old account", not a failed
+lookup. The person may have a newer account: search by name with
+`slack user list --all --query <name>`. A live account's `manager-chain` row
+has no `deleted` key.
+
 `manager-chain` walks the reporting line upward (one row per level, to the
 top). Traversal is upward-only - Slack exposes no reliable direct-reports
 data. `--full` and `manager-chain` need the `users.profile:read` scope;
