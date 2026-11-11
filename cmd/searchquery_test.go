@@ -3,11 +3,13 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
+	"github.com/tammersaleh/slack-cli/internal/resolve"
 )
 
 // fakeUserResolver resolves names case-insensitively from a fixed map and
@@ -22,7 +24,7 @@ func (f *fakeUserResolver) ResolveUser(_ context.Context, input string) (string,
 	if id, ok := f.users[strings.ToLower(input)]; ok {
 		return id, nil
 	}
-	return "", errors.New("cannot resolve user")
+	return "", fmt.Errorf("user %q: %w", input, resolve.ErrNotFound)
 }
 
 func newFakeUserResolver() *fakeUserResolver {
@@ -150,4 +152,37 @@ func TestRewriteUserModifiers_LongestPrefixLookupOrder(t *testing.T) {
 	if !reflect.DeepEqual(r.asked, want) {
 		t.Errorf("lookups = %#v, want %#v", r.asked, want)
 	}
+}
+
+// A lookup that failed is not a verdict on the name: it comes back as the
+// resolver returned it, and the unquoted path must not try shorter prefixes
+// against a directory that is down and then call the name unknown.
+func TestRewriteUserModifiers_FailedLookupIsReturnedRaw(t *testing.T) {
+	down := errors.New("directory load failed")
+	for _, query := range []string{"from:@Alice Adams skypilot", `from:"Alice Adams" skypilot`} {
+		t.Run(query, func(t *testing.T) {
+			r := &failingUserResolver{err: down}
+			_, err := rewriteUserModifiers(context.Background(), r, query)
+			if !errors.Is(err, down) {
+				t.Fatalf("err = %v, want the resolver's own error", err)
+			}
+			var oe *output.Error
+			if errors.As(err, &oe) {
+				t.Errorf("a failed lookup must not be classified here, got %q", oe.Err)
+			}
+			if r.asked != 1 {
+				t.Errorf("lookups = %d, want 1", r.asked)
+			}
+		})
+	}
+}
+
+type failingUserResolver struct {
+	err   error
+	asked int
+}
+
+func (f *failingUserResolver) ResolveUser(context.Context, string) (string, error) {
+	f.asked++
+	return "", f.err
 }

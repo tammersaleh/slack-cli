@@ -150,7 +150,7 @@ func runMembership(cli *CLI, recipients []string, op membershipOp) error {
 	if err != nil {
 		return err
 	}
-	users, err := resolveAll(ctx, userInputs, r.ResolveUser, userResolveError)
+	users, err := resolveAll(ctx, userInputs, r.ResolveUser, cli.userResolveError)
 	if err != nil {
 		return err
 	}

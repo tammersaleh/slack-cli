@@ -93,7 +93,7 @@ func resolveCells(cli *CLI, s *listSession, assigns []assignment, forUpdate bool
 				if input, ok := v.(string); ok {
 					id, err := s.resolver.ResolveUser(s.ctx, input)
 					if err != nil {
-						return nil, userResolveError(input, err)
+						return nil, cli.userResolveError(input, err)
 					}
 					v = id
 				}

@@ -56,7 +56,7 @@ Common errors and their recovery:
 |---|---|
 | `not_authed` | `slack auth login --desktop` (or `slack auth login` for OAuth) |
 | `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `filter_exhaustive` |
-| `invalid_auth`, `rate_limited`, `timeout`, `enterprise_is_restricted`, ... while resolving a channel name | The lookup failed; the channel may well exist. Do not treat it as missing. Fix the cause the `hint` names (re-auth, wait, raise `--timeout`) and rerun, or pass the channel ID |
+| `invalid_auth`, `rate_limited`, `timeout`, `enterprise_is_restricted`, ... while resolving a channel or user name | The lookup failed; the channel or user may well exist. Do not treat it as missing. Fix the cause the `hint` names (re-auth, wait, raise `--timeout`) and rerun, or pass the ID |
 | `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `filter_exhaustive`) or `slack user info <id-or-email>` |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
 | `draft_already_sent` | `draft update` on a draft the user already sent. Nothing was written. Stop tracking the id; do not recreate the draft unless a new message is wanted |
@@ -178,7 +178,9 @@ Query supports Slack's search modifiers. Combine freely:
 - `@user` above may be a handle, display name, real name, email, or ID; the
   CLI resolves it and sends Slack `<@Uxxx>`. Multi-word names work unquoted
   (`from:@Alice Adams`) or quoted (`from:"Alice Adams"`). An unknown name
-  fails with `user_not_found` rather than an empty result.
+  fails with `user_not_found` rather than an empty result. Any other error
+  here (`rate_limited`, `invalid_auth`) means the user directory could not be
+  read, not that the person is unknown.
 - Repeated `from:` modifiers are ORed by Slack: `from:@alice from:@bob` returns
   both people's messages. Add `--trace` to see the query as sent (the
   `search_query` event on stderr), with each name resolved to its `<@Uxxx>`.
@@ -287,6 +289,13 @@ printed are good; inputs with no row were never looked up, not missing. Wait
 (about 15 seconds has worked) and rerun only those inputs. An error row with a
 code other than `user_not_found` means the lookup failed, not that the user
 does not exist.
+
+`user info`, `user manager-chain`, `status get`, `presence get`, `dnd info`,
+and `channel info` resolve every name before printing. If that lookup fails,
+stdout is only `{"_meta":{"has_more":true,"error":"<code>"}}` and the exit
+code is the failure's (2 auth, 3 rate limit). No input was looked up: rerun
+the whole command. `user_not_found` and `channel_not_found` rows mean the
+lookup worked and nothing matched.
 
 Examples:
 
@@ -961,7 +970,7 @@ CH=$(slack channel list --type im --all | jq -r --arg u "$UID" 'select(.user == 
 
 ### Recover from a `channel_not_found`
 
-`channel_not_found` means the lookup finished and nothing matched. A lookup
+`channel_not_found` (and `user_not_found`) means the lookup finished and nothing matched. A lookup
 that could not finish reports its own code instead (`invalid_auth` exit 2,
 `rate_limited` exit 3, `timeout`), and says nothing about whether the channel
 exists.

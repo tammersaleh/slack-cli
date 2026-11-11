@@ -86,7 +86,7 @@ func (c *FileListCmd) Run(cli *CLI) error {
 	if userID != "" {
 		resolved, err := r.ResolveUser(ctx, userID)
 		if err != nil {
-			return userResolveError(userID, err)
+			return cli.userResolveError(userID, err)
 		}
 		userID = resolved
 	}

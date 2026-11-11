@@ -36,9 +36,22 @@ type userFileCache struct {
 // lookup answers. An email the cache does not hold then falls back to
 // users.lookupByEmail; a name has no fallback.
 //
-// A failed directory load is not reported: the email path moves on to
-// users.lookupByEmail and the name path returns no-match. See
-// todo/resolver-errors-are-reported-as-channel-not-found.md.
+// The error is ErrBadURL for an unusable Slack URL, ErrNotFound for a clean
+// miss, or the raw error of the call that failed:
+//
+//   - A name is a clean miss only when the directory loaded and does not
+//     hold it. A failed load is returned as it failed.
+//   - An email is a clean miss when the directory loaded without it and
+//     users.lookupByEmail answered users_not_found. Any other answer from
+//     that call is returned raw.
+//   - An email whose directory load failed still tries users.lookupByEmail,
+//     and a hit there answers. Anything else returns the load's error: the
+//     endpoint does not see every account the directory holds, so its
+//     users_not_found proves nothing on its own.
+//
+// Callers tell the kinds apart with errors.Is and errors.As. A further typed
+// error (an ambiguous name, say) belongs beside ErrNotFound in the lookup
+// below and in the cmd package's userResolveError.
 func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error) {
 	if id, handled, err := userIDFromURL(input); handled {
 		return id, err
@@ -48,9 +61,10 @@ func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error
 		return input, nil
 	}
 
+	loadErr := r.ensureUserCache(ctx)
+
 	if isEmail(input) {
-		// Try cache-backed email lookup first.
-		if err := r.ensureUserCache(ctx); err == nil {
+		if loadErr == nil {
 			r.mu.RLock()
 			id, ok := r.usersByEmail[strings.ToLower(input)]
 			r.mu.RUnlock()
@@ -59,29 +73,40 @@ func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error
 			}
 		}
 
-		// Fall back to direct API lookup.
 		user, err := r.client.Bot().GetUserByEmailContext(ctx, input)
-		if err != nil {
-			return "", fmt.Errorf("resolving user %q: %w", input, err)
+		switch {
+		case err == nil:
+			return user.ID, nil
+		case loadErr != nil:
+			return "", fmt.Errorf("loading the user directory to resolve %q: %w", input, loadErr)
 		}
-		return user.ID, nil
+		if code, ok := api.SlackErrorCode(err); ok && code == "users_not_found" {
+			return "", userNotFound(input)
+		}
+		return "", fmt.Errorf("resolving user %q: %w", input, err)
 	}
 
-	// Try display name / username lookup from cache.
-	name := input
-	if len(name) > 0 && name[0] == '@' {
-		name = name[1:]
+	if loadErr != nil {
+		return "", fmt.Errorf("loading the user directory to resolve %q: %w", input, loadErr)
 	}
-	if err := r.ensureUserCache(ctx); err == nil {
-		r.mu.RLock()
-		id, ok := r.usersByName[strings.ToLower(name)]
-		r.mu.RUnlock()
-		if ok {
-			return id, nil
-		}
-	}
+	return r.userIDByName(input)
+}
 
-	return "", fmt.Errorf("cannot resolve user %q: no match by ID, email, or name", input)
+// userIDByName answers a name lookup from a loaded directory. Its error is a
+// verdict on the name, never on the lookup.
+func (r *Resolver) userIDByName(input string) (string, error) {
+	name := strings.TrimPrefix(input, "@")
+	r.mu.RLock()
+	id, ok := r.usersByName[strings.ToLower(name)]
+	r.mu.RUnlock()
+	if !ok {
+		return "", userNotFound(input)
+	}
+	return id, nil
+}
+
+func userNotFound(input string) error {
+	return fmt.Errorf("user %q: no match by ID, email, or name: %w", input, ErrNotFound)
 }
 
 // LookupUser returns the full profile for a user ID, best-effort: the caller

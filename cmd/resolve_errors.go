@@ -76,17 +76,18 @@ func resolveInputs(ctx context.Context, inputs []string, resolveFn func(context.
 	return out, nil
 }
 
-// userResolveError is the user-arg counterpart of channelResolveError.
-func userResolveError(input string, err error) *output.Error {
-	if errors.Is(err, resolve.ErrBadURL) {
+// userResolveError is the user-arg counterpart of channelResolveError: a bad
+// URL is invalid_input, a clean miss is user_not_found, and a lookup that
+// failed (the directory walk, users.lookupByEmail) keeps its own code and
+// exit. A new verdict on the input gets a case here and in isInputResolveErr.
+func (c *CLI) userResolveError(input string, err error) *output.Error {
+	switch {
+	case errors.Is(err, resolve.ErrBadURL):
 		return output.InvalidURL(input, err.Error())
+	case errors.Is(err, resolve.ErrNotFound):
+		return output.UserNotFound(input)
 	}
-	return output.UserNotFound(input)
-}
-
-// isBadURLErr reports whether err is a bad-Slack-URL failure.
-func isBadURLErr(err error) bool {
-	return errors.Is(err, resolve.ErrBadURL)
+	return c.ClassifyError(err)
 }
 
 // resolveRefChannels resolves the distinct channels referenced by refs, once

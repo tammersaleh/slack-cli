@@ -43,6 +43,10 @@ var modifierShapedPattern = regexp.MustCompile(`^-?[A-Za-z_]+:\S`)
 // not starting with `@` (`in:#general`, `from:<@U01XYZ>`) pass through.
 // Tokens are re-joined with single spaces; Slack search ignores the
 // difference.
+//
+// A name that matches no user is a user_not_found *output.Error. A lookup that
+// failed (the directory walk hit a rate limit, a bad token) comes back as the
+// resolver's raw error for the caller to classify.
 func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (string, error) {
 	toks := splitQueryTokens(query)
 	out := make([]string, 0, len(toks))
@@ -79,6 +83,9 @@ func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (st
 		if quoted {
 			id, err := r.ResolveUser(ctx, name)
 			if err != nil {
+				if !isInputResolveErr(err) {
+					return "", err
+				}
 				return "", searchUserNotFound("@" + name)
 			}
 			out = append(out, fmt.Sprintf("%s%s:<@%s>", neg, key, id))
@@ -96,6 +103,12 @@ func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (st
 			candidate := strings.Join(append([]string{name}, span[:n]...), " ")
 			id, err := r.ResolveUser(ctx, candidate)
 			if err != nil {
+				// Only a verdict on this candidate moves on to a shorter
+				// one. A failed lookup would fail for every prefix and end
+				// as a false user_not_found.
+				if !isInputResolveErr(err) {
+					return "", err
+				}
 				continue
 			}
 			out = append(out, fmt.Sprintf("%s%s:<@%s>", neg, key, id))

@@ -178,15 +178,20 @@ func (c *DraftCreateCmd) resolveDestination(ctx context.Context, cli *CLI, r *re
 		if c.Thread != "" || c.Broadcast {
 			return destination{}, &output.Error{Err: "invalid_input", Detail: "--thread/--broadcast apply to a channel destination only, not a DM/MPDM (user) destination", Code: output.ExitGeneral}
 		}
-		// Malformed URLs were already rejected in splitRecipients, and a well-formed user
-		// URL resolves cleanly, so ResolveUser here never hits the
-		// bad-URL/invalid_input case - any failure is a genuine not-found.
+		// Malformed URLs were already rejected in splitRecipients, and a
+		// well-formed user URL resolves cleanly, so a verdict on the input
+		// here is a genuine not-found. Every unresolved input is collected
+		// and reported together. A lookup that failed is not a verdict on
+		// anyone: it stops resolution under its own code.
 		ids := make([]string, 0, len(users))
 		seen := make(map[string]bool, len(users))
 		var failed []string
 		for _, u := range users {
 			id, err := r.ResolveUser(ctx, u)
 			if err != nil {
+				if !isInputResolveErr(err) {
+					return destination{}, cli.userResolveError(u, err)
+				}
 				failed = append(failed, u)
 				continue
 			}

@@ -226,3 +226,166 @@ func TestChannelName_AuthHintNamesTheResolvingCredential(t *testing.T) {
 		})
 	}
 }
+
+// userDirectory serves users.list with h and counts every other request, so a
+// test can assert a command stopped before asking Slack anything else.
+func userDirectory(h http.HandlerFunc, others *atomic.Int64) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.list", h)
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		others.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "unexpected_request"})
+	})
+	return mux
+}
+
+func emptyUserDirectory(w http.ResponseWriter, _ *http.Request) {
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":                true,
+		"members":           []any{},
+		"response_metadata": map[string]string{"next_cursor": ""},
+	})
+}
+
+// userRowCommands print one row per user input. Each resolves every input
+// before its first row.
+var userRowCommands = [][]string{
+	{"user", "info"},
+	{"user", "manager-chain"},
+	{"status", "get"},
+	{"presence", "get"},
+	{"dnd", "info"},
+}
+
+// The reported bug on the user side: ResolveUser discarded the directory
+// walk's error, so a bad token read as user_not_found, one row per name. A
+// failed walk stops the run before any row, including the row for the ID
+// that needed no lookup.
+func TestUserRows_DirectoryFailureAbortsBeforeAnyRow(t *testing.T) {
+	for _, args := range userRowCommands {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var others atomic.Int64
+			mux := userDirectory(slackFailure("invalid_auth"), &others)
+
+			r := runWithMockFull(t, mux, append(args, "U01XYZ", "@alice", "@bob")...)
+			assertFatalAbort(t, r.err, r.stdout, "invalid_auth", output.ExitAuth, 0)
+			if got := others.Load(); got != 0 {
+				t.Errorf("requests besides users.list = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// A name absent from a directory that loaded is still that input's own
+// user_not_found row.
+func TestUserRows_CleanMissKeepsItsRow(t *testing.T) {
+	for _, args := range userRowCommands {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var others atomic.Int64
+			mux := userDirectory(emptyUserDirectory, &others)
+
+			r := runWithMockFull(t, mux, append(args, "@nobody")...)
+			assertExitError(t, r.err)
+			rows, meta := rowsAndMeta(t, r.stdout)
+			if len(rows) != 1 || rows[0]["error"] != "user_not_found" || rows[0]["input"] != "@nobody" {
+				t.Errorf("rows = %v, want one user_not_found row for @nobody", rows)
+			}
+			if meta["error_count"] != float64(1) {
+				t.Errorf("_meta.error_count = %v, want 1", meta["error_count"])
+			}
+		})
+	}
+}
+
+// A directory walk that exhausts its retries on a page is rate_limited, exit
+// 3, naming users.list.
+func TestUserInfo_ExhaustedDirectoryLoadIsRateLimited(t *testing.T) {
+	var others, listCalls atomic.Int64
+	mux := userDirectory(func(w http.ResponseWriter, _ *http.Request) {
+		listCalls.Add(1)
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}, &others)
+
+	r := runWithMockFull(t, mux, "user", "info", "@alice")
+	assertFatalAbort(t, r.err, r.stdout, "rate_limited", output.ExitRateLimit, 0)
+	var oErr *output.Error
+	if errors.As(r.err, &oErr) && oErr.Endpoint != "users.list" {
+		t.Errorf("endpoint = %q, want users.list", oErr.Endpoint)
+	}
+	if got := listCalls.Load(); got != 5 {
+		t.Errorf("users.list requests = %d, want 5 attempts", got)
+	}
+}
+
+// Commands where a user that does not resolve is fatal. The directory failing
+// is reported as itself, and nothing else is asked of Slack.
+func TestUserName_DirectoryFailureIsNotUserNotFound(t *testing.T) {
+	tests := []struct {
+		name    string
+		session bool
+		stdin   string
+		args    []string
+	}{
+		{name: "channel invite", args: []string{"channel", "invite", "C01ABC", "@alice"}},
+		{name: "file list --user", args: []string{"file", "list", "--user", "@alice"}},
+		{name: "search messages", args: []string{"search", "messages", "from:@alice deploy"}},
+		{name: "search messages quoted", args: []string{"search", "messages", `from:"Alice Adams" deploy`}},
+		{name: "search files", args: []string{"search", "files", "from:@alice deploy"}},
+		{name: "draft create", session: true, stdin: richTextBlocksJSON("hi"), args: []string{"draft", "create", "@alice", "@bob"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SLACK_USER_TOKEN", "xoxp-test") // search needs one
+			var others atomic.Int64
+			mux := userDirectory(slackFailure("invalid_auth"), &others)
+
+			var err error
+			if tt.session {
+				_, err = runWithMockSessionStdin(t, tt.stdin, mux, tt.args...)
+			} else {
+				_, err = runWithMock(t, mux, tt.args...)
+			}
+			oErr := assertOutputError(t, err, "invalid_auth", output.ExitAuth)
+			if !strings.Contains(oErr.Hint, "auth login") {
+				t.Errorf("hint = %q, want the re-auth hint", oErr.Hint)
+			}
+			if got := others.Load(); got != 0 {
+				t.Errorf("requests besides users.list = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// The same commands against a directory that loaded without the name.
+func TestUserName_CleanMissIsUserNotFound(t *testing.T) {
+	tests := []struct {
+		name    string
+		session bool
+		stdin   string
+		args    []string
+	}{
+		{name: "channel invite", args: []string{"channel", "invite", "C01ABC", "@alice"}},
+		{name: "file list --user", args: []string{"file", "list", "--user", "@alice"}},
+		{name: "search messages", args: []string{"search", "messages", "from:@alice deploy"}},
+		{name: "draft create", session: true, stdin: richTextBlocksJSON("hi"), args: []string{"draft", "create", "@alice"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("SLACK_USER_TOKEN", "xoxp-test") // search needs one
+			var others atomic.Int64
+			mux := userDirectory(emptyUserDirectory, &others)
+
+			var err error
+			if tt.session {
+				_, err = runWithMockSessionStdin(t, tt.stdin, mux, tt.args...)
+			} else {
+				_, err = runWithMock(t, mux, tt.args...)
+			}
+			_ = assertOutputError(t, err, "user_not_found", output.ExitGeneral)
+			if got := others.Load(); got != 0 {
+				t.Errorf("requests besides users.list = %d, want 0", got)
+			}
+		})
+	}
+}

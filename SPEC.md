@@ -134,8 +134,9 @@ unchanged. The codes the CLI raises for failures Slack did not name:
   and no cursor. See "The 100-page cap" under `search messages`.
 - `unknown_error` - the CLI did not recognize the failure. Read `detail` (exit 1).
 
-`channel_not_found` means a lookup ran to completion and no channel matched.
-A name lookup that could not complete is never reported under it: the failure
+`channel_not_found` and `user_not_found` mean a lookup ran to completion and
+nothing matched. A name lookup that could not complete is never reported under
+either: the failure
 keeps its own code and exit, so a bad token is `invalid_auth` (exit 2), a rate
 limit that outlasted its retries is `rate_limited` (exit 3) with the
 `endpoint`, an expired budget is `timeout`, and a refusal such as
@@ -360,6 +361,16 @@ Anywhere a user is required, the CLI accepts:
 - User URL: `https://acme.slack.com/team/U01234ABCDE`, the enterprise `/user/@W…` profile form, or `app.slack.com/client/<team>/U01234ABCDE`
 
 A file URL embeds the uploader's user ID but identifies a file, so it is not accepted as a user. Wrong-kind or malformed URLs are rejected as `invalid_input`.
+
+An email or `@name` is read from the user cache, which is rebuilt by walking the whole `users.list` directory when missing or stale. The lookup ends one of three ways:
+
+- A hit returns the ID.
+- A clean miss is `user_not_found`. For a name, the directory loaded and does not hold it. For an email, the directory loaded without it and `users.lookupByEmail` answered `users_not_found`.
+- Anything else is a failed lookup, reported as the error that caused it with that error's exit code: a directory walk that hit `invalid_auth` (exit 2), exhausted its 5 attempts on a page (`rate_limited`, exit 3, `endpoint: users.list`), or ran out of `--timeout`, or a `users.lookupByEmail` call that failed some other way (`missing_scope`, for example).
+
+When the directory walk fails, an email still tries `users.lookupByEmail`, and a hit there answers. A miss there does not: that endpoint does not see every account the directory holds, so the walk's error is reported.
+
+A command that takes several users and prints a row for each (`user info`, `user manager-chain`, `status get`, `presence get`, `dnd info`) resolves all of them before it prints a row. A failed lookup stops the command with no rows, only the `{"_meta":{"has_more":true,"error":"<code>"}}` trailer and the error on stderr. A clean miss is that input's own `user_not_found` row and the other inputs still get theirs.
 
 ## Pagination
 
@@ -721,8 +732,8 @@ Every channel and user resolves before the first write. A resolution failure
 aborts the command with no rows and no API writes: a malformed URL is
 `invalid_input`, a channel name that matches nothing is `channel_not_found`
 naming the input, and a channel lookup that failed keeps its own code and exit
-(`invalid_auth`, `rate_limited`, ...). A user that does not resolve is
-`user_not_found`. Ids and URLs pass through without an existence check. Repeated inputs
+(`invalid_auth`, `rate_limited`, ...). Users follow the same rule: a clean
+miss is `user_not_found`, a failed directory walk is its own error. Ids and URLs pass through without an existence check. Repeated inputs
 dedupe by resolved id, first-seen order.
 
 One `conversations.invite` call per (channel, user) pair, sequential, channels
@@ -1046,10 +1057,13 @@ org. A walk that fails or is cut off by `--timeout` writes no cache. A user ID
 input never triggers the walk.
 
 An email the cache does not hold falls back to `users.lookupByEmail`, which
-fails with session tokens on Enterprise Grid. That fallback can stop the run
-the same way as a lookup (`missing_scope`, for example). An `@name` that fails
-to resolve is always `user_not_found`, including when the directory walk itself
-failed.
+fails with session tokens on Enterprise Grid.
+
+Every input resolves before the first row. A directory walk or
+`users.lookupByEmail` call that fails stops the run with no rows at all:
+stdout is the trailer alone, and the error keeps its own code and exit. Only an
+input that matches no user in a directory that loaded is a `user_not_found`
+row. See "Name Resolution".
 
 `users.profile.get` is rate-limited after a few calls, and reports it in the
 response body with no `Retry-After`. Each `users.info` and profile fetch goes
@@ -1059,7 +1073,8 @@ stop with the trailer above. Spacing calls about 15 seconds apart has worked.
 
 Errors:
 
-- `user_not_found` (exit 1): No user matching the input.
+- `user_not_found` (exit 1): No user matching the input. A per-input row.
+- Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `missing_scope` (exit 2): Token lacks `users.profile:read` (with `--full`).
 - `rate_limited` (exit 3): Rate limit outlasted the retries.
 - `not_authed` (exit 2): No token.
@@ -1107,7 +1122,8 @@ retry as `user info --full`.
 
 Errors:
 
-- `user_not_found` (exit 1): Root user not found.
+- `user_not_found` (exit 1): Root user not found. A per-input row.
+- Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `missing_scope` (exit 2): Token lacks `users.profile:read`.
 - `rate_limited` (exit 3): Rate limit outlasted the retries.
 - `not_authed` (exit 2): No token.
@@ -1193,7 +1209,10 @@ keeps `skypilot` as free text. Quoted forms `from:"Alice Adams"`, `from:"@Alice 
 `from:@"Alice Adams"` take the name whole; the `@` is optional inside quotes for
 `from:`/`to:` but required for `in:`, whose quoted value may be a channel. Values not starting with `@`
 (`in:#general`, `from:<@U01XYZ>`) pass through untouched. A name that does not
-resolve fails with `user_not_found` (exit 1) before any search call. A name two
+resolve fails with `user_not_found` (exit 1) before any search call. A
+directory walk that fails is not a verdict on the name: the command stops
+before any search call with that failure's own code and exit (`invalid_auth`
+exit 2, `rate_limited` exit 3). A name two
 users share resolves to whichever the cache indexed first. Applies to `search
 files` too.
 
@@ -1328,7 +1347,8 @@ with `--channel`, `--user`, or `--types` to read past it.
 `--channel` is lenient about a name that matches nothing: the value goes to
 `files.list` as typed. A malformed URL is `invalid_input`, and a name lookup
 that failed (auth, rate limit, `--timeout`) is fatal under its own code rather
-than a filter on an unresolved name.
+than a filter on an unresolved name. `--user` is strict: a user that matches
+nothing is `user_not_found`, and a failed lookup is fatal under its own code.
 
 Errors:
 
@@ -1773,7 +1793,7 @@ Errors:
 - `invalid_input` (exit 1): Bad pair, both input forms, no assignments, duplicate column, a value of the wrong shape for its type, a clear where clearing is unsupported, a malformed record id, or a URL of the wrong kind. No write is made.
 - `column_not_found` / `ambiguous_column` (exit 1): As for `list column`. No write is made.
 - `invalid_choice` (exit 1): A select value matching no choice. No write is made.
-- `user_not_found` / `channel_not_found` (exit 1): A user or channel column value did not resolve. No write is made.
+- `user_not_found` / `channel_not_found` (exit 1): A user or channel column value matched nothing. No write is made. A lookup that failed keeps its own code and exit, also with no write.
 - `file_not_found` / `not_a_list` (exit 1): As for `list info`.
 - `record_not_found` (exit 1): `update` named a record Slack does not have.
 - `invalid_arguments`, `invalid_option_id` (exit 1): Slack rejected a payload; `detail` carries `response_metadata.messages`.
@@ -1850,7 +1870,8 @@ $ slack status get tammer@example.com alice@example.com
 
 Errors:
 
-- `user_not_found` (exit 1): No user matching the input.
+- `user_not_found` (exit 1): No user matching the input. A per-input row.
+- Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `not_authed` (exit 2): No token.
 
 Slack API: `users.info` (status fields extracted from profile)
@@ -1869,7 +1890,8 @@ $ slack presence get tammer@example.com
 
 Errors:
 
-- `user_not_found` (exit 1): No user matching the input.
+- `user_not_found` (exit 1): No user matching the input. A per-input row.
+- Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `not_authed` (exit 2): No token.
 
 Slack API: `users.getPresence`
@@ -1888,7 +1910,8 @@ $ slack dnd info tammer@example.com
 
 Errors:
 
-- `user_not_found` (exit 1): No user matching the input.
+- `user_not_found` (exit 1): No user matching the input. A per-input row.
+- Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `not_authed` (exit 2): No token.
 
 Slack API: `dnd.info`
@@ -2539,7 +2562,8 @@ $ slack draft create #general < payload.json   # {"blocks":[...],"attachments":[
 Errors:
 
 - `channel_not_found` (exit 1): No channel matching the input.
-- `user_not_found` (exit 1): One or more user recipients couldn't be resolved (the message lists every unresolved input).
+- `user_not_found` (exit 1): One or more user recipients matched no user (the message lists every unresolved input).
+- Any other code from resolving a recipient (`invalid_auth`, `rate_limited`, `timeout`, `enterprise_is_restricted`, ...): the lookup failed. No write is made.
 - `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset above; the detail names the line.
 - `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, `header`, or `divider`, a `header` lacks `plain_text` text or has empty text or a `level` that isn't an integer of at least 1, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body, no `header`, no `divider`, and no table attachment).

@@ -125,6 +125,10 @@ that outlasts its retries, network, --timeout) stops the run. Stdout then
 ends with {"_meta":{"has_more":true,"error":"<code>"}}: the rows printed
 are good, the inputs with no row were not looked up. Rerun those.
 
+Every email and @name resolves before the first row. If that lookup fails
+(the directory walk hits a rate limit or a bad token), the run stops with
+no rows: it is not reported as user_not_found.
+
 --full fetches users.profile.get per user, which Slack rate-limits after a
 few calls. The fetch is retried, but a long list can still stop early.`
 }
@@ -141,14 +145,19 @@ func (c *UserInfoCmd) Run(cli *CLI) error {
 	defer cancel()
 	errorCount := 0
 
-	for _, input := range c.Users {
-		userID, err := r.ResolveUser(ctx, input)
-		if err != nil {
-			if fatal := systemicResolveError(cli, err); fatal != nil {
-				return abortWithTrailer(p, fatal, errorCount)
-			}
+	// Every input resolves before the first row. A lookup that fails for a
+	// reason other than the input (auth, a rate limit, --timeout) stops the
+	// run with no rows; an input that matches no user keeps its own row.
+	resolved, fatal := resolveInputs(ctx, c.Users, r.ResolveUser, cli.userResolveError)
+	if fatal != nil {
+		return abortWithTrailer(p, fatal, 0)
+	}
+
+	for _, u := range resolved {
+		input, userID := u.input, u.id
+		if u.miss != nil {
 			errorCount++
-			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
+			if err := p.PrintItem(u.miss.AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -261,21 +270,6 @@ func isSystemicErr(e *output.Error) bool {
 		return true
 	}
 	return e.Err == "timeout"
-}
-
-// systemicResolveError returns the classified error when resolving an input
-// failed for a whole-command reason, or nil when it is this input's problem.
-// Only the email path surfaces one: users.lookupByEmail's error comes back
-// raw, while the @name path reports every failure as not found (see
-// todo/resolver-errors-are-reported-as-channel-not-found.md).
-func systemicResolveError(cli *CLI, err error) *output.Error {
-	if isBadURLErr(err) {
-		return nil
-	}
-	if cErr := cli.ClassifyError(err); isSystemicErr(cErr) {
-		return cErr
-	}
-	return nil
 }
 
 // userNotFoundCodes are Slack's ways of saying the user does not exist or is
@@ -425,14 +419,19 @@ func (c *UserManagerChainCmd) Run(cli *CLI) error {
 		return pr, nil
 	}
 
-	for _, input := range c.Users {
-		rootID, err := r.ResolveUser(ctx, input)
-		if err != nil {
-			if fatal := systemicResolveError(cli, err); fatal != nil {
-				return abortWithTrailer(p, fatal, errorCount)
-			}
+	// Every input resolves before the first row. A lookup that fails for a
+	// reason other than the input (auth, a rate limit, --timeout) stops the
+	// run with no rows; an input that matches no user keeps its own row.
+	resolved, fatal := resolveInputs(ctx, c.Users, r.ResolveUser, cli.userResolveError)
+	if fatal != nil {
+		return abortWithTrailer(p, fatal, 0)
+	}
+
+	for _, u := range resolved {
+		input, rootID := u.input, u.id
+		if u.miss != nil {
 			errorCount++
-			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
+			if err := p.PrintItem(u.miss.AsItem()); err != nil {
 				return err
 			}
 			continue

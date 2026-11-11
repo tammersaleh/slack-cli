@@ -24,14 +24,19 @@ func (c *DndInfoCmd) Run(cli *CLI) error {
 	defer cancel()
 	errorCount := 0
 
-	for _, input := range c.Users {
-		userID, err := r.ResolveUser(ctx, input)
-		if err != nil {
-			if fatal := systemicResolveError(cli, err); fatal != nil {
-				return abortWithTrailer(p, fatal, errorCount)
-			}
+	// Every input resolves before the first row. A lookup that fails for a
+	// reason other than the input (auth, a rate limit, --timeout) stops the
+	// run with no rows; an input that matches no user keeps its own row.
+	resolved, fatal := resolveInputs(ctx, c.Users, r.ResolveUser, cli.userResolveError)
+	if fatal != nil {
+		return abortWithTrailer(p, fatal, 0)
+	}
+
+	for _, u := range resolved {
+		input, userID := u.input, u.id
+		if u.miss != nil {
 			errorCount++
-			if err := p.PrintItem(userResolveError(input, err).AsItem()); err != nil {
+			if err := p.PrintItem(u.miss.AsItem()); err != nil {
 				return err
 			}
 			continue

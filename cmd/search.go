@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/slack-go/slack"
@@ -82,7 +83,7 @@ func (c *SearchMessagesCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	query, err := searchQuery(ctx, resolver, "search.messages", c.Query)
+	query, err := searchQuery(ctx, cli, resolver, "search.messages", c.Query)
 	if err != nil {
 		return err
 	}
@@ -157,7 +158,7 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	query, err := searchQuery(ctx, resolver, "search.files", c.Query)
+	query, err := searchQuery(ctx, cli, resolver, "search.files", c.Query)
 	if err != nil {
 		return err
 	}
@@ -204,10 +205,16 @@ func (c *SearchFilesCmd) Run(cli *CLI) error {
 // visible: rows show who Slack matched, not which <@Uxxx> the CLI asked for,
 // so without it a wrong resolution and a wrongly built query look the same.
 // It is trace-only by design - _meta is a contract, this is diagnostics.
-func searchQuery(ctx context.Context, r userResolver, endpoint, input string) (string, error) {
+func searchQuery(ctx context.Context, cli *CLI, r userResolver, endpoint, input string) (string, error) {
 	query, err := rewriteUserModifiers(ctx, r, input)
 	if err != nil {
-		return "", err
+		var oErr *output.Error
+		if errors.As(err, &oErr) {
+			return "", oErr
+		}
+		// The directory load behind a name failed. That is not a verdict on
+		// the name, so it keeps its own code and exit.
+		return "", cli.ClassifyError(err)
 	}
 	api.TracerFrom(ctx).Event("search_query", map[string]any{
 		"endpoint": endpoint,
