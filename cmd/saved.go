@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -298,71 +297,27 @@ const enrichConcurrency = 10
 func enrichItems(ctx context.Context, cli *CLI, client *api.Client, items []savedItem) ([]enrichOutcome, error) {
 	outcomes := make([]enrichOutcome, len(items))
 
-	// A systemic failure voids the page, so the first one cancels its siblings
-	// rather than letting them spend requests on output nobody will see.
-	pageCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	var (
-		fatalOnce sync.Once
-		fatalErr  error
-	)
-	// Keeps the first substantive cause. Siblings woken by the cancel report
-	// context.Canceled, which must not be allowed to overwrite it.
-	failPage := func(err error) {
-		fatalOnce.Do(func() {
-			fatalErr = err
-			cancel()
-		})
-	}
-
-	sem := make(chan struct{}, enrichConcurrency)
-	var wg sync.WaitGroup
-
-	for i, item := range items {
-		wg.Add(1)
-		go func(i int, item savedItem) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-pageCtx.Done():
-				return
+	// A systemic failure voids the page, so runBounded cancels the siblings
+	// on the first one rather than letting them spend requests on output
+	// nobody will see, and keeps that first cause.
+	err := runBounded(ctx, len(items), enrichConcurrency, func(pageCtx context.Context, i int) error {
+		msg, err := lookupSavedMessage(pageCtx, client, items[i])
+		if err != nil {
+			if code := cli.ClassifyError(err).Err; itemLocalEnrichErrors[code] {
+				outcomes[i] = enrichOutcome{errCode: code}
+				return nil
 			}
-			defer func() { <-sem }()
-
-			// A select with both cases ready can pick the slot over a done
-			// context, so re-check before spending a request.
-			if pageCtx.Err() != nil {
-				return
-			}
-
-			msg, err := lookupSavedMessage(pageCtx, client, item)
-			if err != nil {
-				if code := cli.ClassifyError(err).Err; itemLocalEnrichErrors[code] {
-					outcomes[i] = enrichOutcome{errCode: code}
-					return
-				}
-				failPage(err)
-				return
-			}
-			if msg == nil {
-				// History saw nothing and it is not a reply either.
-				outcomes[i] = enrichOutcome{errCode: "message_not_found"}
-				return
-			}
-			outcomes[i] = enrichOutcome{resolved: true, text: msg.Text, fromUser: msg.User}
-		}(i, item)
-	}
-
-	// Always join before reading outcomes: returning while workers are live
-	// would leak goroutines still mutating the slice and still calling Slack.
-	wg.Wait()
-
-	if fatalErr != nil {
-		return nil, fatalErr
-	}
-	// The caller's own deadline expiring is not a page of missing messages.
-	if err := ctx.Err(); err != nil {
+			return err
+		}
+		if msg == nil {
+			// History saw nothing and it is not a reply either.
+			outcomes[i] = enrichOutcome{errCode: "message_not_found"}
+			return nil
+		}
+		outcomes[i] = enrichOutcome{resolved: true, text: msg.Text, fromUser: msg.User}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 

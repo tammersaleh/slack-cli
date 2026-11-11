@@ -57,13 +57,13 @@ func cancelRunSavedList(t *testing.T, apiURL string, args ...string) (string, er
 //
 // The wrong-but-plausible implementations this rules out:
 //
-//   - failPage assigning fatalErr on every call instead of under sync.Once. The
+//   - runBounded's fail assigning fatalErr on every call instead of under sync.Once. The
 //     woken sibling's context.Canceled classifies as unknown_error, and the page
 //     would report that in place of missing_scope - the real cause, and the only
 //     one that tells the user what to fix. The overwrite is not a coin flip: the
-//     sibling can only fail because of the cancel, so its call to failPage always
+//     sibling can only fail because of the cancel, so its call to runBounded's fail always
 //     lands second and always wins.
-//   - failPage recording the error without cancelling the page context, leaving
+//   - runBounded's fail recording the error without cancelling the page context, leaving
 //     siblings to spend their requests on a page nobody will emit. Then nothing
 //     releases the held lookup and the command blocks for the full hold below.
 //   - classifying the fatal error before handing it to streamPages, which would
