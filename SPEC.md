@@ -981,6 +981,8 @@ slack thread list <message-url> [flags]
 
 A message permalink replaces channel + timestamp. A link to any reply resolves to its parent thread (via `thread_ts`), so pasting any message in a thread returns the whole thread.
 
+Known defect, measured 2026-11-10 and not yet fixed: a thread with more replies than `--limit` does not page in thread order. `conversations.replies` walks newest-first and prepends the parent to every page, so one page is the parent plus the newest `--limit` replies (oldest first inside the page), and an `--all` run emits pages newest to oldest with the parent repeated on each. A thread that fits in one page is correct: parent, then replies oldest first. Until this is fixed, `--limit 200` covers most threads, and a consumer of a longer one must drop duplicate parent rows and sort by `ts`.
+
 ```
 $ slack thread list #general 1709251200.000100 --limit=3
 {"type":"message","user":"U01XYZ","text":"Hey team, the deploy is done.","ts":"1709251200.000100","ts_iso":"2024-03-01T00:00:00Z","thread_ts":"1709251200.000100","reply_count":3,"reply_users":["U02ABC","U03DEF"],"latest_reply":"1709251500.000200","latest_reply_iso":"2024-03-01T00:05:00Z"}

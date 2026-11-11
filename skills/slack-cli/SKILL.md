@@ -149,6 +149,13 @@ Pair with `slack message list --has-replies` to locate a thread root
 first. `ts` is the parent message's timestamp; a permalink to any reply
 also works - it resolves to the parent thread.
 
+Rows are oldest first, parent first, when the thread fits in one page.
+A longer thread does not page cleanly: one page is the parent plus the
+**newest** `--limit` replies, and under `--all` pages run newest to
+oldest with the parent repeated at the top of each. Pass `--limit 200`
+for a long thread. Past 200 replies, use `--all`, drop the duplicate
+parent rows, and sort by `ts`.
+
 ```
 slack thread list https://acme.slack.com/archives/C01ABC/p1709251200000100
 ```
