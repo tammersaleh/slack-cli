@@ -333,6 +333,9 @@ func TestSectionChannels_DuplicateID(t *testing.T) {
 	assertExactRow(t, rows[0], map[string]any{"id": "C01ABC", "name": "ext-acme", "is_archived": false})
 	assertExactRow(t, rows[1], map[string]any{"id": "C02DEF", "name": "ext-globex", "is_archived": false})
 	assertExactRow(t, rows[2], map[string]any{"id": "C01ABC", "name": "ext-acme", "is_archived": false})
+	if got := m.callCount("C01ABC"); got != 2 {
+		t.Errorf("conversations.info calls for the duplicated channel = %d, want 2", got)
+	}
 }
 
 // A pattern nothing matches still reports the channel it could not read, and
