@@ -382,21 +382,21 @@ func TestConvert_SetextVersusDivider(t *testing.T) {
 	}
 }
 
-// The @name rejection tells the caller how to get an id. A display-name lookup
-// can return a deactivated duplicate account, so the text names the email and
-// handle forms and the deleted check, never a bare `slack user info @name`.
-func TestConvert_BadMentionPointsAtAnUnambiguousLookup(t *testing.T) {
+// The @name rejection tells the caller how to get an id and what the lookup
+// does when the name is not one live person: it fails on a shared name and
+// marks a deactivated account.
+func TestConvert_BadMentionSaysHowToGetAnID(t *testing.T) {
 	_, err := mdblocks.Convert([]byte("hi @alice\n"))
 	var me *mdblocks.Error
 	if !errors.As(err, &me) {
 		t.Fatalf("want *mdblocks.Error, got %T: %v", err, err)
 	}
-	for _, want := range []string{"<@Uxxx>", "email", "handle", "--fields id,name,deleted", "deleted is false"} {
+	for _, want := range []string{"@alice is not resolvable", "<@Uxxx>", "slack user info <@name or email> --fields id,name", "ambiguous_user", "deleted: true"} {
 		if !strings.Contains(me.Detail, want) {
 			t.Errorf("detail should contain %q, got %q", want, me.Detail)
 		}
 	}
-	if strings.Contains(me.Detail, "slack user info @name") {
-		t.Errorf("detail still points at the display-name lookup: %q", me.Detail)
+	if strings.Contains(me.Detail, "duplicate account") {
+		t.Errorf("detail still warns of a deactivated duplicate winning a name lookup: %q", me.Detail)
 	}
 }

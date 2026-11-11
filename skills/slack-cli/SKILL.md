@@ -530,17 +530,17 @@ horizontal rule inside a quote or list item, a relative or
 non-http(s)/mailto link, and an empty heading, list item, quote, or code
 block (Slack rejects an empty text inline).
 
-Get a mention id by email or handle, never by display name, and check the
-account is live:
+Get a mention id from `user info`, by name, handle, or email:
 
 ```
-slack user info alice@example.com --fields id,name,deleted
-slack user info @alice --fields id,name,deleted      # @alice is the handle
+slack user info '@Alice Adams' --fields id,name
+slack user info alice@example.com --fields id,name
 ```
 
-Use the `id` only when `deleted` is `false` and `name` is the handle you
-expect. A display or real name (`@Alice Adams`) can resolve to a deactivated
-duplicate account, exit 0, and `draft create` stages a `<@Uxxx>` mention as
+A name prefers the active account over a deactivated one. A name several
+people share fails with `ambiguous_user` and lists them; pick one and rerun
+with its handle or ID. If the row carries `deleted: true`, the account is
+deactivated: do not mention it. `draft create` stages a `<@Uxxx>` mention as
 written without checking the account.
 
 Verified live 2026-10-16 through the drafts API: every construct above round-trips

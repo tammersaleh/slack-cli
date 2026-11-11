@@ -676,7 +676,7 @@ func (c *converter) appendToken(out []map[string]any, t *token, st style) ([]map
 		// The emoji element has no style field.
 		return append(out, map[string]any{"type": "emoji", "name": t.value}), nil
 	case tokenBadMention:
-		return nil, &Error{Line: c.lineOfOffset(t.offset), Detail: fmt.Sprintf("@%s is not resolvable here; mention people as <@Uxxx>. Get the id by email or handle, not display name: 'slack user info <email or @handle> --fields id,name,deleted', and use it only when deleted is false and name is the handle you expect (a display name can match a deactivated duplicate account)", t.value)}
+		return nil, &Error{Line: c.lineOfOffset(t.offset), Detail: fmt.Sprintf("@%s is not resolvable here; mention people as <@Uxxx>. Get the id with 'slack user info <@name or email> --fields id,name': a name several people share fails with ambiguous_user and lists them, and a deactivated account's row carries deleted: true", t.value)}
 	default:
 		return nil, &Error{Line: c.lineOfOffset(t.offset), Detail: "unknown token"}
 	}

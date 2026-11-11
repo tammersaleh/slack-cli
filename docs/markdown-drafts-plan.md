@@ -12,7 +12,7 @@ Constraints already established in this repo (see `docs/draft-messages.md`, `cmd
 - Containers: `rich_text_section`, `rich_text_list` (style bullet/ordered, indent 0-2, cannot nest a list), `rich_text_quote`, `rich_text_preformatted`.
 - Absorption rule: a section directly before list/preformatted/quote must end with a text inline ending in `\n`.
 - Slack's `markdown` block returns `internal_error` from `drafts.create`. Conversion must be client-side.
-- `@name` resolution is a coin flip on name collisions (`todo/at-name-resolution-picks-a-random-user-when-names-collide.md`). Not fixed.
+- `@name` resolution was a coin flip on name collisions when this plan was written. Fixed 2026-11-10: a shared name is ranked or fails with `ambiguous_user`. Whether the converter should resolve `@name` is `todo/markdown-at-name-mentions-are-rejected.md`.
 
 ## Decisions
 
