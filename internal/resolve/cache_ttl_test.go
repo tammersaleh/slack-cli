@@ -157,6 +157,7 @@ func TestIsEmail(t *testing.T) {
 		{"alice", false},
 		{"", false},
 		{"@alice", false},
+		{"bob@example.com deploy", false},
 	}
 	for _, tt := range tests {
 		if got := isEmail(tt.in); got != tt.want {
