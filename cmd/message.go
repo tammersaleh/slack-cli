@@ -24,20 +24,39 @@ type MessageListCmd struct {
 	Limit        int    `help:"Page size." default:"20"`
 	Cursor       string `help:"Continue from previous page."`
 	All          bool   `help:"Fetch all pages."`
-	After        string `help:"Messages after this time (Unix timestamp or ISO 8601)."`
+	After        string `help:"Messages after this time (Unix timestamp or ISO 8601). Newest first, like every mode."`
 	Before       string `help:"Messages before this time (Unix timestamp or ISO 8601)."`
-	Unread       bool   `help:"Messages since the last-read position."`
+	Unread       bool   `help:"Messages since the last-read position, newest first."`
 	HasReplies   bool   `help:"Only messages with thread replies (client-side filter)."`
 	HasReactions bool   `help:"Only messages with reactions (client-side filter)."`
 }
+
+// historyOpenLatest is the upper bound sent when the caller set only a lower
+// one. conversations.history picks its paging direction from the bounds: with
+// oldest alone it walks forward from oldest, so pages ascend while each page
+// is newest-first inside. Any latest makes the walk newest-first from latest
+// down to oldest. A fixed far-future value does that without reading the local
+// clock (a clock behind Slack's would cut off the newest messages) and is the
+// same in every invocation, so a --cursor resume sends what the first run
+// sent. Verified live 2026-11-10: same rows as oldest alone, one descending
+// stream, and a resume under a different latest continues correctly because
+// the cursor replaces latest as the anchor.
+const historyOpenLatest = "9999999999.999999"
 
 func (MessageListCmd) Help() string {
 	return `List messages from a channel, newest first. Channel accepts an ID
 (C.../G.../D...) or a #name resolved from the local cache.
 
+Every mode is one newest-first stream, across pages and under --all. So
+--limit N is the newest N messages in the window: with --after or
+--unread, page on (--cursor or --all) to reach the ones just past the
+bound. The walk is a snapshot taken at the first page. Messages posted
+after that are not in it.
+
 Time bounds accept RFC 3339 ('2026-04-20T09:00:00-07:00'), date-only
 (YYYY-MM-DD), or a raw Slack ts ('1713300000.123456'). --unread uses
-the channel's last_read marker (mutually exclusive with --after).
+the channel's last_read marker (mutually exclusive with --after). A
+--cursor resume must repeat the bounds the cursor came from.
 
 Examples:
 
@@ -98,6 +117,9 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 			return output.InvalidTimestamp("--before", c.Before)
 		}
 		latest = ts
+	}
+	if oldest != "" && latest == "" {
+		latest = historyOpenLatest
 	}
 
 	// Every page carries the time bounds, not just the first. In

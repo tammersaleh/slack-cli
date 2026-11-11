@@ -117,7 +117,16 @@ slack message permalink <channel> <ts>...
 
 Time bounds accept RFC 3339, `YYYY-MM-DD`, or raw Slack ts.
 `--unread` uses the channel's last_read marker (mutually exclusive
-with `--after`). `--has-replies` is a client-side filter - use it
+with `--after`).
+
+Output is newest first in every mode, across pages and under `--all`,
+including `--after` alone and `--unread`. So `--limit N` is the newest N
+messages in the window. To read forward from a point (`--after X`, or
+catching up with `--unread`), use `--all` and read the output bottom up,
+or page with `--cursor` until `has_more` is false: the messages just
+after the bound come last. A walk is a snapshot from its first page.
+Messages posted later are not in it. Rerun to see them. A `--cursor`
+resume must repeat the same `--after`/`--before`/`--unread`. `--has-replies` is a client-side filter - use it
 to find threads worth exploring with `slack thread list`.
 
 Examples:

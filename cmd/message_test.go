@@ -410,7 +410,9 @@ func TestMessageList_EnrichesUserName(t *testing.T) {
 //
 // The last two rules are why the bounds have to ride along on every request:
 // drop them on page two and the window stops being applied, so the walk runs
-// straight past the requested range into the rest of the channel.
+// straight past the requested range into the rest of the channel. The third
+// rule is why message list adds an upper bound to a lone lower one (verified
+// live 2026-11-10: oldest plus a far-future latest is one descending stream).
 //
 // Simplifications against real Slack: bounds are inclusive on both ends, and
 // the cursor is the ts of the next message rather than an opaque token. Both
@@ -466,8 +468,9 @@ func historyWindowMux(t *testing.T, all []string, seen *[]url.Values) *http.Serv
 		}
 
 		// Slack serializes every page newest-first, even when the walk
-		// itself is ascending - which is what makes an oldest-only --all run
-		// a sawtooth rather than one sorted stream.
+		// itself is ascending - which makes an oldest-only walk a sawtooth
+		// rather than one sorted stream. message list never sends that
+		// shape: it adds an open upper bound to a lone lower one.
 		if ascending {
 			sort.Sort(sort.Reverse(sort.StringSlice(match)))
 		}
@@ -583,14 +586,46 @@ func TestMessageList_CursorResumeKeepsTimeBounds(t *testing.T) {
 	}
 }
 
-// TestMessageList_AllKeepsTimeBoundsOldestOnly covers the other paging
-// direction. With oldest set and latest absent, conversations.history walks
-// forward in time instead of backward, and it was the worse of the two
-// failures live: dropping the bounds on page two resumed the same cursor
-// *backwards*, re-emitting messages page one had already printed and never
-// terminating. The expected order is the documented sawtooth - newest-first
-// within a page, pages ascending.
-func TestMessageList_AllKeepsTimeBoundsOldestOnly(t *testing.T) {
+// openLatest is the upper bound message list sends when the caller set only a
+// lower one. See historyOpenLatest in message.go.
+const openLatest = "9999999999.999999"
+
+// assertOpenWindow checks that every request carried the lower bound and the
+// open upper bound. The upper bound is what makes the walk newest-first: drop
+// it and conversations.history pages forward from oldest instead.
+func assertOpenWindow(t *testing.T, reqs []url.Values, oldest string) {
+	t.Helper()
+	if len(reqs) == 0 {
+		t.Fatal("expected at least one conversations.history request")
+	}
+	for i, req := range reqs {
+		if req.Get("oldest") != oldest {
+			t.Errorf("request %d dropped its lower bound: oldest=%q", i, req.Get("oldest"))
+		}
+		if req.Get("latest") != openLatest {
+			t.Errorf("request %d has latest=%q, want %q", i, req.Get("latest"), openLatest)
+		}
+	}
+}
+
+func lastMeta(t *testing.T, out string) map[string]any {
+	t.Helper()
+	lines := nonEmptyLines(out)
+	if len(lines) == 0 {
+		t.Fatal("no output")
+	}
+	meta, ok := parseJSON(t, lines[len(lines)-1])["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("last line is not a _meta trailer: %s", lines[len(lines)-1])
+	}
+	return meta
+}
+
+// TestMessageList_AfterAloneIsNewestFirst pins the ordering contract: --after
+// with no --before is one descending stream, like every other mode. Without an
+// upper bound conversations.history walks forward from oldest, and the same
+// run comes out as 9, 8, 11, 10 - newest-first inside a page, pages ascending.
+func TestMessageList_AfterAloneIsNewestFirst(t *testing.T) {
 	var reqs []url.Values
 	mux := historyWindowMux(t, windowTimestamps(), &reqs)
 
@@ -601,37 +636,79 @@ func TestMessageList_AllKeepsTimeBoundsOldestOnly(t *testing.T) {
 	}
 
 	want := []string{
-		"1700000009.000000", "1700000008.000000",
 		"1700000011.000000", "1700000010.000000",
+		"1700000009.000000", "1700000008.000000",
 	}
 	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
-		t.Errorf("forward walk left the requested window\n got: %v\nwant: %v", got, want)
+		t.Errorf("--after walk is not one descending stream\n got: %v\nwant: %v", got, want)
 	}
-
 	if len(reqs) < 2 {
 		t.Fatalf("expected the walk to span at least 2 requests, got %d", len(reqs))
 	}
-	for i, req := range reqs {
-		if req.Get("oldest") != "1700000008.000000" {
-			t.Errorf("request %d dropped its lower bound: oldest=%q", i, req.Get("oldest"))
-		}
-		if req.Get("latest") != "" {
-			t.Errorf("request %d invented an upper bound: latest=%q", i, req.Get("latest"))
-		}
-	}
-
-	lines := nonEmptyLines(out)
-	meta := parseJSON(t, lines[len(lines)-1])["_meta"].(map[string]any)
-	if meta["has_more"] != false {
+	assertOpenWindow(t, reqs, "1700000008.000000")
+	if meta := lastMeta(t, out); meta["has_more"] != false {
 		t.Errorf("expected the window to be exhausted, got has_more=%v", meta["has_more"])
 	}
 }
 
-// TestMessageList_AllKeepsUnreadBound is the same forward walk reached the way
-// users actually reach it. --unread reads oldest from the channel's last_read
-// marker and never sets latest, so every --unread --all run takes the
-// oldest-only path.
-func TestMessageList_AllKeepsUnreadBound(t *testing.T) {
+// TestMessageList_AfterAloneLimitIsNewest covers a single page: --limit N
+// under --after is the newest N messages in the window, as it is in every
+// other mode, not the N just above the bound.
+func TestMessageList_AfterAloneLimitIsNewest(t *testing.T) {
+	var reqs []url.Values
+	mux := historyWindowMux(t, windowTimestamps(), &reqs)
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC",
+		"--after", "1700000004", "--limit", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"1700000011.000000", "1700000010.000000"}
+	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("first page is not the newest messages\n got: %v\nwant: %v", got, want)
+	}
+	assertOpenWindow(t, reqs, "1700000004.000000")
+	meta := lastMeta(t, out)
+	if meta["has_more"] != true || meta["next_cursor"] != "1700000009.000000" {
+		t.Errorf("expected a cursor at the next older message, got %v", meta)
+	}
+}
+
+// TestMessageList_AfterAloneCursorResume covers a resume in a later process.
+// The cursor replaces the upper bound as the anchor, so the resume needs only
+// some upper bound to keep walking down, and the open one is the same in every
+// invocation. Without it the mock, like Slack, turns the cursor into the start
+// of a forward walk and the page is 8, 7 - one row already emitted and one
+// from the wrong side of the cursor.
+func TestMessageList_AfterAloneCursorResume(t *testing.T) {
+	var reqs []url.Values
+	mux := historyWindowMux(t, windowTimestamps(), &reqs)
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC",
+		"--after", "1700000004", "--cursor", "1700000007.000000", "--limit", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"1700000007.000000", "1700000006.000000"}
+	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("resumed page did not continue downward\n got: %v\nwant: %v", got, want)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 request, got %d", len(reqs))
+	}
+	assertOpenWindow(t, reqs, "1700000004.000000")
+	meta := lastMeta(t, out)
+	if meta["has_more"] != true || meta["next_cursor"] != "1700000005.000000" {
+		t.Errorf("expected a cursor at the next older message, got %v", meta)
+	}
+}
+
+// TestMessageList_UnreadIsNewestFirst is the same walk reached through
+// --unread, which reads oldest from the channel's last_read marker and sets no
+// upper bound of its own.
+func TestMessageList_UnreadIsNewestFirst(t *testing.T) {
 	var reqs []url.Values
 	mux := historyWindowMux(t, windowTimestamps(), &reqs)
 	mux.HandleFunc("/api/conversations.info", func(w http.ResponseWriter, r *http.Request) {
@@ -647,15 +724,32 @@ func TestMessageList_AllKeepsUnreadBound(t *testing.T) {
 	}
 
 	want := []string{
-		"1700000009.000000", "1700000008.000000",
 		"1700000011.000000", "1700000010.000000",
+		"1700000009.000000", "1700000008.000000",
 	}
 	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
-		t.Errorf("unread walk left the last_read window\n got: %v\nwant: %v", got, want)
+		t.Errorf("unread walk is not one descending stream\n got: %v\nwant: %v", got, want)
+	}
+	assertOpenWindow(t, reqs, "1700000008.000000")
+}
+
+// TestMessageList_NoBoundsSendsNone pins the other side: with no lower bound
+// there is nothing to open, and the command sends neither bound.
+func TestMessageList_NoBoundsSendsNone(t *testing.T) {
+	var reqs []url.Values
+	mux := historyWindowMux(t, windowTimestamps(), &reqs)
+
+	out, err := runWithMock(t, mux, "message", "list", "C01ABC", "--limit", "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1700000011.000000", "1700000010.000000"}
+	if got := emittedTimestamps(t, out); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 	for i, req := range reqs {
-		if req.Get("oldest") != "1700000008.000000" {
-			t.Errorf("request %d dropped the last_read bound: oldest=%q", i, req.Get("oldest"))
+		if req.Get("oldest") != "" || req.Get("latest") != "" {
+			t.Errorf("request %d invented a bound: oldest=%q latest=%q", i, req.Get("oldest"), req.Get("latest"))
 		}
 	}
 }

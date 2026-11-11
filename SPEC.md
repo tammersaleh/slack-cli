@@ -866,14 +866,14 @@ slack message list <channel> [flags]
   --limit       Page size (default: 20, max: 200)
   --cursor      Continue from previous page
   --all         Fetch all pages
-  --after       Messages after this time (Unix timestamp or ISO 8601)
+  --after       Messages after this time (Unix timestamp or ISO 8601). Newest first, like every mode
   --before      Messages before this time (Unix timestamp or ISO 8601)
-  --unread      Messages since the last-read position
+  --unread      Messages since the last-read position, newest first
   --has-replies Only messages with thread replies (client-side filter)
   --has-reactions Only messages with reactions (client-side filter)
 ```
 
-`--unread` sets `oldest` to the channel's `last_read` timestamp. Mutually exclusive with `--after`.
+`--unread` sets `oldest` to the channel's `last_read` timestamp. Mutually exclusive with `--after`. It is newest first like every other mode: `--unread --limit 20` is the 20 most recent unread messages, and `has_more: true` says older unread ones remain.
 
 `--has-replies` and `--has-reactions` are client-side filters applied after the API page is fetched. The returned page may contain fewer items than `--limit`.
 
@@ -882,11 +882,13 @@ first. In `conversations.history` the cursor carries only a position; the
 bounds are what define the window and the direction of paging. A `--cursor`
 resume therefore has to repeat the bounds the cursor was produced under.
 
-Result ordering depends on which bounds are set. With `--before` (or with no
-bounds at all) messages come back newest first across the whole walk. With
-`--after` alone, each page is newest first but successive pages move forward
-in time, so an `--all` run is not globally sorted. Pass `--before` as well if
-you need one descending stream.
+Every mode is one newest-first stream: within a page, across pages, and under `--all`. `--limit N` is therefore the newest N messages in the window in every mode. Under `--after` or `--unread` the messages just past the lower bound are on the last page, so reach them with `--cursor` or `--all`.
+
+`conversations.history` does not do this by itself. With only `oldest` set it walks forward from `oldest`: each page is newest first inside, but pages ascend. So when the caller sets a lower bound (`--after` or `--unread`) and no `--before`, the command sends `latest=9999999999.999999` on every request, which makes Slack walk newest-first from the present down to the bound. The value is fixed rather than the local clock, so a clock behind Slack's cannot cut off the newest messages, and a `--cursor` resume in a later invocation sends the same bounds as the first. With no lower bound the command sends neither bound.
+
+A walk is a snapshot taken when its first page is served. Each cursor points below the rows already returned, so a message posted after the first page is never part of the walk, under `--all` or a later `--cursor` resume. Run the command again to see newer messages.
+
+A cursor from one set of bounds is not valid under another. In particular a cursor produced by a version before this change under `--after` alone came from a forward walk and must be discarded.
 
 ```
 $ slack message list #general --limit=2
