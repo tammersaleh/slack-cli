@@ -4,7 +4,7 @@ A non-interactive CLI for Slack, built in Go. Designed for agents and automation
 
 ## Design Principles
 
-- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, channel membership (`channel invite`, `channel kick`), draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only).
+- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, `channel create`, channel membership (`channel invite`, `channel kick`), draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only).
 - **Agent-first**: JSONL output. No interactive prompts. Deterministic, scriptable.
 - **Thin wrapper**: One API page per call by default. The caller controls data volume. The single exception is `channel list --query`, which searches every page of your own conversations because a partial client-side search reports "not found" for something that exists; it is bounded and cheap, and every other path still requires `--all`.
 - **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, `aws`.
@@ -178,7 +178,9 @@ carries `ts`, `kind`, and kind-specific attributes. Current kinds:
   `users.info` and `users.profile.get` fetches of `user info` and
   `user manager-chain`, the `users.info` and `conversations.info` lookups
   that name the IDs in a command's output,
-  and the retried internal calls (each also emits its `internal_api` event)
+  and the retried internal calls (each also emits its `internal_api` event).
+  `channel create` emits one too, always `attempt` 1, because it is never
+  retried
 - `retry` - emitted before each rate-limit sleep (`endpoint`, `attempt`,
   `wait_ms`); `attempt` is the request that was rate limited
 - `internal_api` - one per internal API POST (`endpoint`, `latency_ms`,
@@ -531,7 +533,7 @@ Requests that go through the shared retry are attempted up to 5 times: every pag
 
 The internal API methods (`saved.*`, `users.channelSections.*`, `drafts.*`, `lists.*`, `client.counts`, `admin.roles.entity.listAssignments`) follow the same rules, and a 429 that carries no `Retry-After` still counts as a rate limit. The internal calls retried are the paginated ones (`saved list`, `list records`, `list find`), the reads (`users.channelSections.list`, `saved.list` for `saved counts`, `client.counts`, `admin.roles.entity.listAssignments`, `files.info` for lists, `drafts.list`, `lists.records.info`), and two writes that set state and so are safe to repeat: `users.channelSections.set` (`section rename`/`emoji`) and `users.channelSections.channels.bulkUpdate` (`section move`). `section channels` and `section find` also retry each `conversations.info` name lookup.
 
-Other single-shot calls are not retried: every `drafts.*` write, `users.channelSections.create`, every `lists.*` write, and the public calls outside the list above. Repeating a create could create twice. A rate limit on one of them is reported at once, with the wait Slack asked for in `detail` when it sent one:
+Other single-shot calls are not retried: `conversations.create` (`channel create`), every `drafts.*` write, `users.channelSections.create`, every `lists.*` write, and the public calls outside the list above. Repeating a create could create twice. A rate limit on one of them is reported at once, with the wait Slack asked for in `detail` when it sent one:
 
 ```json
 {"error":"rate_limited","detail":"Rate limited; Slack asked to retry after 30s"}
@@ -739,6 +741,90 @@ Errors:
 - `not_authed` (exit 2): No token.
 
 Slack API: `admin.roles.entity.listAssignments` (internal)
+
+#### slack channel create
+
+Creates one channel via `conversations.create` and prints the channel Slack
+returned.
+
+```
+slack channel create <name> [flags]
+  --private   Create a private channel (default: public)
+```
+
+```
+$ slack channel create eng-leads --private
+{"id":"C01ABC","name":"eng-leads","name_normalized":"eng-leads","is_channel":true,"is_private":true,"is_archived":false,"is_member":true,"created":1700000000,"creator":"U01XYZ","topic":{"value":"","creator":"","last_set":0},"purpose":{"value":"","creator":"","last_set":0},...}
+{"_meta":{"has_more":false}}
+```
+
+One channel per invocation. The row is Slack's channel object in the
+`channel info` shape, without `input` and without `num_members`:
+`conversations.create` sends no member count. The caller is the only member.
+There is no topic, purpose, description, or invite flag. Add people with
+`channel invite` afterwards.
+
+The row comes from the response, never from the request, so `name` is the name
+Slack stored.
+
+##### Name
+
+One leading `#` is dropped, because `#name` is how every other command writes a
+channel. The rest is sent as given and Slack is the validator. Measured on a
+desktop session token:
+
+| name | answer |
+|---|---|
+| empty | `invalid_name_required` |
+| 95 characters (the documented limit is 80) | `invalid_name_maxlength` |
+| uppercase letters, spaces, `!`, `?` | `invalid_name_specials` |
+| hyphens only | `invalid_name_punctuation` |
+| a name any channel holds | `name_taken` |
+
+Slack does not lowercase a name: an uppercase letter is rejected, not folded.
+`name_taken` covers public, private, and archived channels alike. Asking for a
+public channel under a private channel's name is `name_taken`, and so is the
+name of an archived channel.
+
+##### One request, never retried
+
+The create is sent exactly once. A rate limit is reported as `rate_limited`
+(exit 3) with no retry: if the first request did run, a repeat answers
+`name_taken` and reports a failure for a channel that exists. After
+`rate_limited`, `timeout`, `network_error`, `http_error`, `parse_error`, or
+`unknown_error` the outcome is unknown: the answer never arrived or could not
+be read. The hint names the `slack channel info '#<name>'` check to run before
+trying again. After an error code of Slack's own no channel was created.
+
+##### Token
+
+The command uses the workspace (`T`-prefix) credential, as the other channel
+commands do, and sends no `team_id`. On Enterprise Grid the org (`E`-prefix)
+token answers `cannot_create_channel` without a `team_id`. With one it reaches
+name validation, but a create on that path was not run.
+
+Scopes on a bot token: `channels:manage` for a public channel and
+`groups:write` for a private one, both already requested for `channel kick`. A
+desktop session token needs neither. Only a private create on a desktop
+session token was run live. A public create and an OAuth bot token are covered
+by mock tests only.
+
+Errors are all fatal: the classified error on stderr, nothing on stdout, exit
+code as listed.
+
+- `name_taken` (exit 1): A channel already has the name.
+- `invalid_name_required`, `invalid_name_maxlength`, `invalid_name_specials`, `invalid_name_punctuation`, `invalid_name` (exit 1): Slack rejected the name. The hint states the rule.
+- `restricted_action` (exit 1): Workspace policy forbids this account creating this kind of channel.
+- `user_is_restricted`, `user_is_ultra_restricted` (exit 1): Guest accounts cannot create channels.
+- `no_permission`, `not_allowed_token_type`, `team_access_not_granted`, `access_denied` (exit 1): The credential may not create channels here.
+- `cannot_create_channel` (exit 1): An org token with no workspace. Select the workspace credential.
+- `missing_scope` (exit 2): The bot token predates the scopes above. Re-run `slack auth login`.
+- `not_authed`, `invalid_auth`, and the other auth codes (exit 2).
+- `rate_limited` (exit 3): Not retried. See above.
+- `timeout`, `http_error`, `parse_error`, `unknown_error` (exit 1), `network_error` (exit 4): Outcome unknown. See above.
+- Any other Slack code passes through with exit 1 and no hint.
+
+Slack API: `conversations.create`
 
 #### slack channel invite
 

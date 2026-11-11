@@ -222,6 +222,7 @@ slack channel list [--limit N] [--type all|public|private|mpim|im] [--query STR]
 slack channel info <channel>...
 slack channel members <channel> [--limit N]
 slack channel managers <channel>                       # "Managed by" users (session token)
+slack channel create <name> [--private]                # create one channel
 slack channel invite <recipient>...                    # add users to channels
 slack channel kick <recipient>...                      # remove users from channels
 ```
@@ -261,9 +262,22 @@ slack channel list --query ext-                        # find customer channels
 slack channel list --type private                      # private channels only
 slack channel list --include-non-member --query ext-   # slow; channels you haven't joined
 slack channel info https://acme.slack.com/archives/C01ABC --fields id,name,topic
+slack channel create eng-leads --private                 # then: slack channel invite '#eng-leads' @alice @bob
 slack channel invite @alice '#eng-a' '#eng-b' '#eng-c'   # one person, many channels
 slack channel kick '#eng-a' @alice @bob                  # many people, one channel
 ```
+
+`create` makes one channel and prints it in the `channel info` shape (`id`,
+`name`, `is_private`, ...). You are the only member, and there is no topic or
+invite flag: run `channel invite` next. Names are lowercase letters, digits,
+hyphens, and underscores, 80 characters at most. Slack rejects anything else
+(`invalid_name_specials` for uppercase or spaces) and the CLI does not rewrite
+the name. `name_taken` means some channel holds the name, including a private
+or archived one you cannot see. The request is sent once and never retried:
+after `rate_limited`, `timeout`, `network_error`, `http_error`, `parse_error`,
+or `unknown_error`, run `slack channel info '#name'` before trying again,
+because the channel may exist. Any other error means nothing was created. Never read
+`credentials.json` or call `conversations.create` by hand.
 
 `invite` and `kick` take mixed recipients: `@name`, an email, a `U…` id, or a
 profile URL is a person; everything else is a channel. Every recipient resolves

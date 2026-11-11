@@ -42,7 +42,7 @@ type CLI struct {
 	Auth      AuthCmd      `cmd:"" help:"Manage authentication."`
 	Bookmark  BookmarkCmd  `cmd:"" aliases:"bookmarks" help:"Channel bookmarks."`
 	Cache     CacheCmd     `cmd:"" help:"Cache management."`
-	Channel   ChannelCmd   `cmd:"" aliases:"channels" help:"Read channel information."`
+	Channel   ChannelCmd   `cmd:"" aliases:"channels" help:"Read, create, and manage the membership of channels."`
 	Dnd       DndCmd       `cmd:"" help:"Do Not Disturb info."`
 	Draft     DraftCmd     `cmd:"" aliases:"drafts" help:"Stage draft messages (requires session token)."`
 	Emoji     EmojiCmd     `cmd:"" aliases:"emojis" help:"Custom emoji."`

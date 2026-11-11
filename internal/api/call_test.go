@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -237,5 +239,58 @@ func TestRateLimitWait(t *testing.T) {
 				t.Errorf("got (%v, %v), want (%v, %v)", wait, ok, tt.wantWait, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestCallOnce_Success(t *testing.T) {
+	calls := 0
+	if err := CallOnce(context.Background(), testEndpoint, func() error { calls++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("got %d calls, want 1", calls)
+	}
+}
+
+// A rate limit comes back as the bare error after one attempt: no retry and
+// no RateLimitExhaustedError, which would claim attempts that never happened.
+func TestCallOnce_RateLimitIsNotRetried(t *testing.T) {
+	calls := 0
+	want := &slack.RateLimitedError{RetryAfter: time.Millisecond}
+	err := CallOnce(context.Background(), testEndpoint, func() error { calls++; return want })
+	if calls != 1 {
+		t.Errorf("got %d calls, want 1", calls)
+	}
+	var exhausted *RateLimitExhaustedError
+	if errors.As(err, &exhausted) {
+		t.Fatalf("got RateLimitExhaustedError, want the bare rate-limit error")
+	}
+	if !errors.Is(err, error(want)) {
+		t.Fatalf("got %v, want the fn error unchanged", err)
+	}
+}
+
+func TestCallOnce_CancelledContextSpendsNoRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	err := CallOnce(ctx, testEndpoint, func() error { calls++; return nil })
+	if !errors.Is(err, context.Canceled) || calls != 0 {
+		t.Fatalf("err = %v, calls = %d, want context.Canceled and 0 calls", err, calls)
+	}
+}
+
+func TestCallOnce_TraceEvent(t *testing.T) {
+	var buf bytes.Buffer
+	ctx := WithTracer(context.Background(), NewJSONLinesTracer(&buf))
+	_ = CallOnce(ctx, "write.endpoint", func() error { return errors.New("boom") })
+	out := buf.String()
+	for _, want := range []string{`"kind":"call"`, `"endpoint":"write.endpoint"`, `"attempt":1`, `"error":"boom"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("trace %q lacks %s", out, want)
+		}
+	}
+	if strings.Contains(out, `"kind":"retry"`) {
+		t.Errorf("trace has a retry event: %s", out)
 	}
 }

@@ -15,6 +15,7 @@ type ChannelCmd struct {
 	Info     ChannelInfoCmd     `cmd:"" help:"Show channel details."`
 	Members  ChannelMembersCmd  `cmd:"" help:"List channel members."`
 	Managers ChannelManagersCmd `cmd:"" help:"List a channel's Channel Managers."`
+	Create   ChannelCreateCmd   `cmd:"" help:"Create a channel."`
 	Invite   ChannelInviteCmd   `cmd:"" help:"Add users to channels."`
 	Kick     ChannelKickCmd     `cmd:"" help:"Remove users from channels."`
 }
