@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
 )
@@ -19,6 +20,7 @@ type infoMock struct {
 	errs       map[string]string
 	limitFirst map[string]int
 	limitAll   map[string]bool
+	hang       map[string]bool
 	calls      map[string]int
 }
 
@@ -29,6 +31,7 @@ func newInfoMock() *infoMock {
 		errs:       map[string]string{},
 		limitFirst: map[string]int{},
 		limitAll:   map[string]bool{},
+		hang:       map[string]bool{},
 		calls:      map[string]int{},
 	}
 }
@@ -49,7 +52,17 @@ func (m *infoMock) handler(w http.ResponseWriter, r *http.Request) {
 	code := m.errs[id]
 	name := m.names[id]
 	archived := m.archived[id]
+	hang := m.hang[id]
 	m.mu.Unlock()
+
+	if hang {
+		// Bounded, so srv.Close cannot wait forever on an abandoned request.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+		return
+	}
 
 	if limited {
 		w.Header().Set("Retry-After", "0")
@@ -259,6 +272,85 @@ func TestSectionFind_UnknownErrorFailsClosed(t *testing.T) {
 	out, err := runWithMockSession(t, sectionNamesMux(t, m), "section", "find", "ext-")
 	assertOutputErrorCode(t, err, "some_future_error")
 	assertFatalPage(t, out, "some_future_error", 0)
+}
+
+// --timeout expiring during the lookups is a failed read, not a section of
+// missing channels: no rows, a timeout trailer, even though the other
+// channels resolved.
+func TestSectionChannels_Timeout(t *testing.T) {
+	m := resolvingInfoMock()
+	m.hang["C02DEF"] = true
+
+	out, err := runWithMockSession(t, sectionNamesMux(t, m), "--timeout", "300ms", "section", "channels", "S01ABC")
+	assertTimeoutError(t, err)
+	meta := assertFatalPage(t, out, "timeout", 0)
+	if meta["has_more"] != true {
+		t.Errorf("meta = %v, want has_more:true", meta)
+	}
+}
+
+// --quiet prints nothing and keeps both exit codes.
+func TestSectionChannels_Quiet(t *testing.T) {
+	m := resolvingInfoMock()
+	m.errs["C02DEF"] = "channel_not_found"
+	out, err := runWithMockSession(t, sectionNamesMux(t, m), "--quiet", "section", "channels", "S01ABC")
+	assertExitError(t, err)
+	if out != "" {
+		t.Errorf("expected no stdout under --quiet, got %q", out)
+	}
+
+	m = resolvingInfoMock()
+	m.errs["C02DEF"] = "some_future_error"
+	out, err = runWithMockSession(t, sectionNamesMux(t, m), "--quiet", "section", "channels", "S01ABC")
+	assertOutputErrorCode(t, err, "some_future_error")
+	if out != "" {
+		t.Errorf("expected no stdout under --quiet, got %q", out)
+	}
+}
+
+// A section listing the same channel twice gets one row per listing, each
+// from its own lookup.
+func TestSectionChannels_DuplicateID(t *testing.T) {
+	sections := []map[string]any{{
+		"channel_section_id": "S01ABC",
+		"name":               "Customers",
+		"type":               "channels",
+		"channel_ids_page":   map[string]any{"channel_ids": []string{"C01ABC", "C02DEF", "C01ABC"}},
+	}}
+	m := resolvingInfoMock()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.channelSections.list", sectionListHandler(t, sections))
+	mux.HandleFunc("/api/conversations.info", m.handler)
+
+	out, err := runWithMockSession(t, mux, "section", "channels", "S01ABC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := rowsAndMeta(t, out)
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3:\n%s", len(rows), out)
+	}
+	assertExactRow(t, rows[0], map[string]any{"id": "C01ABC", "name": "ext-acme", "is_archived": false})
+	assertExactRow(t, rows[1], map[string]any{"id": "C02DEF", "name": "ext-globex", "is_archived": false})
+	assertExactRow(t, rows[2], map[string]any{"id": "C01ABC", "name": "ext-acme", "is_archived": false})
+}
+
+// A pattern nothing matches still reports the channel it could not read, and
+// --fields cannot strip that row's marker.
+func TestSectionFind_NoMatchButUnresolved(t *testing.T) {
+	m := resolvingInfoMock()
+	m.errs["C04JKL"] = "channel_not_found"
+
+	out, err := runWithMockSession(t, sectionNamesMux(t, m), "section", "find", "zzz", "--fields", "id,name")
+	assertExitError(t, err)
+	rows, meta := rowsAndMeta(t, out)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1:\n%s", len(rows), out)
+	}
+	assertExactRow(t, rows[0], map[string]any{"id": "C04JKL", "enrich_error": "channel_not_found"})
+	if meta["error_count"] != float64(1) {
+		t.Errorf("meta = %v, want error_count:1", meta)
+	}
 }
 
 // assertExactRow requires the row to hold exactly these keys and values, so a
