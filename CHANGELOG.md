@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.13.1](https://github.com/tammersaleh/slack-cli/compare/v5.13.0...v5.13.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* let --fields name a derived field such as user_name or ts_iso ([fd09878](https://github.com/tammersaleh/slack-cli/commit/fd098783a36731b935099e3b86cdf001e7de2b5d))
+* make saved list --limit set the page size ([38bbfcc](https://github.com/tammersaleh/slack-cli/commit/38bbfcc408df62e6a85dc20f45cdec35c049ed9d))
+
 ## [5.13.0](https://github.com/tammersaleh/slack-cli/compare/v5.12.0...v5.13.0) (2026-11-10)
 
 
