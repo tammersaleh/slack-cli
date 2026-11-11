@@ -797,6 +797,31 @@ the same account - another Desktop, a browser tab - could tombstone a
 well-formed draft during its own reconciliation. Nothing we can do
 about that from the CLI side.
 
+Replacing a tombstoned draft is the default and there is no flag to turn it
+off (decided 2026-11-10). The old draft stays in `drafts.list` as a
+tombstone. `drafts.delete` rejects it, and `draft delete` reports it as
+`already_deleted`.
+
+### Parked: why a well-formed CLI draft is tombstoned at all
+
+Two reports on 2026-08-03 showed drafts tombstoned that passed
+`validateBlockShapes`, so the block-shape rule above does not explain every
+tombstone. Both were drafts to several `user_ids` whose group DM did not
+exist yet. The untested hypothesis is that a `user_ids` draft to a
+conversation that does not exist is tombstoned when a client reconciles it.
+
+Testing it means creating a draft addressed to other users and comparing
+`is_deleted` a minute later against a channel draft made in the same run.
+The repo allows draft writes only in a self-DM, so the question is parked
+until the owner runs that comparison himself. Two reports are a lead, not a
+finding.
+
+Also unmeasured: whether a tombstoned draft still shows in the Drafts panel
+(if Desktop wrote the tombstone it should already hide it), and whether
+`drafts.update` on a live draft ever returns a new id by itself. The stderr
+`draft_tombstoned` warning says the draft was tombstoned "by Slack Desktop
+(likely viewed there)", which is a guess, not something the CLI observed.
+
 ## If Slack changes the API
 
 Symptoms to watch for:
