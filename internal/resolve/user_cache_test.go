@@ -302,33 +302,50 @@ func TestLookupUser_FileCacheNotWritten(t *testing.T) {
 	}
 }
 
-// TestLookupUser_IndexesName verifies the single-user fetch via users.info
-// also wires the user into the name index, so a follow-up @name lookup in
-// the same session hits memory cache instead of forcing a users.list load.
-func TestLookupUser_IndexesName(t *testing.T) {
+// A cache holding only users fetched one at a time cannot answer a name: it
+// cannot rule out a second holder. The name lookup loads the directory, and
+// the account fetched first gets no head start. Here the deactivated holder of
+// a shared display name is fetched by ID, and the name still resolves to the
+// active one.
+func TestResolveUser_NameAfterSingleFetchLoadsTheDirectory(t *testing.T) {
+	users := []slack.User{
+		{ID: "U001", Name: "aadams-old", Deleted: true, Profile: slack.UserProfile{DisplayName: "Alice Adams"}},
+		{ID: "U002", Name: "aadams", RealName: "Alice Adams", Profile: slack.UserProfile{DisplayName: "Alice Adams"}},
+	}
+	listCalls := 0
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/users.info", usersInfoHandler(t, testUsers()))
+	mux.HandleFunc("/api/users.info", usersInfoHandler(t, users))
 	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("users.list should not be called; @name should resolve from the cache populated by users.info")
+		listCalls++
+		usersListHandler(t, users)(w, r)
 	})
-	client := newTestClient(t, mux)
-
-	r := NewResolver(client, "T123", t.TempDir())
+	r := NewResolver(newTestClient(t, mux), "T123", t.TempDir())
 	ctx := context.Background()
 
-	// Populate the cache via LookupUser (simulates enrichment of a message).
 	if _, _, err := r.LookupUser(ctx, "U001"); err != nil {
 		t.Fatal(err)
 	}
+	if listCalls != 0 {
+		t.Fatalf("users.list calls after a single-ID lookup = %d, want 0", listCalls)
+	}
 
-	// ResolveUser(@alice) should now find U001 in usersByName without
-	// bulk-loading.
-	id, err := r.ResolveUser(ctx, "@alice")
+	id, err := r.ResolveUser(ctx, "@Alice Adams")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "U001" {
-		t.Errorf("got %q, want %q", id, "U001")
+	if id != "U002" {
+		t.Errorf("got %q, want the active account U002", id)
+	}
+	if listCalls != 1 {
+		t.Errorf("users.list calls = %d, want 1: a partial cache must not answer a name", listCalls)
+	}
+
+	// The directory is complete now; a second name costs nothing.
+	if _, err := r.ResolveUser(ctx, "@aadams-old"); err != nil {
+		t.Fatal(err)
+	}
+	if listCalls != 1 {
+		t.Errorf("users.list calls after a second name = %d, want 1", listCalls)
 	}
 }
 

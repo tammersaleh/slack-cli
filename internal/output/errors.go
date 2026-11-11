@@ -1,6 +1,9 @@
 package output
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Helpers for common recoverable errors. Each returns an *Error whose Hint
 // field names the concrete command an agent can run to recover: a naming
@@ -26,6 +29,9 @@ func (e *Error) AsItem() map[string]any {
 	if e.Hint != "" {
 		m["hint"] = e.Hint
 	}
+	if len(e.Candidates) > 0 {
+		m["candidates"] = e.Candidates
+	}
 	return m
 }
 
@@ -50,6 +56,32 @@ func UserNotFound(input string) *Error {
 		Hint:   fmt.Sprintf("Run 'slack user list --all --query %s' to find users by display or real name, or 'slack user info <id-or-email>' if you have one. --query filters client-side and searches one page without --all; 'filter_exhaustive' in the trailer says whether the search was complete. Note: users.lookupByEmail can fail on Enterprise Grid with a session token; use @name instead.", input),
 		Input:  input,
 		Code:   ExitGeneral,
+	}
+}
+
+// AmbiguousUser is returned when a name matches two or more users that the
+// resolver's ranking (handle first, active first) cannot tell apart. Nothing
+// is picked: the candidates are listed, in the detail for a reader of stderr
+// and as a field for a program, and the caller retries with one of them.
+func AmbiguousUser(input string, candidates []UserCandidate) *Error {
+	parts := make([]string, len(candidates))
+	for i, c := range candidates {
+		desc := c.ID
+		if c.Title != "" {
+			desc += ", " + c.Title
+		}
+		if c.Deleted {
+			desc += ", deactivated"
+		}
+		parts[i] = fmt.Sprintf("@%s (%s)", c.Name, desc)
+	}
+	return &Error{
+		Err:        "ambiguous_user",
+		Detail:     fmt.Sprintf("'%s' matches %d users: %s", input, len(candidates), strings.Join(parts, "; ")),
+		Hint:       "Retry with one candidate's @handle (the 'name' field) or user ID.",
+		Input:      input,
+		Candidates: candidates,
+		Code:       ExitGeneral,
 	}
 }
 

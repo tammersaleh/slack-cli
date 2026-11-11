@@ -46,7 +46,9 @@ Slack itself only matches handles; a real name sent raw matches nothing.
 An unquoted multi-word name runs to the next modifier; the longest prefix
 that resolves wins, so 'from:@Alice Adams skypilot' works. Quote it to
 be explicit: from:"Alice Adams". An unresolvable name fails with
-user_not_found instead of returning an empty page.
+user_not_found instead of returning an empty page, and a name several
+people share fails with ambiguous_user and lists them: rerun with
+from:@handle or from:<@Uxxx>.
 
 Slack ORs repeated from: modifiers: 'from:@alice from:@bob' returns both
 people's messages. Run with --trace to see the query as sent, with every

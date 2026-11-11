@@ -33,7 +33,25 @@ func (c *CLI) channelResolveError(input string, err error) *output.Error {
 // these may become a per-input row or a passed-through filter value; every
 // other error, including one nobody has enumerated, stops the command.
 func isInputResolveErr(err error) bool {
+	if _, ambiguous := ambiguousUserError(err); ambiguous {
+		return true
+	}
 	return errors.Is(err, resolve.ErrBadURL) || errors.Is(err, resolve.ErrNotFound)
+}
+
+// ambiguousUserError maps the resolver's verdict that a name matches several
+// users of equal rank to ambiguous_user, listing each candidate's handle,
+// title, and ID. ok is false for any other error.
+func ambiguousUserError(err error) (*output.Error, bool) {
+	var amb *resolve.AmbiguousUserError
+	if !errors.As(err, &amb) {
+		return nil, false
+	}
+	candidates := make([]output.UserCandidate, len(amb.Candidates))
+	for i, u := range amb.Candidates {
+		candidates[i] = output.UserCandidate{ID: u.ID, Name: u.Name, Title: u.Profile.Title, Deleted: u.Deleted}
+	}
+	return output.AmbiguousUser(amb.Input, candidates), true
 }
 
 // withAuthMethod runs fn with cli.authMethod set to method and restores the
@@ -77,10 +95,14 @@ func resolveInputs(ctx context.Context, inputs []string, resolveFn func(context.
 }
 
 // userResolveError is the user-arg counterpart of channelResolveError: a bad
-// URL is invalid_input, a clean miss is user_not_found, and a lookup that
-// failed (the directory walk, users.lookupByEmail) keeps its own code and
-// exit. A new verdict on the input gets a case here and in isInputResolveErr.
+// URL is invalid_input, a clean miss is user_not_found, a name several users
+// hold is ambiguous_user, and a lookup that failed (the directory walk,
+// users.lookupByEmail) keeps its own code and exit. A new verdict on the
+// input gets a case here and in isInputResolveErr.
 func (c *CLI) userResolveError(input string, err error) *output.Error {
+	if amb, ok := ambiguousUserError(err); ok {
+		return amb
+	}
 	switch {
 	case errors.Is(err, resolve.ErrBadURL):
 		return output.InvalidURL(input, err.Error())

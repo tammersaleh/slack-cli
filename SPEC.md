@@ -132,6 +132,7 @@ unchanged. The codes the CLI raises for failures Slack did not name:
   `files.list` (exit 1). The request is never sent, because Slack answers a
   page above 100 with page 1 again. Terminal: the trailer has `has_more:false`
   and no cursor. See "The 100-page cap" under `search messages`.
+- `ambiguous_user` - a user name matches two or more users of equal rank (exit 1). `candidates` lists each one's `id`, `name` (the handle), and `title`. See "User names" under "Name Resolution".
 - `unknown_error` - the CLI did not recognize the failure. Read `detail` (exit 1).
 
 `channel_not_found` and `user_not_found` mean a lookup ran to completion and
@@ -357,7 +358,7 @@ Anywhere a user is required, the CLI accepts:
 
 - User ID: `U01234ABCDE`
 - Email: `tammer@example.com`
-- Display name / username / real name: `@tammer` (resolved from the cached user list)
+- Name: `@tammer`, a handle (Slack's `name`), display name, or real name, matched against the cached user list (see "User names" below)
 - User URL: `https://acme.slack.com/team/U01234ABCDE`, the enterprise `/user/@W…` profile form, or `app.slack.com/client/<team>/U01234ABCDE`
 
 A file URL embeds the uploader's user ID but identifies a file, so it is not accepted as a user. Wrong-kind or malformed URLs are rejected as `invalid_input`.
@@ -365,12 +366,33 @@ A file URL embeds the uploader's user ID but identifies a file, so it is not acc
 An email or `@name` is read from the user cache, which is rebuilt by walking the whole `users.list` directory when missing or stale. The lookup ends one of three ways:
 
 - A hit returns the ID.
+- A name that several users hold with equal rank is `ambiguous_user` (see "User names" below). Nothing is picked.
 - A clean miss is `user_not_found`. For a name, the directory loaded and does not hold it. For an email, the directory loaded without it and `users.lookupByEmail` answered `users_not_found`.
 - Anything else is a failed lookup, reported as the error that caused it with that error's exit code: a directory walk that hit `invalid_auth` (exit 2), exhausted its 5 attempts on a page (`rate_limited`, exit 3, `endpoint: users.list`), or ran out of `--timeout`, or a `users.lookupByEmail` call that failed some other way (`missing_scope`, for example).
 
 When the directory walk fails, an email still tries `users.lookupByEmail`, and a hit there answers. A miss there does not: that endpoint does not see every account the directory holds, so the walk's error is reported.
 
-A command that takes several users and prints a row for each (`user info`, `user manager-chain`, `status get`, `presence get`, `dnd info`) resolves all of them before it prints a row. A failed lookup stops the command with no rows, only the `{"_meta":{"has_more":true,"error":"<code>"}}` trailer and the error on stderr. A clean miss is that input's own `user_not_found` row and the other inputs still get theirs.
+A command that takes several users and prints a row for each (`user info`, `user manager-chain`, `status get`, `presence get`, `dnd info`) resolves all of them before it prints a row. A failed lookup stops the command with no rows, only the `{"_meta":{"has_more":true,"error":"<code>"}}` trailer and the error on stderr. A clean miss is that input's own `user_not_found` row, an ambiguous name is that input's own `ambiguous_user` row, and the other inputs still get theirs.
+
+#### User names
+
+A name matches a user's handle, display name, or real name, exactly and case-insensitively. A leading `@` is optional and ignored. When more than one user matches, the lookup ranks them:
+
+1. A handle match beats a display name or real name match. `@aadams` names the account whose handle is `aadams`, even when another account's display name is "aadams", and even when the `aadams` account is deactivated. The handle is how to ask for one specific account.
+2. Among the matches left, an active account beats a deactivated one (`deleted: true`). A deactivated account answers by name only when no active account holds the name at that rank.
+3. If two or more users are still tied, the lookup fails with `ambiguous_user`. It does not pick one.
+
+The answer is the same on every run. It does not depend on cache order or on which users an earlier lookup fetched. Bots and app users are ranked like any other account. Channels are different: a duplicated channel name still resolves to the first match.
+
+`ambiguous_user` (exit 1) lists every tied user, sorted by ID, in `candidates` and in `detail`. Retry with one candidate's handle (`@` plus its `name`) or its `id`:
+
+```json
+{"error":"ambiguous_user","detail":"'@Alice Adams' matches 2 users: @aadams (U01XYZ, Staff Engineer); @aadams2 (U02MGR)","hint":"Retry with one candidate's @handle (the 'name' field) or user ID.","input":"@Alice Adams","candidates":[{"id":"U01XYZ","name":"aadams","title":"Staff Engineer"},{"id":"U02MGR","name":"aadams2","title":""}]}
+```
+
+A candidate carries `deleted: true` when it is deactivated, which happens only when every holder of the name is. In a per-input row `candidates` survives `--fields`. A command that acts on the user (`draft create`, `channel invite`, `channel kick`, `list record add`/`update`, `file list --user`, a `from:`/`to:`/`in:` search modifier) fails with it before any other request.
+
+A name is answered only from the whole directory. Users fetched one at a time by ID earlier in the same run do not count as a directory, so a name lookup after them still loads it.
 
 ## Pagination
 
@@ -733,7 +755,7 @@ aborts the command with no rows and no API writes: a malformed URL is
 `invalid_input`, a channel name that matches nothing is `channel_not_found`
 naming the input, and a channel lookup that failed keeps its own code and exit
 (`invalid_auth`, `rate_limited`, ...). Users follow the same rule: a clean
-miss is `user_not_found`, a failed directory walk is its own error. Ids and URLs pass through without an existence check. Repeated inputs
+miss is `user_not_found`, a name several users hold is `ambiguous_user`, a failed directory walk is its own error. Ids and URLs pass through without an existence check. Repeated inputs
 dedupe by resolved id, first-seen order.
 
 One `conversations.invite` call per (channel, user) pair, sequential, channels
@@ -790,6 +812,7 @@ Errors:
 
 - `invalid_input` (exit 1): No channel recipient, no user recipient, or a malformed Slack URL. No API call is made.
 - `channel_not_found` / `user_not_found` (exit 1): A recipient did not resolve. No write is made.
+- `ambiguous_user` (exit 1): A user name matches several users of equal rank. No write is made.
 - `not_authed` (exit 2): No token.
 
 Slack API: `conversations.invite`
@@ -1063,7 +1086,8 @@ Every input resolves before the first row. A directory walk or
 `users.lookupByEmail` call that fails stops the run with no rows at all:
 stdout is the trailer alone, and the error keeps its own code and exit. Only an
 input that matches no user in a directory that loaded is a `user_not_found`
-row. See "Name Resolution".
+row, and a name several users hold is an `ambiguous_user` row. See "Name
+Resolution".
 
 `users.profile.get` is rate-limited after a few calls, and reports it in the
 response body with no `Retry-After`. Each `users.info` and profile fetch goes
@@ -1074,6 +1098,7 @@ stop with the trailer above. Spacing calls about 15 seconds apart has worked.
 Errors:
 
 - `user_not_found` (exit 1): No user matching the input. A per-input row.
+- `ambiguous_user` (exit 1): The name matches several users of equal rank. A per-input row with `candidates`.
 - Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `missing_scope` (exit 2): Token lacks `users.profile:read` (with `--full`).
 - `rate_limited` (exit 3): Rate limit outlasted the retries.
@@ -1123,6 +1148,7 @@ retry as `user info --full`.
 Errors:
 
 - `user_not_found` (exit 1): Root user not found. A per-input row.
+- `ambiguous_user` (exit 1): The name matches several users of equal rank. A per-input row with `candidates`.
 - Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `missing_scope` (exit 2): Token lacks `users.profile:read`.
 - `rate_limited` (exit 3): Rate limit outlasted the retries.
@@ -1209,11 +1235,14 @@ keeps `skypilot` as free text. Quoted forms `from:"Alice Adams"`, `from:"@Alice 
 `from:@"Alice Adams"` take the name whole; the `@` is optional inside quotes for
 `from:`/`to:` but required for `in:`, whose quoted value may be a channel. Values not starting with `@`
 (`in:#general`, `from:<@U01XYZ>`) pass through untouched. A name that does not
-resolve fails with `user_not_found` (exit 1) before any search call. A
+resolve fails with `user_not_found` (exit 1) before any search call. A name
+several users hold with equal rank fails with `ambiguous_user` (exit 1), also
+before any search call; its hint names the forms that pick one candidate
+(`from:@handle`, `from:<@Uxxx>`). An ambiguous span ends the lookup: the CLI
+does not go on to a shorter prefix, which could name someone else. A
 directory walk that fails is not a verdict on the name: the command stops
 before any search call with that failure's own code and exit (`invalid_auth`
-exit 2, `rate_limited` exit 3). A name two
-users share resolves to whichever the cache indexed first. Applies to `search
+exit 2, `rate_limited` exit 3). Applies to `search
 files` too.
 
 Slack ORs repeated `from:` modifiers: `from:@alice from:@bob` returns messages
@@ -1348,7 +1377,8 @@ with `--channel`, `--user`, or `--types` to read past it.
 `files.list` as typed. A malformed URL is `invalid_input`, and a name lookup
 that failed (auth, rate limit, `--timeout`) is fatal under its own code rather
 than a filter on an unresolved name. `--user` is strict: a user that matches
-nothing is `user_not_found`, and a failed lookup is fatal under its own code.
+nothing is `user_not_found`, a name several users hold is `ambiguous_user`,
+and a failed lookup is fatal under its own code.
 
 Errors:
 
@@ -1742,7 +1772,7 @@ stores a select value that is not one of the choices:
 - `checkbox`: `true` or `false` (a JSON bool on stdin).
 - `number`: a decimal number (JSON number syntax), finite. Sent as typed, so `3.50` stays `3.50`.
 - `date`: a real calendar date `YYYY-MM-DD`.
-- `user`: `@name`, email, `U…` id, or profile URL, resolved before the write (`user_not_found` makes no call).
+- `user`: `@name`, email, `U…` id, or profile URL, resolved before the write (`user_not_found` and `ambiguous_user` make no call).
 - `channel`: `#name`, `C…` id, or channel URL, resolved before the write (`channel_not_found`). A name resolves on the workspace (`T`) credential, because on Enterprise Grid the org token the other list calls use cannot list channels; ids and URLs need no workspace credential, and a name without one is `not_authed`.
 - `email`: one address.
 - `link`: an `http(s)` URL.
@@ -1794,6 +1824,7 @@ Errors:
 - `column_not_found` / `ambiguous_column` (exit 1): As for `list column`. No write is made.
 - `invalid_choice` (exit 1): A select value matching no choice. No write is made.
 - `user_not_found` / `channel_not_found` (exit 1): A user or channel column value matched nothing. No write is made. A lookup that failed keeps its own code and exit, also with no write.
+- `ambiguous_user` (exit 1): A user column value names several users of equal rank. No write is made.
 - `file_not_found` / `not_a_list` (exit 1): As for `list info`.
 - `record_not_found` (exit 1): `update` named a record Slack does not have.
 - `invalid_arguments`, `invalid_option_id` (exit 1): Slack rejected a payload; `detail` carries `response_metadata.messages`.
@@ -1871,6 +1902,7 @@ $ slack status get tammer@example.com alice@example.com
 Errors:
 
 - `user_not_found` (exit 1): No user matching the input. A per-input row.
+- `ambiguous_user` (exit 1): The name matches several users of equal rank. A per-input row with `candidates`.
 - Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `not_authed` (exit 2): No token.
 
@@ -1891,6 +1923,7 @@ $ slack presence get tammer@example.com
 Errors:
 
 - `user_not_found` (exit 1): No user matching the input. A per-input row.
+- `ambiguous_user` (exit 1): The name matches several users of equal rank. A per-input row with `candidates`.
 - Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `not_authed` (exit 2): No token.
 
@@ -1911,6 +1944,7 @@ $ slack dnd info tammer@example.com
 Errors:
 
 - `user_not_found` (exit 1): No user matching the input. A per-input row.
+- `ambiguous_user` (exit 1): The name matches several users of equal rank. A per-input row with `candidates`.
 - Any other code from resolving an input (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 - `not_authed` (exit 2): No token.
 
@@ -2563,6 +2597,7 @@ Errors:
 
 - `channel_not_found` (exit 1): No channel matching the input.
 - `user_not_found` (exit 1): One or more user recipients matched no user (the message lists every unresolved input).
+- `ambiguous_user` (exit 1): A user recipient's name matches several users of equal rank. Reported for the first such recipient, with its `candidates`. No write is made.
 - Any other code from resolving a recipient (`invalid_auth`, `rate_limited`, `timeout`, `enterprise_is_restricted`, ...): the lookup failed. No write is made.
 - `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset above; the detail names the line.

@@ -195,8 +195,8 @@ func TestSetUserMaps_IndexesEachFieldIndependently(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := NewResolver(nil, "", "")
 			r.setUserMaps(map[string]slack.User{tt.user.ID: tt.user})
-			if got := r.usersByName[tt.lookup]; got != tt.user.ID {
-				t.Errorf("usersByName[%q] = %q, want %q", tt.lookup, got, tt.user.ID)
+			if got, err := r.userIDByName(tt.lookup); err != nil || got != tt.user.ID {
+				t.Errorf("userIDByName(%q) = %q, %v, want %q", tt.lookup, got, err, tt.user.ID)
 			}
 		})
 	}
@@ -214,8 +214,7 @@ func TestSetUserMaps_IndexesEachFieldIndependently(t *testing.T) {
 // addUserToCache is the single-user insert path, used when LookupUser falls back
 // to users.info. Its indexing must match setUserMaps' bulk indexing, or a name
 // resolved after a single-ID fetch behaves differently from the same name after
-// a bulk load. The duplicated field guards are why this needs its own test -
-// exercising setUserMaps says nothing about this function.
+// a bulk load.
 func TestAddUserToCache_MirrorsBulkIndexing(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -250,8 +249,8 @@ func TestAddUserToCache_MirrorsBulkIndexing(t *testing.T) {
 			r.addUserToCache(tt.user)
 
 			if tt.byName != "" {
-				if got := r.usersByName[tt.byName]; got != tt.user.ID {
-					t.Errorf("usersByName[%q] = %q, want %q", tt.byName, got, tt.user.ID)
+				if got, err := r.userIDByName(tt.byName); err != nil || got != tt.user.ID {
+					t.Errorf("userIDByName(%q) = %q, %v, want %q", tt.byName, got, err, tt.user.ID)
 				}
 			}
 			if tt.wantEmail != "" {

@@ -44,7 +44,8 @@ var modifierShapedPattern = regexp.MustCompile(`^-?[A-Za-z_]+:\S`)
 // Tokens are re-joined with single spaces; Slack search ignores the
 // difference.
 //
-// A name that matches no user is a user_not_found *output.Error. A lookup that
+// A name that matches no user is a user_not_found *output.Error, and one that
+// several users hold with equal rank is ambiguous_user. A lookup that
 // failed (the directory walk hit a rate limit, a bad token) comes back as the
 // resolver's raw error for the caller to classify.
 func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (string, error) {
@@ -83,6 +84,9 @@ func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (st
 		if quoted {
 			id, err := r.ResolveUser(ctx, name)
 			if err != nil {
+				if amb, ok := searchAmbiguousUser(err); ok {
+					return "", amb
+				}
 				if !isInputResolveErr(err) {
 					return "", err
 				}
@@ -103,7 +107,14 @@ func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (st
 			candidate := strings.Join(append([]string{name}, span[:n]...), " ")
 			id, err := r.ResolveUser(ctx, candidate)
 			if err != nil {
-				// Only a verdict on this candidate moves on to a shorter
+				// A span several users hold stops the rewrite. Moving on to
+				// a shorter span would resolve `from:@Alice Adams` to
+				// whoever holds the handle "alice" and search the wrong
+				// person, exit 0.
+				if amb, ok := searchAmbiguousUser(err); ok {
+					return "", amb
+				}
+				// Only a clean miss on this candidate moves on to a shorter
 				// one. A failed lookup would fail for every prefix and end
 				// as a false user_not_found.
 				if !isInputResolveErr(err) {
@@ -121,6 +132,17 @@ func rewriteUserModifiers(ctx context.Context, r userResolver, query string) (st
 		}
 	}
 	return strings.Join(out, " "), nil
+}
+
+// searchAmbiguousUser is ambiguous_user with a search-specific hint naming
+// the modifier forms that pick one candidate.
+func searchAmbiguousUser(err error) (*output.Error, bool) {
+	e, ok := ambiguousUserError(err)
+	if !ok {
+		return nil, false
+	}
+	e.Hint = "Name one candidate by handle (from:@handle, the 'name' field) or by ID (from:<@U01XYZ>). If the name was meant to end sooner, quote it: from:\"@Alice Adams\"."
+	return e, true
 }
 
 // searchUserNotFound is user_not_found with a search-specific hint: the

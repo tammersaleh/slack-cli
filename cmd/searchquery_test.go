@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
 	"github.com/tammersaleh/slack-cli/internal/resolve"
 )
@@ -15,12 +16,18 @@ import (
 // fakeUserResolver resolves names case-insensitively from a fixed map and
 // records every lookup it was asked for.
 type fakeUserResolver struct {
-	users map[string]string
-	asked []string
+	users     map[string]string
+	ambiguous map[string]bool // lowercased names several users hold
+	asked     []string
 }
 
 func (f *fakeUserResolver) ResolveUser(_ context.Context, input string) (string, error) {
 	f.asked = append(f.asked, input)
+	if f.ambiguous[strings.ToLower(input)] {
+		return "", &resolve.AmbiguousUserError{Input: input, Candidates: []slack.User{
+			{ID: "U01XYZ", Name: "aadams"}, {ID: "U02MGR", Name: "aadams2"},
+		}}
+	}
 	if id, ok := f.users[strings.ToLower(input)]; ok {
 		return id, nil
 	}
@@ -151,6 +158,44 @@ func TestRewriteUserModifiers_LongestPrefixLookupOrder(t *testing.T) {
 	want := []string{"Alice Adams skypilot", "Alice Adams"}
 	if !reflect.DeepEqual(r.asked, want) {
 		t.Errorf("lookups = %#v, want %#v", r.asked, want)
+	}
+}
+
+// An ambiguous span ends the rewrite. The reported risk is the unquoted
+// path's fallback: "Alice Adams" is shared, "alice" is someone's handle, and
+// trying the shorter span would search that third person with exit 0.
+func TestRewriteUserModifiers_AmbiguousSpanDoesNotFallBackToAShorterOne(t *testing.T) {
+	tests := []struct {
+		name      string
+		in        string
+		wantAsked []string
+	}{
+		{"unquoted, longer spans miss first", "from:@Alice Adams skypilot", []string{"Alice Adams skypilot", "Alice Adams"}},
+		{"unquoted, whole span", "skypilot from:@Alice Adams", []string{"Alice Adams"}},
+		{"quoted", `from:"Alice Adams" skypilot`, []string{"Alice Adams"}},
+		{"negated", "-from:@Alice Adams", []string{"Alice Adams"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newFakeUserResolver()
+			delete(r.users, "alice adams")
+			r.ambiguous = map[string]bool{"alice adams": true}
+
+			out, err := rewriteUserModifiers(context.Background(), r, tt.in)
+			var oe *output.Error
+			if !errors.As(err, &oe) || oe.Err != "ambiguous_user" {
+				t.Fatalf("got %q, %v, want ambiguous_user", out, err)
+			}
+			if len(oe.Candidates) != 2 || oe.Candidates[0].Name != "aadams" {
+				t.Errorf("candidates = %+v, want both holders", oe.Candidates)
+			}
+			if !strings.Contains(oe.Hint, "from:@handle") || !strings.Contains(oe.Hint, "<@U") {
+				t.Errorf("hint = %q, want the handle and ID modifier forms", oe.Hint)
+			}
+			if !reflect.DeepEqual(r.asked, tt.wantAsked) {
+				t.Errorf("lookups = %#v, want %#v: nothing shorter may be tried", r.asked, tt.wantAsked)
+			}
+		})
 	}
 }
 

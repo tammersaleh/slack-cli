@@ -25,7 +25,18 @@ type Error struct {
 	Hint     string `json:"hint,omitempty"`
 	Input    string `json:"input,omitempty"`
 	Endpoint string `json:"endpoint,omitempty"`
-	Code     int    `json:"-"`
+	// Candidates lists the users an ambiguous_user input matched.
+	Candidates []UserCandidate `json:"candidates,omitempty"`
+	Code       int             `json:"-"`
+}
+
+// UserCandidate is one user an ambiguous name matched: enough to tell the
+// candidates apart and to retry with one (by @handle or ID).
+type UserCandidate struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"` // the handle
+	Title   string `json:"title"`
+	Deleted bool   `json:"deleted,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -171,6 +182,9 @@ func (p *Printer) PrintError(e *Error) error {
 // should never be able to manufacture. The command still exits nonzero, but the
 // exit code cannot say which row was affected.
 //
+// "candidates" is what makes an ambiguous_user row usable: the row exists to
+// say which users the name matched.
+//
 // "replaced_draft_id" is the same kind of marker on a success row: draft update
 // printed a different draft from the one the caller named. Without it a
 // filtered row shows a new id and nothing to say the draft was re-keyed.
@@ -178,6 +192,7 @@ var alwaysKeptFields = map[string]bool{
 	"input":             true,
 	"error":             true,
 	"enrich_error":      true,
+	"candidates":        true,
 	"replaced_draft_id": true,
 }
 

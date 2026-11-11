@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,6 +37,10 @@ type userFileCache struct {
 // lookup answers. An email the cache does not hold then falls back to
 // users.lookupByEmail; a name has no fallback.
 //
+// A name matches a handle, display name, or real name, case-insensitively and
+// exactly. userIDByName has the ranking; a name it cannot rank to one user is
+// an *AmbiguousUserError.
+//
 // The error is ErrBadURL for an unusable Slack URL, ErrNotFound for a clean
 // miss, or the raw error of the call that failed:
 //
@@ -49,9 +54,7 @@ type userFileCache struct {
 //     endpoint does not see every account the directory holds, so its
 //     users_not_found proves nothing on its own.
 //
-// Callers tell the kinds apart with errors.Is and errors.As. A further typed
-// error (an ambiguous name, say) belongs beside ErrNotFound in the lookup
-// below and in the cmd package's userResolveError.
+// Callers tell the kinds apart with errors.Is and errors.As.
 func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error) {
 	if id, handled, err := userIDFromURL(input); handled {
 		return id, err
@@ -92,17 +95,73 @@ func (r *Resolver) ResolveUser(ctx context.Context, input string) (string, error
 	return r.userIDByName(input)
 }
 
+// AmbiguousUserError is a name that two or more users hold with nothing to
+// rank one above the other. Candidates are sorted by ID. It is a verdict on
+// the input, like ErrNotFound: the directory loaded and the name does not
+// pick one user.
+type AmbiguousUserError struct {
+	Input      string
+	Candidates []slack.User
+}
+
+func (e *AmbiguousUserError) Error() string {
+	ids := make([]string, len(e.Candidates))
+	for i, u := range e.Candidates {
+		ids[i] = u.ID
+	}
+	return fmt.Sprintf("user %q: name matches %d users (%s)", e.Input, len(ids), strings.Join(ids, ", "))
+}
+
 // userIDByName answers a name lookup from a loaded directory. Its error is a
 // verdict on the name, never on the lookup.
+//
+// The match is case-insensitive and exact. A handle match outranks a display
+// name or real name match, whatever the accounts' state: a handle is the one
+// name a caller can use to ask for a specific account, a deactivated one
+// included. Within the winning tier an active account outranks a deactivated
+// one, so a deactivated account answers only when no active account holds the
+// name there. Whatever is still tied is an AmbiguousUserError; nothing picks
+// between two accounts of equal rank.
+//
+// The ranking reads the user records at lookup, so the answer does not depend
+// on the order users entered the cache.
 func (r *Resolver) userIDByName(input string) (string, error) {
-	name := strings.TrimPrefix(input, "@")
+	key := strings.ToLower(strings.TrimPrefix(input, "@"))
 	r.mu.RLock()
-	id, ok := r.usersByName[strings.ToLower(name)]
-	r.mu.RUnlock()
-	if !ok {
-		return "", userNotFound(input)
+	defer r.mu.RUnlock()
+	for _, tier := range [][]string{r.usersByHandle[key], r.usersByLabel[key]} {
+		candidates := r.activeFirst(tier)
+		switch len(candidates) {
+		case 0:
+			continue
+		case 1:
+			return candidates[0].ID, nil
+		}
+		return "", &AmbiguousUserError{Input: input, Candidates: candidates}
 	}
-	return id, nil
+	return "", userNotFound(input)
+}
+
+// activeFirst returns the users behind ids, sorted by ID, without the
+// deactivated ones when at least one is active. Must be called with r.mu held.
+func (r *Resolver) activeFirst(ids []string) []slack.User {
+	var active, deleted []slack.User
+	for _, id := range ids {
+		u, ok := r.users[id]
+		switch {
+		case !ok:
+		case u.Deleted:
+			deleted = append(deleted, u)
+		default:
+			active = append(active, u)
+		}
+	}
+	out := active
+	if len(out) == 0 {
+		out = deleted
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 func userNotFound(input string) error {
@@ -209,40 +268,91 @@ func (r *Resolver) markUserFailed(ctx context.Context, id string, err error) {
 	r.failedUsers[id] = err
 }
 
-// addUserToCache inserts a single user into in-memory cache maps, creating
-// them if necessary. Populates both the email and name indexes so a later
-// ResolveUser(@name) for this user hits cache instead of triggering a bulk
-// users.list load. Must be called with r.mu held.
+// addUserToCache inserts a single user into the in-memory cache maps,
+// creating them if necessary, through the same indexing a bulk load uses. A
+// cache created here is partial (usersComplete stays false), so a later name
+// lookup still loads the directory before it answers. Must be called with
+// r.mu held.
 func (r *Resolver) addUserToCache(u slack.User) {
 	if r.users == nil {
 		r.users = make(map[string]slack.User)
 		r.usersByEmail = make(map[string]string)
-		r.usersByName = make(map[string]string)
+		r.usersByHandle = make(map[string][]string)
+		r.usersByLabel = make(map[string][]string)
 		r.usersAt = time.Now()
+		r.usersComplete = false
+	}
+	if old, ok := r.users[u.ID]; ok {
+		r.unindexUser(old)
 	}
 	r.users[u.ID] = u
-	if u.Profile.Email != "" {
-		r.usersByEmail[strings.ToLower(u.Profile.Email)] = u.ID
+	r.indexUser(u)
+}
+
+// nameKeys returns the lowercased keys a user is indexed under: the handle,
+// and the distinct display name and real name.
+func nameKeys(u slack.User) (handle string, labels []string) {
+	handle = strings.ToLower(u.Name)
+	display, realName := strings.ToLower(u.Profile.DisplayName), strings.ToLower(u.RealName)
+	if display != "" {
+		labels = append(labels, display)
 	}
-	// Mirror setUserMaps' name indexing so single-user inserts stay
-	// symmetric with bulk-loaded entries.
-	if u.Name != "" {
-		key := strings.ToLower(u.Name)
-		if _, exists := r.usersByName[key]; !exists {
-			r.usersByName[key] = u.ID
+	if realName != "" && realName != display {
+		labels = append(labels, realName)
+	}
+	return handle, labels
+}
+
+// indexUser adds a user already in r.users to the email and name indexes.
+// Must be called with r.mu held.
+func (r *Resolver) indexUser(u slack.User) {
+	if email := strings.ToLower(u.Profile.Email); email != "" {
+		// Two accounts sharing an email has not been seen, but the winner
+		// must not depend on map order if it happens: active first, then
+		// the lower ID.
+		if cur, ok := r.users[r.usersByEmail[email]]; !ok || outranks(u, cur) {
+			r.usersByEmail[email] = u.ID
 		}
 	}
-	if u.Profile.DisplayName != "" {
-		key := strings.ToLower(u.Profile.DisplayName)
-		if _, exists := r.usersByName[key]; !exists {
-			r.usersByName[key] = u.ID
+	handle, labels := nameKeys(u)
+	if handle != "" {
+		r.usersByHandle[handle] = append(r.usersByHandle[handle], u.ID)
+	}
+	for _, key := range labels {
+		r.usersByLabel[key] = append(r.usersByLabel[key], u.ID)
+	}
+}
+
+// outranks reports whether a beats b for a key only one user can hold.
+func outranks(a, b slack.User) bool {
+	if a.Deleted != b.Deleted {
+		return !a.Deleted
+	}
+	return a.ID < b.ID
+}
+
+// unindexUser removes a user's name index entries ahead of a re-insert whose
+// names may have changed. A stale email entry is harmless and stays. Must be
+// called with r.mu held.
+func (r *Resolver) unindexUser(u slack.User) {
+	drop := func(index map[string][]string, key string) {
+		ids := index[key]
+		for i, id := range ids {
+			if id == u.ID {
+				index[key] = append(ids[:i:i], ids[i+1:]...)
+				break
+			}
+		}
+		if len(index[key]) == 0 {
+			delete(index, key)
 		}
 	}
-	if u.RealName != "" {
-		key := strings.ToLower(u.RealName)
-		if _, exists := r.usersByName[key]; !exists {
-			r.usersByName[key] = u.ID
-		}
+	handle, labels := nameKeys(u)
+	if handle != "" {
+		drop(r.usersByHandle, handle)
+	}
+	for _, key := range labels {
+		drop(r.usersByLabel, key)
 	}
 }
 
@@ -267,15 +377,15 @@ func (r *Resolver) ensureUserCacheLazy() {
 	}
 }
 
-// ensureUserCache populates the user cache if it's empty or stale. Falls
-// back to bulk-loading the full users.list when nothing else turns up.
-// Used by ResolveUser for display-name / email lookups, which need the full
-// workspace to scan by name.
+// ensureUserCache makes the user cache a whole, fresh directory: the file
+// cache when one is fresh, otherwise a full users.list walk. A cache holding
+// only users fetched one at a time does not count. Used by ResolveUser for
+// name and email lookups, which need every account to rank a name.
 func (r *Resolver) ensureUserCache(ctx context.Context) error {
 	r.ensureUserCacheLazy()
 
 	r.mu.RLock()
-	fresh := r.users != nil && time.Since(r.usersAt) < memoryCacheTTL
+	fresh := r.usersComplete && time.Since(r.usersAt) < memoryCacheTTL
 	r.mu.RUnlock()
 	if fresh {
 		return nil
@@ -293,7 +403,7 @@ const bulkUserPageSize = 200
 // succeeds, so a failed or cancelled load leaves the file cache as it was.
 func (r *Resolver) bulkLoadUsers(ctx context.Context) error {
 	r.mu.Lock()
-	if r.users != nil && time.Since(r.usersAt) < memoryCacheTTL {
+	if r.usersComplete && time.Since(r.usersAt) < memoryCacheTTL {
 		r.mu.Unlock()
 		return nil
 	}
@@ -336,37 +446,17 @@ func (r *Resolver) bulkLoadUsers(ctx context.Context) error {
 	return nil
 }
 
-// setUserMaps populates the in-memory user, email, and name index maps.
-// Must be called with r.mu held.
+// setUserMaps replaces the in-memory user cache with a whole directory and
+// rebuilds the email and name indexes from it. Must be called with r.mu held.
 func (r *Resolver) setUserMaps(users map[string]slack.User) {
 	r.users = users
 	r.usersAt = time.Now()
+	r.usersComplete = true
 	r.usersByEmail = make(map[string]string, len(users))
-	r.usersByName = make(map[string]string, len(users))
-	for id, u := range users {
-		if u.Profile.Email != "" {
-			r.usersByEmail[strings.ToLower(u.Profile.Email)] = id
-		}
-		// Index by username (first match wins on collision).
-		if u.Name != "" {
-			key := strings.ToLower(u.Name)
-			if _, exists := r.usersByName[key]; !exists {
-				r.usersByName[key] = id
-			}
-		}
-		// Also index by display name and real name.
-		if u.Profile.DisplayName != "" {
-			key := strings.ToLower(u.Profile.DisplayName)
-			if _, exists := r.usersByName[key]; !exists {
-				r.usersByName[key] = id
-			}
-		}
-		if u.RealName != "" {
-			key := strings.ToLower(u.RealName)
-			if _, exists := r.usersByName[key]; !exists {
-				r.usersByName[key] = id
-			}
-		}
+	r.usersByHandle = make(map[string][]string, len(users))
+	r.usersByLabel = make(map[string][]string, len(users))
+	for _, u := range users {
+		r.indexUser(u)
 	}
 }
 

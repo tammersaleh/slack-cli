@@ -102,7 +102,12 @@ Accepted forms:
                           the cache does not hold falls back to
                           users.lookupByEmail (which fails with session
                           tokens on Enterprise Grid)
-  @alice                  display name, username, or real name via local cache
+  @alice                  handle, display name, or real name via local cache
+
+When several users match a name, a handle match wins, then an active
+account over a deactivated one. Two or more still tied is an
+"ambiguous_user" row listing each candidate's id, name (handle), and title:
+rerun with one's @handle or id. Nothing is picked for you.
 
 Email and @name need the whole user directory. When the user cache is
 missing or older than its TTL (24h, SLACK_CACHE_TTL), the lookup first

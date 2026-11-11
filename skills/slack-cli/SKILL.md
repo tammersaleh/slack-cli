@@ -58,6 +58,7 @@ Common errors and their recovery:
 | `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `filter_exhaustive` |
 | `invalid_auth`, `rate_limited`, `timeout`, `enterprise_is_restricted`, ... while resolving a channel or user name | The lookup failed; the channel or user may well exist. Do not treat it as missing. Fix the cause the `hint` names (re-auth, wait, raise `--timeout`) and rerun, or pass the ID |
 | `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `filter_exhaustive`) or `slack user info <id-or-email>` |
+| `ambiguous_user` | The name matches several people. Nothing was picked and nothing was written. Read `candidates` (each has `id`, `name`, `title`), choose one, and rerun with `@<name>` (the handle) or the `id`. If you cannot tell which person is meant, ask the user |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
 | `draft_already_sent` | `draft update` on a draft the user already sent. Nothing was written. Stop tracking the id; do not recreate the draft unless a new message is wanted |
 | `draft_lookup_incomplete` | The id is not in the newest 100 drafts and more exist. Slack's `drafts.list` has no paging, so the CLI cannot tell whether the draft exists. Do not recreate it on this evidence; ask the user to check the Drafts panel |
@@ -178,7 +179,9 @@ Query supports Slack's search modifiers. Combine freely:
 - `@user` above may be a handle, display name, real name, email, or ID; the
   CLI resolves it and sends Slack `<@Uxxx>`. Multi-word names work unquoted
   (`from:@Alice Adams`) or quoted (`from:"Alice Adams"`). An unknown name
-  fails with `user_not_found` rather than an empty result. Any other error
+  fails with `user_not_found` rather than an empty result, and a name several
+  people share fails with `ambiguous_user` and lists them: rerun with
+  `from:@handle` or `from:<@Uxxx>`. Any other error
   here (`rate_limited`, `invalid_auth`) means the user directory could not be
   read, not that the person is unknown.
 - Repeated `from:` modifiers are ORed by Slack: `from:@alice from:@bob` returns
@@ -295,7 +298,9 @@ and `channel info` resolve every name before printing. If that lookup fails,
 stdout is only `{"_meta":{"has_more":true,"error":"<code>"}}` and the exit
 code is the failure's (2 auth, 3 rate limit). No input was looked up: rerun
 the whole command. `user_not_found` and `channel_not_found` rows mean the
-lookup worked and nothing matched.
+lookup worked and nothing matched. An `ambiguous_user` row means the name
+matched several people: pick one from its `candidates` and rerun that input
+with the handle or ID.
 
 Examples:
 
@@ -1062,7 +1067,8 @@ Channel types (`--type` flag on `slack channel list`):
 
 User resolution gotchas:
 
-- `@name` matches display name, username, or real name via the local user cache.
+- `@name` matches a handle, display name, or real name, exactly and ignoring case, via the local user cache.
 - Email lookup (passing `alice@example.com`) reads the same local user cache. Only an email the cache does not hold falls back to Slack's `users.lookupByEmail` API, which fails with session tokens on Enterprise Grid.
 - An email or `@name` lookup with a missing or stale user cache (24h TTL, see `slack cache info`) first walks the whole user directory. It prints nothing until the walk ends and can take minutes on a large org, so an empty stdout under a short timeout means "still loading", not "no such user". Run it without a tight timeout, add `--trace` to watch the `users.list` pages on stderr, or pass a user ID, which never walks.
-- On name collisions, first match wins silently. Inspect `slack user list --query <partial>` to see the candidates.
+- When several users match a name: a handle match beats a display or real name match, then an active account beats a deactivated one. The answer is the same every run. If two or more are still tied, the command fails with `ambiguous_user` and lists each candidate's `id`, `name` (handle), and `title`. It never picks one. Rerun with the handle or ID.
+- A deactivated account still resolves by its own handle (`@old-handle`) and by a name no active account holds. Channel names are different: a duplicated channel name resolves to the first match.

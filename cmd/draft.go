@@ -189,7 +189,9 @@ func (c *DraftCreateCmd) resolveDestination(ctx context.Context, cli *CLI, r *re
 		for _, u := range users {
 			id, err := r.ResolveUser(ctx, u)
 			if err != nil {
-				if !isInputResolveErr(err) {
+				// A name several users hold stops here with its candidates;
+				// it cannot share one row with the not-found inputs.
+				if _, ambiguous := ambiguousUserError(err); ambiguous || !isInputResolveErr(err) {
 					return destination{}, cli.userResolveError(u, err)
 				}
 				failed = append(failed, u)

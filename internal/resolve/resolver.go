@@ -38,9 +38,17 @@ type Resolver struct {
 	failedChannels map[string]struct{} // IDs that failed conversations.info this session
 
 	users        map[string]slack.User // ID -> User
-	usersByEmail map[string]string     // email -> ID
-	usersByName  map[string]string     // lowercase display name -> ID
-	usersAt      time.Time
+	usersByEmail map[string]string     // lowercased email -> ID
+	// The name index keeps every candidate per key, so a shared name is
+	// detected at lookup instead of being decided by insertion order.
+	usersByHandle map[string][]string // lowercased handle -> IDs
+	usersByLabel  map[string][]string // lowercased display name or real name -> IDs
+	usersAt       time.Time
+	// usersComplete records that the user maps hold a whole users.list
+	// directory (a bulk load or a file cache), not just users fetched one at
+	// a time. Only a complete directory may answer a name or prove an email
+	// absent: a partial one cannot rule out a second holder of the name.
+	usersComplete bool
 	failedUsers  map[string]error // IDs whose users.info lookup failed this session, and why
 
 	// usersInfoDown and conversationsInfoDown are set once that method
