@@ -435,7 +435,14 @@ func (r *Resolver) userCachePath() string {
 	return filepath.Join(r.cacheDir, "users-"+r.teamID+".json")
 }
 
+// isEmail reports whether s is shaped like an email. An address holds no
+// whitespace: the search rewrite offers multi-word spans ("bob@example.com
+// deploy now"), and treating one as an email would spend a
+// users.lookupByEmail call on it and return whatever Slack makes of it.
 func isEmail(s string) bool {
+	if strings.ContainsAny(s, " \t\r\n") {
+		return false
+	}
 	at := strings.Index(s, "@")
 	return at > 0 && strings.Contains(s[at:], ".")
 }

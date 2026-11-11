@@ -111,3 +111,30 @@ func TestResolveUser_ExhaustedDirectoryLoadIsNotErrNotFound(t *testing.T) {
 		t.Errorf("users.list requests = %d, want 5 attempts", got)
 	}
 }
+
+// The search rewrite tries the longest span first, so an email followed by
+// free text arrives here whole. That is a name nobody has, not an email:
+// asking users.lookupByEmail about it would cost a request per prefix and
+// let Slack's answer to a malformed address abort the search.
+func TestResolveUser_EmailWithTrailingWordsIsNotAnEmail(t *testing.T) {
+	loaded := func(w http.ResponseWriter, r *http.Request) { usersListHandler(t, testUsers())(w, r) }
+	var lookups atomic.Int32
+	byEmail := func(w http.ResponseWriter, _ *http.Request) {
+		lookups.Add(1)
+		slackFailure("invalid_arguments")(w, nil)
+	}
+	r := NewResolver(newTestClient(t, userLookupMux(loaded, byEmail)), "T01ABC", t.TempDir())
+	ctx := context.Background()
+
+	for _, input := range []string{"bob@example.com deploy now", "bob@example.com deploy"} {
+		if _, err := r.ResolveUser(ctx, input); !errors.Is(err, ErrNotFound) {
+			t.Errorf("%q: err = %v, want ErrNotFound", input, err)
+		}
+	}
+	if id, err := r.ResolveUser(ctx, "bob@example.com"); err != nil || id != "U002" {
+		t.Errorf("got (%q, %v), want U002", id, err)
+	}
+	if got := lookups.Load(); got != 0 {
+		t.Errorf("users.lookupByEmail requests = %d, want 0", got)
+	}
+}
