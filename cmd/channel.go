@@ -342,11 +342,11 @@ func (c *ChannelInfoCmd) Run(cli *CLI) error {
 		return abortWithTrailer(p, fatal, 0)
 	}
 
-	for _, ch := range channels {
-		input, channelID := ch.input, ch.id
-		if ch.miss != nil {
+	for _, in := range channels {
+		input, channelID := in.input, in.id
+		if in.miss != nil {
 			errorCount++
-			if err := p.PrintItem(ch.miss.AsItem()); err != nil {
+			if err := p.PrintItem(in.miss.AsItem()); err != nil {
 				return err
 			}
 			continue

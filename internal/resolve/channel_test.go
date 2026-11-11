@@ -1039,8 +1039,8 @@ func TestResolveChannel_FailedMemberScanDoesNotProveAMiss(t *testing.T) {
 	r := NewResolver(newTestClient(t, rm.handler), "", "")
 	ctx := context.Background()
 
-	if _, err := r.ResolveChannel(ctx, "member-only"); err == nil {
-		t.Fatal("resolved a name neither answering endpoint held")
+	if _, err := r.ResolveChannel(ctx, "member-only"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound for a name neither answering endpoint held", err)
 	}
 	memberDown = false
 	id, err := r.ResolveChannel(ctx, "member-only")

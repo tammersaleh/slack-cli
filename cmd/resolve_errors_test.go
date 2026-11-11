@@ -208,14 +208,22 @@ func TestChannelName_AuthHintNamesTheResolvingCredential(t *testing.T) {
 		name  string
 		stdin string
 		args  []string
-		extra func(mux *http.ServeMux)
+		mux   func(t *testing.T) *http.ServeMux // the command's own endpoints, when it needs any
 	}{
 		{name: "channel managers", args: []string{"channel", "managers", "some-name"}},
 		{name: "draft create", stdin: richTextBlocksJSON("hello"), args: []string{"draft", "create", "some-name"}},
+		{name: "list record add", args: []string{"list", "record", "add", "F01ABC", "Room=#some-name"}, mux: func(t *testing.T) *http.ServeMux {
+			s := newRecordStore(t)
+			s.setSchema(append(s.schema(), map[string]any{"id": "Col01LLL", "name": "Room", "key": "Col01LLM", "type": "channel", "is_primary_column": false}))
+			return s.mux()
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mux := http.NewServeMux()
+			if tt.mux != nil {
+				mux = tt.mux(t)
+			}
 			channelListsAnswer(mux, slackFailure("token_revoked"))
 
 			_, err := runWithTwoCredentialsStdin(t, tt.stdin, mux, tt.args...)
@@ -385,6 +393,32 @@ func TestUserName_CleanMissIsUserNotFound(t *testing.T) {
 			_ = assertOutputError(t, err, "user_not_found", output.ExitGeneral)
 			if got := others.Load(); got != 0 {
 				t.Errorf("requests besides users.list = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// The up-front pass keeps input order: a miss between two IDs prints between
+// their rows. Every per-ID call fails with a per-row error here, so each
+// input's row carries its input.
+func TestUserRows_MissKeepsItsPlaceBetweenOtherInputs(t *testing.T) {
+	for _, args := range userRowCommands {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var others atomic.Int64
+			mux := userDirectory(emptyUserDirectory, &others)
+
+			r := runWithMockFull(t, mux, append(args, "U01XYZ", "@nobody", "U02MGR")...)
+			assertExitError(t, r.err)
+			rows, _ := rowsAndMeta(t, r.stdout)
+			var inputs []string
+			for _, row := range rows {
+				inputs = append(inputs, row["input"].(string))
+			}
+			if strings.Join(inputs, " ") != "U01XYZ @nobody U02MGR" {
+				t.Fatalf("row inputs = %v, want input order:\n%s", inputs, r.stdout)
+			}
+			if rows[1]["error"] != "user_not_found" {
+				t.Errorf("row 2 = %v, want user_not_found", rows[1])
 			}
 		})
 	}
