@@ -334,11 +334,19 @@ func (c *ChannelInfoCmd) Run(cli *CLI) error {
 	defer cancel()
 	errorCount := 0
 
-	for _, input := range c.Channels {
-		channelID, err := r.ResolveChannel(ctx, input)
-		if err != nil {
+	// Every name resolves before the first row. A lookup that fails for a
+	// reason other than the name (auth, a rate limit, --timeout) stops the
+	// run with no rows; a name that matches nothing keeps its own row.
+	channels, fatal := resolveInputs(ctx, c.Channels, r.ResolveChannel, cli.channelResolveError)
+	if fatal != nil {
+		return abortWithTrailer(p, fatal, 0)
+	}
+
+	for _, ch := range channels {
+		input, channelID := ch.input, ch.id
+		if ch.miss != nil {
 			errorCount++
-			if err := p.PrintItem(channelResolveError(input, err).AsItem()); err != nil {
+			if err := p.PrintItem(ch.miss.AsItem()); err != nil {
 				return err
 			}
 			continue
@@ -405,7 +413,7 @@ func (c *ChannelMembersCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return channelResolveError(c.Channel, err)
+		return cli.channelResolveError(c.Channel, err)
 	}
 
 	limit := c.Limit
@@ -479,6 +487,7 @@ func (c *ChannelManagersCmd) Run(cli *CLI) error {
 	if err != nil {
 		return err
 	}
+	workspaceAuthMethod := cli.authMethod
 	cli.authMethod = sessionAuthMethod
 	r := cli.NewResolver(client)
 	p := cli.NewPrinter()
@@ -487,7 +496,11 @@ func (c *ChannelManagersCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return channelResolveError(c.Channel, err)
+		// The lookup ran on the workspace credential, so a re-auth hint
+		// must name that one.
+		return cli.withAuthMethod(workspaceAuthMethod, func() error {
+			return cli.channelResolveError(c.Channel, err)
+		})
 	}
 
 	data, err := sessionClient.RetryInternalForm(ctx, "admin.roles.entity.listAssignments", map[string]string{

@@ -134,6 +134,13 @@ unchanged. The codes the CLI raises for failures Slack did not name:
   and no cursor. See "The 100-page cap" under `search messages`.
 - `unknown_error` - the CLI did not recognize the failure. Read `detail` (exit 1).
 
+`channel_not_found` means a lookup ran to completion and no channel matched.
+A name lookup that could not complete is never reported under it: the failure
+keeps its own code and exit, so a bad token is `invalid_auth` (exit 2), a rate
+limit that outlasted its retries is `rate_limited` (exit 3) with the
+`endpoint`, an expired budget is `timeout`, and a refusal such as
+`enterprise_is_restricted` passes through (exit 1). See "Name Resolution".
+
 `missing_scope` is the one Slack string that exits 2 without being a login
 problem. Its `hint` depends on the credential: an OAuth token gets the scopes
 the CLI requests now by re-running `slack auth login`, while a desktop session
@@ -332,6 +339,10 @@ Anywhere a channel is required, the CLI accepts:
 - Message permalink: `https://acme.slack.com/archives/C01234ABCDE/p1709251200000100` - resolves to the channel; the timestamp is ignored
 
 Names are resolved from cache first (in-memory, 5-minute TTL; then the channel file cache), then from the API. The API path scans `users.conversations` - just the conversations you are in - before falling back to a walk of `conversations.list` for the whole workspace, so a name you are a member of costs a handful of requests instead of a partial org-wide crawl. The member scan is never persisted to the file cache, which stays the complete `conversations.list` snapshot. On name collision, first match wins, and a repeat lookup returns the same ID as the lookup that populated the cache. A URL that isn't a usable channel reference (wrong kind or malformed) is rejected as `invalid_input` rather than treated as a name.
+
+A name lookup ends one of three ways. A hit returns the ID. A clean miss is `channel_not_found`: the name is absent from a `conversations.list` walk that reached its last page, or the input is an ID of another kind (`U…`, `T…`). Anything else is a failed lookup, reported as the error the `conversations.list` walk hit, with that error's exit code. A failed `users.conversations` scan is never reported: the walk that follows it is the authority, and its verdict stands whether the scan worked or not.
+
+A command that takes several channels (`channel info`) resolves all of them before it prints a row. A failed lookup stops the command with no rows, only the `{"_meta":{"has_more":true,"error":"<code>"}}` trailer and the error on stderr. A clean miss is that input's own error row and the other inputs still get theirs.
 
 Output enrichment (resolving a `channel_id` to a `channel_name` on emitted rows) does *not* trigger the `conversations.list` bulk load. On a cache miss it resolves the single ID via `conversations.info`, mirroring how user enrichment falls back to `users.info`. Enrichment cost is proportional to the number of distinct unresolved IDs in the output, not to workspace size. Failed lookups are memoized for the process so a wide result set with an unresolvable channel or user doesn't re-hit the API per row.
 
@@ -617,8 +628,9 @@ $ slack channel info #general #nonexistent
 
 Errors:
 
-- `channel_not_found` (exit 1): No channel matching the input.
+- `channel_not_found` (exit 1): No channel matching the input. A per-input row.
 - `not_authed` (exit 2): No token.
+- Any other code from resolving a name (`invalid_auth`, `rate_limited`, `timeout`, ...): the lookup failed. Fatal, no rows, trailer only. See "Name Resolution".
 
 Slack API: `conversations.info`
 
@@ -707,8 +719,10 @@ $ slack channel invite '#eng-a' @alice @bob           # many people, one channel
 
 Every channel and user resolves before the first write. A resolution failure
 aborts the command with no rows and no API writes: a malformed URL is
-`invalid_input`, otherwise `channel_not_found` / `user_not_found` naming the
-input. Ids and URLs pass through without an existence check. Repeated inputs
+`invalid_input`, a channel name that matches nothing is `channel_not_found`
+naming the input, and a channel lookup that failed keeps its own code and exit
+(`invalid_auth`, `rate_limited`, ...). A user that does not resolve is
+`user_not_found`. Ids and URLs pass through without an existence check. Repeated inputs
 dedupe by resolved id, first-seen order.
 
 One `conversations.invite` call per (channel, user) pair, sequential, channels
@@ -1310,6 +1324,11 @@ Slack serves pages 1 through 100 of `files.list` and answers a higher page with
 page 1 again, so the listing reaches at most `100 x --limit` files. A page above
 100 is refused before the request with `file_page_limit`. Narrow the listing
 with `--channel`, `--user`, or `--types` to read past it.
+
+`--channel` is lenient about a name that matches nothing: the value goes to
+`files.list` as typed. A malformed URL is `invalid_input`, and a name lookup
+that failed (auth, rate limit, `--timeout`) is fatal under its own code rather
+than a filter on an unresolved name.
 
 Errors:
 

@@ -60,6 +60,7 @@ func readAssignments(cli *CLI, pairs []string) ([]assignment, error) {
 func resolveCells(cli *CLI, s *listSession, assigns []assignment, forUpdate bool) ([]cellWrite, error) {
 	schema := s.file.Metadata.Schema
 	var channelResolver *resolve.Resolver
+	var workspaceAuthMethod string
 	workspaceResolver := func() (*resolve.Resolver, error) {
 		if channelResolver == nil {
 			sessionAuthMethod := cli.authMethod
@@ -67,6 +68,7 @@ func resolveCells(cli *CLI, s *listSession, assigns []assignment, forUpdate bool
 			if err != nil {
 				return nil, err
 			}
+			workspaceAuthMethod = cli.authMethod
 			cli.authMethod = sessionAuthMethod
 			channelResolver = cli.newResolver(pub)
 		}
@@ -97,16 +99,20 @@ func resolveCells(cli *CLI, s *listSession, assigns []assignment, forUpdate bool
 				}
 			case "channel":
 				if input, ok := v.(string); ok {
-					r := s.resolver
+					r, authMethod := s.resolver, cli.authMethod
 					if resolve.ChannelInputNeedsLookup(input) {
 						var err error
 						if r, err = workspaceResolver(); err != nil {
 							return nil, err
 						}
+						authMethod = workspaceAuthMethod
 					}
 					id, err := r.ResolveChannel(s.ctx, input)
 					if err != nil {
-						return nil, channelResolveError(input, err)
+						// Classified against the credential the lookup ran on.
+						return nil, cli.withAuthMethod(authMethod, func() error {
+							return cli.channelResolveError(input, err)
+						})
 					}
 					v = id
 				}

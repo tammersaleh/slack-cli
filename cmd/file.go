@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/output"
+	"github.com/tammersaleh/slack-cli/internal/resolve"
 	"github.com/tammersaleh/slack-cli/internal/slackurl"
 )
 
@@ -70,11 +72,14 @@ func (c *FileListCmd) Run(cli *CLI) error {
 		switch {
 		case err == nil:
 			channelID = resolved
-		case isBadURLErr(err):
-			return channelResolveError(channelID, err)
+		case errors.Is(err, resolve.ErrNotFound):
+			// A name that matches nothing passes through to files.list as
+			// typed: the lenient filter behavior this flag has always had.
+		default:
+			// A bad URL, or a lookup that failed. Passing the name through
+			// after a failed lookup would run an unrelated filter.
+			return cli.channelResolveError(channelID, err)
 		}
-		// Otherwise keep the raw value: an unresolved name passes through to
-		// files.list, preserving the prior lenient filter behavior.
 	}
 
 	userID := c.User

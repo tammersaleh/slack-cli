@@ -51,6 +51,12 @@ func ChannelInputNeedsLookup(input string) bool {
 
 // ResolveChannel resolves a channel name or ID to a Slack channel ID.
 // Accepts channel IDs (passthrough), names with or without `#` prefix.
+//
+// The error is one of three kinds: ErrBadURL for an unusable Slack URL,
+// ErrNotFound for a clean miss (an input that cannot name a channel, or a
+// name absent from an exhausted conversations.list walk), or the raw error of
+// the conversations.list walk that failed. A failed users.conversations scan
+// is never returned: the org walk is the final authority.
 // Callers deciding which client to resolve on can ask ChannelInputNeedsLookup
 // whether this will be a local answer or a name lookup.
 func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, error) {
@@ -66,7 +72,7 @@ func (r *Resolver) ResolveChannel(ctx context.Context, input string) (string, er
 	// (user Uxxx, team Txxx, bot Bxxx, etc.). Paginating conversations.list
 	// would exhaust every page looking for a match that can't exist.
 	if slackIDPattern.MatchString(input) {
-		return "", fmt.Errorf("not a channel ID (non-channel prefix %q): %s", string(input[0]), input)
+		return "", fmt.Errorf("%w: %s is not a channel ID (non-channel prefix %q)", ErrNotFound, input, string(input[0]))
 	}
 
 	name := input
@@ -224,7 +230,7 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 	// minutes at most; this runs after the file cache read, which can only
 	// add hits.
 	if r.channelsComplete && time.Since(r.channelsAt) < memoryCacheTTL {
-		return "", fmt.Errorf("channel %q not found", name)
+		return "", channelNotFound(name)
 	}
 
 	bot := r.client.Bot()
@@ -279,7 +285,7 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 		} else {
 			r.channelsComplete = false
 		}
-		return "", fmt.Errorf("channel %q not found", name)
+		return "", channelNotFound(name)
 	}
 
 	// An early exit saw only the pages up to the match. Extend the cache with
@@ -287,6 +293,10 @@ func (r *Resolver) resolveByPagination(ctx context.Context, name string) (string
 	// earlier member scan in this process already resolved.
 	r.addChannelsToCache(channels)
 	return found, nil
+}
+
+func channelNotFound(name string) error {
+	return fmt.Errorf("channel %q: %w", name, ErrNotFound)
 }
 
 // scanForName walks one list endpoint page by page, stopping at the first page

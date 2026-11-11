@@ -48,7 +48,7 @@ func (c *ThreadListCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, ref.channel)
 	if err != nil {
-		return channelResolveError(ref.channel, err)
+		return cli.channelResolveError(ref.channel, err)
 	}
 
 	limit := c.Limit

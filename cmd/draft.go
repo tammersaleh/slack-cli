@@ -169,7 +169,7 @@ func fetchDrafts(ctx context.Context, client *api.Client, activeOnly bool, limit
 // exist yet). Mixing kinds, multiple channels, or --thread/--broadcast on a
 // user destination are fatal input errors. User recipients are resolved fully
 // before any write; every unresolved input is reported and aborts the command.
-func (c *DraftCreateCmd) resolveDestination(ctx context.Context, r *resolve.Resolver, channels, users []string) (destination, error) {
+func (c *DraftCreateCmd) resolveDestination(ctx context.Context, cli *CLI, r *resolve.Resolver, channels, users []string) (destination, error) {
 	if len(channels) > 0 && len(users) > 0 {
 		return destination{}, &output.Error{Err: "invalid_input", Detail: "cannot mix channel and user recipients; bare names are channels, use @name for a person", Code: output.ExitGeneral}
 	}
@@ -206,7 +206,7 @@ func (c *DraftCreateCmd) resolveDestination(ctx context.Context, r *resolve.Reso
 	}
 	channelID, err := r.ResolveChannel(ctx, channels[0])
 	if err != nil {
-		return destination{}, channelResolveError(channels[0], err)
+		return destination{}, cli.channelResolveError(channels[0], err)
 	}
 	dest := destination{ChannelID: channelID}
 	if c.Thread != "" {
@@ -357,11 +357,13 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	// recipient sets also stay here so their invalid_input verdict can't be
 	// preempted by a not_authed from a client the command never needed.
 	resolverClient := client
+	resolveAuthMethod := sessionAuthMethod
 	if len(users) == 0 && len(channels) == 1 && resolve.ChannelInputNeedsLookup(channels[0]) {
 		pubClient, err := cli.NewClient()
 		if err != nil {
 			return err
 		}
+		resolveAuthMethod = cli.authMethod
 		cli.authMethod = sessionAuthMethod
 		resolverClient = pubClient
 	}
@@ -370,7 +372,13 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	dest, derr := c.resolveDestination(ctx, r, channels, users)
+	// A failed lookup is classified against the credential it ran on.
+	var dest destination
+	derr = cli.withAuthMethod(resolveAuthMethod, func() error {
+		var err error
+		dest, err = c.resolveDestination(ctx, cli, r, channels, users)
+		return err
+	})
 	if derr != nil {
 		return derr
 	}

@@ -26,7 +26,7 @@ func (c *PinListCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return channelResolveError(c.Channel, err)
+		return cli.channelResolveError(c.Channel, err)
 	}
 
 	items, _, err := client.Bot().ListPinsContext(ctx, channelID)

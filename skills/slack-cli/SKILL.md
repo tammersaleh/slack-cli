@@ -56,6 +56,7 @@ Common errors and their recovery:
 |---|---|
 | `not_authed` | `slack auth login --desktop` (or `slack auth login` for OAuth) |
 | `channel_not_found` | `slack channel list --query <partial>` (searches every page you're in); add `--include-non-member` for channels you haven't joined, then check `filter_exhaustive` |
+| `invalid_auth`, `rate_limited`, `timeout`, `enterprise_is_restricted`, ... while resolving a channel name | The lookup failed; the channel may well exist. Do not treat it as missing. Fix the cause the `hint` names (re-auth, wait, raise `--timeout`) and rerun, or pass the channel ID |
 | `user_not_found` | `slack user list --all --query <partial>` (needs `--all`; check `filter_exhaustive`) or `slack user info <id-or-email>` |
 | `draft_not_found` | `slack draft list` (add `--include-sent` / `--include-deleted` for hidden ones) |
 | `draft_already_sent` | `draft update` on a draft the user already sent. Nothing was written. Stop tracking the id; do not recreate the draft unless a new message is wanted |
@@ -959,6 +960,11 @@ CH=$(slack channel list --type im --all | jq -r --arg u "$UID" 'select(.user == 
 ```
 
 ### Recover from a `channel_not_found`
+
+`channel_not_found` means the lookup finished and nothing matched. A lookup
+that could not finish reports its own code instead (`invalid_auth` exit 2,
+`rate_limited` exit 3, `timeout`), and says nothing about whether the channel
+exists.
 
 When an error has a `hint` field, follow it. Example:
 

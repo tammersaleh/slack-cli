@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1045,5 +1046,59 @@ func TestResolveChannel_FailedMemberScanDoesNotProveAMiss(t *testing.T) {
 	id, err := r.ResolveChannel(ctx, "member-only")
 	if err != nil || id != "C05MNO" {
 		t.Errorf("got %q, %v, want C05MNO once the member scan answers", id, err)
+	}
+}
+
+// A clean miss is ErrNotFound, and only a clean miss is. Callers map the
+// sentinel to channel_not_found and classify everything else, so a failed
+// lookup must never be reported as an absent channel.
+func TestResolveChannel_CleanMissIsErrNotFound(t *testing.T) {
+	t.Run("exhausted walk", func(t *testing.T) {
+		rm := absentNameMux()
+		r := NewResolver(newTestClient(t, rm.handler), "", "")
+		for i := range 2 { // the second call answers from the proven-miss memo
+			_, err := r.ResolveChannel(context.Background(), "absent")
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("call %d: err = %v, want ErrNotFound", i+1, err)
+			}
+		}
+	})
+	t.Run("non-channel id", func(t *testing.T) {
+		r := NewResolver(newTestClient(t, http.NotFoundHandler()), "", "")
+		_, err := r.ResolveChannel(context.Background(), "U01XYZ789")
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+	// The org walk is the final authority: a member scan that failed does
+	// not turn its clean miss into a failure.
+	t.Run("failed member scan, exhausted org walk", func(t *testing.T) {
+		rm := newResolverMux(
+			func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "enterprise_is_restricted"})
+			},
+			emptyChannelsHandler,
+		)
+		r := NewResolver(newTestClient(t, rm.handler), "", "")
+		_, err := r.ResolveChannel(context.Background(), "absent")
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("err = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+// A failed org walk is not a miss: the error comes back as Slack sent it.
+func TestResolveChannel_FailedWalkIsNotErrNotFound(t *testing.T) {
+	authFail := func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_auth"})
+	}
+	rm := newResolverMux(authFail, authFail)
+	r := NewResolver(newTestClient(t, rm.handler), "", "")
+	_, err := r.ResolveChannel(context.Background(), "some-name")
+	if errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, must not be ErrNotFound", err)
+	}
+	if code, ok := api.SlackErrorCode(err); !ok || code != "invalid_auth" {
+		t.Errorf("err = %v, want Slack's invalid_auth", err)
 	}
 }

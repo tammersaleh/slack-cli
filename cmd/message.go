@@ -67,7 +67,7 @@ func (c *MessageListCmd) Run(cli *CLI) error {
 
 	channelID, err := r.ResolveChannel(ctx, c.Channel)
 	if err != nil {
-		return channelResolveError(c.Channel, err)
+		return cli.channelResolveError(c.Channel, err)
 	}
 
 	limit := c.Limit
@@ -175,7 +175,7 @@ func (c *MessageGetCmd) Run(cli *CLI) error {
 	ctx, cancel := cli.Context()
 	defer cancel()
 
-	channelIDs, cerr := resolveRefChannels(ctx, r, refs)
+	channelIDs, cerr := resolveRefChannels(ctx, cli, r, refs)
 	if cerr != nil {
 		return cerr
 	}

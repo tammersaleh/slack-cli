@@ -146,7 +146,7 @@ func runMembership(cli *CLI, recipients []string, op membershipOp) error {
 
 	// Resolve everything first. A write command must not do half the work
 	// and then fail on a typo, so any miss aborts before the first call.
-	channels, err := resolveAll(ctx, channelInputs, r.ResolveChannel, channelResolveError)
+	channels, err := resolveAll(ctx, channelInputs, r.ResolveChannel, cli.channelResolveError)
 	if err != nil {
 		return err
 	}

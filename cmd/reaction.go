@@ -40,7 +40,7 @@ func (c *ReactionListCmd) Run(cli *CLI) error {
 	defer cancel()
 	errorCount := 0
 
-	channelIDs, cerr := resolveRefChannels(ctx, r, refs)
+	channelIDs, cerr := resolveRefChannels(ctx, cli, r, refs)
 	if cerr != nil {
 		return cerr
 	}
