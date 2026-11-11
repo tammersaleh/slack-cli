@@ -888,7 +888,7 @@ Every mode is one newest-first stream: within a page, across pages, and under `-
 
 A walk is a snapshot taken when its first page is served. Each cursor points below the rows already returned, so a message posted after the first page is never part of the walk, under `--all` or a later `--cursor` resume. Run the command again to see newer messages.
 
-A cursor from one set of bounds is not valid under another. In particular a cursor produced by a version before this change under `--after` alone came from a forward walk and must be discarded.
+A cursor from one set of bounds is not valid under another.
 
 ```
 $ slack message list #general --limit=2
