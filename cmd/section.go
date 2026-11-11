@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/slack-go/slack"
 	"github.com/tammersaleh/slack-cli/internal/api"
@@ -16,8 +16,8 @@ import (
 
 type SectionCmd struct {
 	List     SectionListCmd     `cmd:"" help:"List sidebar sections."`
-	Channels SectionChannelsCmd `cmd:"" help:"List channels in a section."`
-	Find     SectionFindCmd     `cmd:"" help:"Find channels by name pattern."`
+	Channels SectionChannelsCmd `cmd:"" help:"List channels in a section. A channel Slack cannot show keeps its row with enrich_error and no name (exit 1)."`
+	Find     SectionFindCmd     `cmd:"" help:"Find sectioned channels by name. A channel whose name cannot be read is emitted with enrich_error whatever the pattern (exit 1)."`
 	Move     SectionMoveCmd     `cmd:"" help:"Move channels to a section."`
 	Create   SectionCreateCmd   `cmd:"" help:"Create a sidebar section."`
 	Rename   SectionRenameCmd   `cmd:"" help:"Rename a sidebar section, keeping its ID and emoji."`
@@ -52,48 +52,98 @@ func fetchSections(ctx context.Context, client *api.Client) ([]sectionData, erro
 	return resp.Sections, nil
 }
 
-// channelInfo holds resolved channel metadata.
-type channelInfo struct {
-	ID         string
-	Name       string
-	IsArchived bool
+// channelOutcome is one channel's conversations.info lookup, held at the
+// channel's input position. resolved is tracked on its own rather than
+// inferred from a non-empty name: a DM resolves with no name at all.
+type channelOutcome struct {
+	resolved   bool
+	name       string
+	isArchived bool
+	errCode    string // stable code when this one channel could not be read
+}
+
+// itemLocalChannelInfoErrors are the conversations.info errors that describe
+// one channel - it is gone, or this token cannot see it - rather than the run.
+// They mark their own row and let the others through.
+//
+// Applied fail-closed, like itemLocalEnrichErrors: anything absent here,
+// including a code Slack has not invented yet, fails the command. Every error
+// used to be dropped, so a rate limit and a deleted channel both printed the
+// channel ID as its name.
+var itemLocalChannelInfoErrors = map[string]bool{
+	"channel_not_found": true,
 }
 
 const sectionResolveConcurrency = 15
 
-// resolveChannelNames concurrently resolves channel IDs to names.
-func resolveChannelNames(ctx context.Context, client *api.Client, ids []string) map[string]channelInfo {
-	result := make(map[string]channelInfo, len(ids))
-	var mu sync.Mutex
-	sem := make(chan struct{}, sectionResolveConcurrency)
-	var wg sync.WaitGroup
+// lookupSectionChannels reads conversations.info for every id, bounded to
+// sectionResolveConcurrency in flight, and returns outcomes indexed by input
+// position. Each lookup goes through api.Call, so a rate limit is retried
+// with Retry-After before it counts as a failure.
+//
+// A non-nil error voids the whole read - the caller must emit no rows. It is
+// returned unclassified.
+func lookupSectionChannels(ctx context.Context, cli *CLI, client *api.Client, ids []string) ([]channelOutcome, error) {
+	outcomes := make([]channelOutcome, len(ids))
 
-	for _, id := range ids {
-		wg.Add(1)
-		go func(id string) {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			defer func() { <-sem }()
-
-			ch, err := client.Bot().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-				ChannelID: id,
+	err := runBounded(ctx, len(ids), sectionResolveConcurrency, func(ctx context.Context, i int) error {
+		var ch *slack.Channel
+		err := api.Call(ctx, "conversations.info", func() error {
+			var err error
+			ch, err = client.Bot().GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+				ChannelID: ids[i],
 			})
-			if err != nil || ch == nil {
-				return
+			return err
+		})
+		if err != nil {
+			if code := cli.ClassifyError(err).Err; itemLocalChannelInfoErrors[code] {
+				outcomes[i] = channelOutcome{errCode: code}
+				return nil
 			}
-
-			mu.Lock()
-			result[id] = channelInfo{ID: id, Name: ch.Name, IsArchived: ch.IsArchived}
-			mu.Unlock()
-		}(id)
+			return err
+		}
+		if ch == nil {
+			return fmt.Errorf("conversations.info returned no channel for %s", ids[i])
+		}
+		outcomes[i] = channelOutcome{resolved: true, name: ch.Name, isArchived: ch.IsArchived}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	wg.Wait()
-	return result
+	// Fail closed on a channel with neither a result nor a marker, which
+	// would print as a blank row at exit 0. Unreachable today.
+	for i := range outcomes {
+		if !outcomes[i].resolved && outcomes[i].errCode == "" {
+			return nil, fmt.Errorf("no conversations.info outcome for %s", ids[i])
+		}
+	}
+	return outcomes, nil
+}
+
+// sectionChannelRow is the row section channels and section find share. A
+// channel that could not be read carries enrich_error and neither name nor
+// is_archived: nothing is known about it but its ID. A conversation that
+// resolved without a name (a DM) keeps name as the empty string.
+func sectionChannelRow(id string, o channelOutcome) map[string]any {
+	if o.errCode != "" {
+		return map[string]any{"id": id, "enrich_error": o.errCode}
+	}
+	return map[string]any{"id": id, "name": o.name, "is_archived": o.isArchived}
+}
+
+// finishSectionRows prints the trailer for a channels or find run and turns
+// marked rows into exit 1. The rows are already on stdout, so the failure is
+// an *output.ExitError: the markers are the report.
+func finishSectionRows(p *output.Printer, unresolved int) error {
+	if err := p.PrintMeta(output.Meta{ErrorCount: unresolved}); err != nil {
+		return err
+	}
+	if unresolved > 0 {
+		return &output.ExitError{Code: output.ExitGeneral}
+	}
+	return nil
 }
 
 // --- section list ---
@@ -157,23 +207,24 @@ func (c *SectionChannelsCmd) Run(cli *CLI) error {
 		return output.SectionNotFound(c.SectionID)
 	}
 
-	names := resolveChannelNames(ctx, client, channelIDs)
+	// Every lookup finishes before the first row prints, so a failed read
+	// emits no rows at all rather than a prefix that looks complete.
+	outcomes, err := lookupSectionChannels(ctx, cli, client, channelIDs)
+	if err != nil {
+		return abortWithTrailer(p, cli.ClassifyError(err), 0)
+	}
 
-	for _, id := range channelIDs {
-		info, ok := names[id]
-		if !ok {
-			info = channelInfo{ID: id, Name: id}
+	unresolved := 0
+	for i, id := range channelIDs {
+		if outcomes[i].errCode != "" {
+			unresolved++
 		}
-		if err := p.PrintItem(map[string]any{
-			"id":          info.ID,
-			"name":        info.Name,
-			"is_archived": info.IsArchived,
-		}); err != nil {
+		if err := p.PrintItem(sectionChannelRow(id, outcomes[i])); err != nil {
 			return err
 		}
 	}
 
-	return p.PrintMeta(output.Meta{})
+	return finishSectionRows(p, unresolved)
 }
 
 // --- section find ---
@@ -211,30 +262,33 @@ func (c *SectionFindCmd) Run(cli *CLI) error {
 		}
 	}
 
-	names := resolveChannelNames(ctx, client, allIDs)
+	outcomes, err := lookupSectionChannels(ctx, cli, client, allIDs)
+	if err != nil {
+		return abortWithTrailer(p, cli.ClassifyError(err), 0)
+	}
 
 	pattern := strings.ToLower(c.Pattern)
-	for _, id := range allIDs {
-		info, ok := names[id]
-		if !ok {
-			continue
-		}
-		if !strings.Contains(strings.ToLower(info.Name), pattern) {
+	unresolved := 0
+	for i, id := range allIDs {
+		o := outcomes[i]
+		// The match is on the name. A channel whose name could not be read
+		// cannot be ruled out, so it is emitted with its marker whatever the
+		// pattern, rather than dropped as a non-match.
+		if o.errCode != "" {
+			unresolved++
+		} else if !strings.Contains(strings.ToLower(o.name), pattern) {
 			continue
 		}
 		ref := channelToSection[id]
-		if err := p.PrintItem(map[string]any{
-			"id":           info.ID,
-			"name":         info.Name,
-			"is_archived":  info.IsArchived,
-			"section_name": ref.SectionName,
-			"section_id":   ref.SectionID,
-		}); err != nil {
+		row := sectionChannelRow(id, o)
+		row["section_name"] = ref.SectionName
+		row["section_id"] = ref.SectionID
+		if err := p.PrintItem(row); err != nil {
 			return err
 		}
 	}
 
-	return p.PrintMeta(output.Meta{})
+	return finishSectionRows(p, unresolved)
 }
 
 // sectionRow is the JSONL shape shared by section list, rename, and emoji.

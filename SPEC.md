@@ -529,7 +529,7 @@ Requests that go through the shared retry are attempted up to 5 times: every pag
 {"error":"rate_limited","detail":"Rate limited after 5 attempts on conversations.history","endpoint":"conversations.history"}
 ```
 
-The internal API methods (`saved.*`, `users.channelSections.*`, `drafts.*`, `lists.*`, `client.counts`, `admin.roles.entity.listAssignments`) follow the same rules, and a 429 that carries no `Retry-After` still counts as a rate limit. The internal calls retried are the paginated ones (`saved list`, `list records`, `list find`), the reads (`users.channelSections.list`, `saved.list` for `saved counts`, `client.counts`, `admin.roles.entity.listAssignments`, `files.info` for lists, `drafts.list`, `lists.records.info`), and two writes that set state and so are safe to repeat: `users.channelSections.set` (`section rename`/`emoji`) and `users.channelSections.channels.bulkUpdate` (`section move`).
+The internal API methods (`saved.*`, `users.channelSections.*`, `drafts.*`, `lists.*`, `client.counts`, `admin.roles.entity.listAssignments`) follow the same rules, and a 429 that carries no `Retry-After` still counts as a rate limit. The internal calls retried are the paginated ones (`saved list`, `list records`, `list find`), the reads (`users.channelSections.list`, `saved.list` for `saved counts`, `client.counts`, `admin.roles.entity.listAssignments`, `files.info` for lists, `drafts.list`, `lists.records.info`), and two writes that set state and so are safe to repeat: `users.channelSections.set` (`section rename`/`emoji`) and `users.channelSections.channels.bulkUpdate` (`section move`). `section channels` and `section find` also retry each `conversations.info` name lookup.
 
 Other single-shot calls are not retried: every `drafts.*` write, `users.channelSections.create`, every `lists.*` write, and the public calls outside the list above. Repeating a create could create twice. A rate limit on one of them is reported at once, with the wait Slack asked for in `detail` when it sent one:
 
@@ -2211,8 +2211,29 @@ $ slack section channels S02DEF
 {"_meta":{"has_more":false}}
 ```
 
-Channel names resolved concurrently (max 15 concurrent
-`conversations.info` calls). Uses the CLI's channel cache.
+A row is the channel's `id`, `name`, and `is_archived`, all read from
+`conversations.info` (at most 15 lookups in flight, each retried on a rate
+limit). The lookups are fail-closed:
+
+- A channel Slack reports as `channel_not_found` (gone, or not visible to this
+  token) keeps its row, with `enrich_error` in place of `name` and
+  `is_archived`. The command prints every row, sets `_meta.error_count` to the
+  number of marked rows, and exits 1. `--fields` cannot strip `enrich_error`.
+- Any other lookup failure - a rate limit that outlasts its retries, an auth
+  error, a timeout, a code not listed above - fails the command. No rows are
+  printed, the trailer is `{"_meta":{"has_more":true,"error":"<code>"}}`, and
+  the error goes to stderr with its usual exit code. Rerun.
+
+`name` is never the channel ID. A conversation that has no name (a DM) is a
+successful lookup with `"name":""`. A row without a `name` key always carries
+`enrich_error`.
+
+```
+$ slack section channels S02DEF
+{"id":"C01ABC","name":"ext-acme","is_archived":false}
+{"id":"C02DEF","enrich_error":"channel_not_found"}
+{"_meta":{"has_more":false,"error_count":1}}
+```
 
 Slack API: `users.channelSections.list` + `conversations.info`
 
@@ -2231,6 +2252,13 @@ $ slack section find ext-
 {"id":"C03GHI","name":"ext-initech","is_archived":false,"section_name":"Channels","section_id":"S01ABC"}
 {"_meta":{"has_more":false}}
 ```
+
+Reads `conversations.info` for every channel in every section, under the same
+fail-closed rules as `section channels`. The match is on the name, so a
+channel whose name could not be read cannot be ruled out: it is emitted
+whatever the pattern, with `enrich_error`, `section_name`, and `section_id`
+and no `name`, and the command exits 1 with `_meta.error_count` set. Filter on
+`enrich_error` to separate real matches from unread channels.
 
 Slack API: `users.channelSections.list` + `conversations.info`
 

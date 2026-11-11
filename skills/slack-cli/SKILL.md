@@ -66,7 +66,7 @@ Common errors and their recovery:
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
 | `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. |
-| `rate_limited` | Exit 3. Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait. `user info` lookups, internal reads (`section list`, `draft list`, `saved counts`, `channel managers`), and `section move`/`rename`/`emoji` are retried too. Other single-shot commands (`message get`, `reaction list`, `channel info`, `file info`) and creates and draft and list writes are not: wait (`detail` names Slack's `Retry-After` when it sent one) and rerun. Slack's raw `ratelimited` string is always reported as `rate_limited` |
+| `rate_limited` | Exit 3. Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait. `user info` lookups, internal reads (`section list`, `draft list`, `saved counts`, `channel managers`), the name lookups in `section channels`/`find`, and `section move`/`rename`/`emoji` are retried too. Other single-shot commands (`message get`, `reaction list`, `channel info`, `file info`) and creates and draft and list writes are not: wait (`detail` names Slack's `Retry-After` when it sent one) and rerun. Slack's raw `ratelimited` string is always reported as `rate_limited` |
 | `invalid_cursor` | The cursor is void. Rerun without `--cursor`; a cursor only works for the same command, flags, and workspace that produced it |
 | `search_page_limit` / `file_page_limit` | The run asked for a page above 100, the last one Slack serves (10,000 results at `--limit 100`). Terminal, no cursor. Search: split the query with `before:`/`after:` and run each window with `--all --limit 100`. `file list`: narrow with `--channel`, `--user`, or `--types` |
 | `timeout` | The `--timeout` budget expired. Raise it, drop it, or resume from `_meta.next_cursor` |
@@ -421,6 +421,16 @@ Emoji values are bare names as `section list` shows them (`heart`,
 `wave::skin-tone-2`, a custom emoji name). `:heart:` is unwrapped for you;
 anything else Slack rejects is `emoji_invalid`. `section emoji ID ""` clears.
 `rename` and `emoji` each change one field - run both to change both.
+
+`section channels` and `section find` rows are `id`, `name`, `is_archived`
+(`find` adds `section_name`, `section_id`). `name` is never the channel ID. A
+channel Slack could not show (`channel_not_found`) keeps its row with
+`enrich_error` and no `name`, the trailer has `error_count`, and the exit is 1.
+`find` emits those rows whatever the pattern, since it cannot tell whether
+they match: drop rows with `enrich_error` to get the real matches. Any other
+lookup failure (rate limit after retries, auth) prints no rows, a
+`{"_meta":{"has_more":true,"error":...}}` trailer, and fails: rerun. A DM in a
+section has `"name":""`.
 
 ### Drafts (requires session token)
 
