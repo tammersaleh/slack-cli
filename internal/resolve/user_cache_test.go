@@ -349,6 +349,36 @@ func TestResolveUser_NameAfterSingleFetchLoadsTheDirectory(t *testing.T) {
 	}
 }
 
+// A partial in-memory cache beside a fresh file cache: the name is answered
+// from the file, not from a users.list walk. The file appears after the
+// single-ID fetch, as it would when another process wrote it.
+func TestResolveUser_NameAfterSingleFetchReadsAFreshFileCache(t *testing.T) {
+	users := []slack.User{
+		{ID: "U001", Name: "aadams-old", Deleted: true, Profile: slack.UserProfile{DisplayName: "Alice Adams"}},
+		{ID: "U002", Name: "aadams", RealName: "Alice Adams", Profile: slack.UserProfile{DisplayName: "Alice Adams"}},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.info", usersInfoHandler(t, users))
+	mux.HandleFunc("/api/users.list", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("users.list must not be called: a fresh file cache holds the directory")
+		usersListHandler(t, users)(w, r)
+	})
+	cacheDir := t.TempDir()
+	r := NewResolver(newTestClient(t, mux), "T123", cacheDir)
+	ctx := context.Background()
+
+	if _, _, err := r.LookupUser(ctx, "U001"); err != nil {
+		t.Fatal(err)
+	}
+	seed := NewResolver(nil, "T123", cacheDir)
+	seed.saveUserFileCache(map[string]slack.User{"U001": users[0], "U002": users[1]})
+
+	id, err := r.ResolveUser(ctx, "@Alice Adams")
+	if err != nil || id != "U002" {
+		t.Fatalf("got %q, %v, want the active account U002", id, err)
+	}
+}
+
 // TestResolveUser_BulkLoadWritesFileCache verifies that a name/display-name
 // lookup (which needs the whole cache to scan) DOES write users.json so
 // subsequent enrichment calls hit the file cache.

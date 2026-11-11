@@ -72,6 +72,23 @@ var nameRankingCases = []struct {
 		lookup: "sam", wantID: "U02",
 	},
 	{
+		name: "two accounts sharing a handle tie",
+		users: []slack.User{
+			named("U02", "sam", "Sam Two", "", false),
+			named("U01", "sam", "Sam One", "", false),
+			named("U03", "other", "sam", "", false),
+		},
+		lookup: "@sam", wantAmbiguous: []string{"U01", "U02"},
+	},
+	{
+		name: "an active handle beats a deactivated one",
+		users: []slack.User{
+			named("U01", "sam", "Sam One", "", true),
+			named("U02", "sam", "Sam Two", "", false),
+		},
+		lookup: "sam", wantID: "U02",
+	},
+	{
 		name: "an active account beats a deactivated one on a display name",
 		users: []slack.User{
 			named("U01", "aadams-old", "Alice Adams", "", true),

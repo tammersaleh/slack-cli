@@ -49,8 +49,8 @@ func wantAliceCandidates(t *testing.T, got any) {
 }
 
 // A name two active users hold is that input's row, with the candidates, in
-// every command that prints one row per user. The other inputs still resolve:
-// "@Bob Brown" goes to the active account, never the deactivated one.
+// every command that prints one row per user. Nothing is asked of Slack for
+// it beyond the directory.
 func TestUserRows_AmbiguousNameIsThatInputsRow(t *testing.T) {
 	for _, args := range userRowCommands {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -76,6 +76,33 @@ func TestUserRows_AmbiguousNameIsThatInputsRow(t *testing.T) {
 			}
 			if got := others.Load(); got != 0 {
 				t.Errorf("requests besides users.list = %d, want 0: nothing was picked", got)
+			}
+		})
+	}
+}
+
+// An ambiguous input keeps its place and the inputs around it still get their
+// rows. Every per-ID call fails here, so each row carries its input.
+func TestUserRows_AmbiguousNameKeepsItsPlaceBetweenOtherInputs(t *testing.T) {
+	for _, args := range userRowCommands {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var others atomic.Int64
+			mux := userDirectory(collidingDirectory, &others)
+
+			r := runWithMockFull(t, mux, append(args, "@nobody", "@Alice Adams", "@Bob Brown")...)
+			assertExitError(t, r.err)
+			rows, _ := rowsAndMeta(t, r.stdout)
+			if len(rows) != 3 {
+				t.Fatalf("rows = %d, want 3:\n%s", len(rows), r.stdout)
+			}
+			if rows[0]["input"] != "@nobody" || rows[0]["error"] != "user_not_found" {
+				t.Errorf("row 0 = %v, want user_not_found for @nobody", rows[0])
+			}
+			if rows[1]["input"] != "@Alice Adams" || rows[1]["error"] != "ambiguous_user" {
+				t.Errorf("row 1 = %v, want ambiguous_user for @Alice Adams", rows[1])
+			}
+			if rows[2]["input"] != "@Bob Brown" || rows[2]["error"] == "ambiguous_user" || rows[2]["error"] == "user_not_found" {
+				t.Errorf("row 2 = %v, want @Bob Brown resolved and looked up", rows[2])
 			}
 		})
 	}

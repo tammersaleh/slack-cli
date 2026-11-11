@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -115,6 +116,42 @@ func TestManagerChain_DeactivationLookupRateLimitAborts(t *testing.T) {
 	})
 	r := runWithMockFull(t, mux, "user", "manager-chain", "U01OLD")
 	assertFatalAbort(t, r.err, r.stdout, "rate_limited", output.ExitRateLimit, 0)
+}
+
+// A users.info failure that is not systemic leaves the row unmarked rather
+// than failing a chain whose profiles all loaded. A root whose profile fetch
+// fails is an error row with no id, which the lookup skips.
+func TestManagerChain_UnreadableUserRecordLeavesTheRowUnmarked(t *testing.T) {
+	var infoCalls atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/users.profile.get", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.FormValue("user") == "U03BAD" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "user_not_found"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "profile": map[string]any{"real_name": "Alice Adams", "fields": map[string]any{}}})
+	})
+	mux.HandleFunc("/api/users.info", func(w http.ResponseWriter, _ *http.Request) {
+		infoCalls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "user_not_visible"})
+	})
+
+	r := runWithMockFull(t, mux, "user", "manager-chain", "U01OLD", "U03BAD")
+	assertExitError(t, r.err)
+	rows, _ := rowsAndMeta(t, r.stdout)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2:\n%s", len(rows), r.stdout)
+	}
+	if _, has := rows[0]["deleted"]; has || rows[0]["id"] != "U01OLD" || rows[0]["stop_reason"] != "no_manager" {
+		t.Errorf("row 0 = %v, want the chain row, unmarked", rows[0])
+	}
+	if rows[1]["error"] != "user_not_found" || rows[1]["input"] != "U03BAD" {
+		t.Errorf("row 1 = %v, want the root's error row", rows[1])
+	}
+	if got := infoCalls.Load(); got != 1 {
+		t.Errorf("users.info calls = %d, want 1: an error row has no account to look up", got)
+	}
 }
 
 // The rule is scoped to the two commands. user list is asked for id alone and

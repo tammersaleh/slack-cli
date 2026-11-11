@@ -391,6 +391,16 @@ func (r *Resolver) ensureUserCache(ctx context.Context) error {
 		return nil
 	}
 
+	// A partial in-memory cache makes ensureUserCacheLazy return before it
+	// reads the file cache. A fresh file is the directory; use it rather
+	// than walk users.list.
+	if fc, err := r.loadUserFileCache(); err == nil && fc != nil {
+		r.mu.Lock()
+		r.setUserMaps(fc.Users)
+		r.mu.Unlock()
+		return nil
+	}
+
 	return r.bulkLoadUsers(ctx)
 }
 
