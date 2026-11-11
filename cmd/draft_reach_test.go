@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/tammersaleh/slack-cli/internal/output"
@@ -122,7 +123,7 @@ func TestDraftList_ActiveRequestOnlyWhenNeeded(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(calls) != len(tt.want) || calls[0] != tt.want[0] {
-				t.Errorf("calls = %v, want %v", calls, tt.want)
+				t.Fatalf("calls = %v, want %v", calls, tt.want)
 			}
 			lines := nonEmptyLines(out)
 			meta, _ := parseJSON(t, lines[len(lines)-1])["_meta"].(map[string]any)
@@ -136,8 +137,8 @@ func TestDraftList_ActiveRequestOnlyWhenNeeded(t *testing.T) {
 func TestDraftList_ActiveFlagIsGone(t *testing.T) {
 	var calls []string
 	_, err := runWithMockSession(t, draftReachMux(draftPage{}, draftPage{}, &calls), "draft", "list", "--active")
-	if err == nil {
-		t.Fatal("--active should be an unknown flag")
+	if err == nil || !strings.Contains(err.Error(), "--active") {
+		t.Fatalf("--active should be an unknown flag, got %v", err)
 	}
 	if len(calls) != 0 {
 		t.Errorf("no request expected, got %v", calls)
@@ -261,5 +262,114 @@ func TestDraftDelete_ActiveRequestFailureAborts(t *testing.T) {
 	meta, _ := parseJSON(t, lines[0])["_meta"].(map[string]any)
 	if meta["error"] != "invalid_auth" {
 		t.Errorf("trailer should name the failure, got %v", meta)
+	}
+}
+
+// The listing promises drafts neither sent nor deleted. A sent or deleted row
+// in the active answer is not printed on Slack's word that it is active.
+func TestDraftList_ActiveAnswerRowsAreStillFiltered(t *testing.T) {
+	all := draftPage{hasMore: true}
+	active := draftPage{drafts: []map[string]any{
+		reachDraft("DrSENT", map[string]any{"is_sent": true}),
+		reachDraft("DrGONE", map[string]any{"is_deleted": true}),
+		reachDraft("DrOLD", nil),
+	}}
+	var calls []string
+	out, err := runWithMockSession(t, draftReachMux(all, active, &calls), "draft", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected one row and a trailer, got %d:\n%s", len(lines), out)
+	}
+	if row := parseJSON(t, lines[0]); row["id"] != "DrOLD" {
+		t.Errorf("expected only the live draft, got %v", row)
+	}
+}
+
+// The active request fails after the plain page's rows are out: the rows
+// stand, the trailer names the failure, and the exit is the failure's.
+func TestDraftList_ActiveRequestFailureKeepsRowsAndEndsWithTrailer(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.PostForm.Get("is_active") == "true" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_auth"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": []map[string]any{reachDraft("DrNEW", nil)}, "has_more": true})
+	})
+	out, err := runWithMockSession(t, mux, "draft", "list")
+	var oErr *output.Error
+	if !errors.As(err, &oErr) || oErr.Err != "invalid_auth" || oErr.Code != output.ExitAuth {
+		t.Fatalf("expected invalid_auth with the auth exit code, got %v", err)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 2 {
+		t.Fatalf("expected the plain page's row and a trailer, got %d:\n%s", len(lines), out)
+	}
+	if row := parseJSON(t, lines[0]); row["id"] != "DrNEW" {
+		t.Errorf("row = %v", row)
+	}
+	meta, _ := parseJSON(t, lines[1])["_meta"].(map[string]any)
+	if meta["error"] != "invalid_auth" || meta["has_more"] != true {
+		t.Errorf("trailer should name the failure and stay open, got %v", meta)
+	}
+}
+
+// The second look after a failed delete runs the full lookup. On a truncated
+// page that includes the active request, and a draft found in neither answer
+// keeps Slack's error: a deleted draft pushed off the page cannot be seen, so
+// it is not reported as already_deleted on a guess.
+func TestDraftDelete_FailedDeleteOnTruncatedPage(t *testing.T) {
+	tests := []struct {
+		name       string
+		refetchAll []map[string]any
+		wantCalls  []string
+		wantStatus string
+		wantError  string
+	}{
+		{"now deleted in the plain page", []map[string]any{reachDraft("DrNEW", map[string]any{"is_deleted": true})}, []string{"all:100", "all:100"}, "already_deleted", ""},
+		{"gone from both answers", nil, []string{"all:100", "all:100", "active:100"}, "", "draft_delete_invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls []string
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
+				_ = r.ParseForm()
+				drafts, kind := []map[string]any{reachDraft("DrNEW", nil)}, "all"
+				switch {
+				case r.PostForm.Get("is_active") == "true":
+					drafts, kind = nil, "active"
+				case len(calls) > 0:
+					drafts = tt.refetchAll
+				}
+				calls = append(calls, kind+":"+r.PostForm.Get("limit"))
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": drafts, "has_more": true})
+			})
+			mux.HandleFunc("/api/drafts.delete", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "draft_delete_invalid"})
+			})
+			out, err := runWithMockSession(t, mux, "draft", "delete", "DrNEW")
+			if strings.Join(calls, " ") != strings.Join(tt.wantCalls, " ") {
+				t.Errorf("drafts.list calls = %v, want %v", calls, tt.wantCalls)
+			}
+			row := parseJSON(t, nonEmptyLines(out)[0])
+			if tt.wantError != "" {
+				assertExitError(t, err)
+				if row["error"] != tt.wantError || row["input"] != "DrNEW" {
+					t.Errorf("expected Slack's %s for DrNEW, got %v", tt.wantError, row)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected success, got %v", err)
+			}
+			if row["status"] != tt.wantStatus {
+				t.Errorf("status = %v, want %s", row["status"], tt.wantStatus)
+			}
+		})
 	}
 }
