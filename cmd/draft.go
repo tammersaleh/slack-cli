@@ -755,6 +755,14 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 			}
 			continue
 		}
+		// A draft Slack already marked deleted is the state the caller asked
+		// for. drafts.delete would reject it, so none is sent.
+		if d.deleted() {
+			if err := p.PrintItem(draftDeleteRow(id, draftStatusAlreadyDeleted)); err != nil {
+				return err
+			}
+			continue
+		}
 		params := map[string]string{
 			"draft_id":               d.ID,
 			"client_last_updated_ts": padDraftTS(d.LastUpdatedTS),
@@ -763,6 +771,16 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 			oErr := cli.ClassifyError(err)
 			if isSystemicErr(oErr) {
 				return abortWithTrailer(p, oErr, errorCount)
+			}
+			// The draft may have been deleted between the lookup and the
+			// write. A second look decides on the draft's state, as draft
+			// update does, never on Slack's error string. A draft still live
+			// or absent from the list keeps Slack's error.
+			if current, lookupErr := findDraftByID(ctx, client, id); lookupErr == nil && current.deleted() {
+				if err := p.PrintItem(draftDeleteRow(id, draftStatusAlreadyDeleted)); err != nil {
+					return err
+				}
+				continue
 			}
 			errorCount++
 			// AsItem keeps the classifier's hint, which a hand-built row
@@ -774,7 +792,7 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 			}
 			continue
 		}
-		if err := p.PrintItem(map[string]any{"id": id, "deleted": true}); err != nil {
+		if err := p.PrintItem(draftDeleteRow(id, draftStatusDeleted)); err != nil {
 			return err
 		}
 	}
@@ -787,6 +805,18 @@ func (c *DraftDeleteCmd) Run(cli *CLI) error {
 		return &output.ExitError{Code: output.ExitGeneral}
 	}
 	return nil
+}
+
+// draft delete reports each draft's outcome as a status, the way channel
+// invite and kick do: one for the delete this run made, one for a draft that
+// was already in the state asked for.
+const (
+	draftStatusDeleted        = "deleted"
+	draftStatusAlreadyDeleted = "already_deleted"
+)
+
+func draftDeleteRow(id, status string) map[string]any {
+	return map[string]any{"id": id, "status": status}
 }
 
 // findDraftByID fetches the newest draftPageMax drafts and returns the one

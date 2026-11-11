@@ -275,8 +275,11 @@ Body fields:
 - `draft_id`
 - `client_last_updated_ts` (padded, same as update)
 
-Errors: `draft_delete_invalid` when already tombstoned. `draft delete`
-reports it as a per-draft error row.
+Errors: `draft_delete_invalid` when already tombstoned. `draft delete` does
+not send the request for a draft `drafts.list` shows deleted: it reports
+`status: already_deleted` and exits 0. If the delete fails on a draft the
+lookup showed live, it lists the drafts again and reports `already_deleted`
+only when the draft is now marked deleted.
 
 ### Draft shape
 

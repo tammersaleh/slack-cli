@@ -2746,32 +2746,41 @@ Slack API: `drafts.update` (or `drafts.create` on auto-replace)
 slack draft delete <draft_id>...
 ```
 
-Accepts one or more draft ids. Deletes active or scheduled drafts.
-`client_last_updated_ts` is auto-fetched and padded as with update.
+Accepts one or more draft ids. `client_last_updated_ts` is auto-fetched and
+padded as with update.
 
 ```
 $ slack draft delete Dr01234
-{"id":"Dr01234","deleted":true}
+{"id":"Dr01234","status":"deleted"}
 {"_meta":{"has_more":false}}
 ```
 
-Bulk:
+Each success row is `{"id","status"}`. `status` is `deleted` when this run
+deleted the draft, and `already_deleted` when Slack had already marked it
+deleted (`is_deleted: true` in `drafts.list`). An already-deleted draft is a
+success: no `drafts.delete` is sent, the row is not counted in `error_count`,
+and the exit code is 0, so a rerun is safe.
 
 ```
 $ slack draft delete Dr01234 Dr05678
-{"id":"Dr01234","deleted":true}
-{"id":"Dr05678","deleted":true}
+{"id":"Dr01234","status":"deleted"}
+{"id":"Dr05678","status":"already_deleted"}
 {"_meta":{"has_more":false}}
 ```
 
 Per-draft errors appear inline; `error_count` in `_meta` indicates partial failure.
 Each error row is `{"input":"<draft id>","error":...,"detail":...}` plus
-`hint` when the error has one. Slack's own rejection is passed through as
-returned: `draft_delete_invalid` is what `drafts.delete` answers for a draft
-already marked deleted, and it is reported as an error (exit 1).
-An id that the lookup page does not hold is `draft_not_found`, or
-`draft_lookup_incomplete` when Slack reported more drafts than the 100 the
-lookup can read.
+`hint` when the error has one. When the lookup shows a live draft and
+`drafts.delete` fails anyway, the command reads `drafts.list` once more and
+decides on the draft's state, not on Slack's error string: a draft now marked
+deleted is `already_deleted`, and anything else (still live, or gone from the
+list) is an error row carrying Slack's code as returned. A rate limit, auth
+failure, or timeout stops the run with no second look.
+An id that the lookup does not hold is `draft_not_found`, or
+`draft_lookup_incomplete` when Slack reported more drafts than the lookup
+can read.
+
+A sent draft is not special-cased: `drafts.delete` is sent for it.
 
 Slack API: `drafts.delete`
 

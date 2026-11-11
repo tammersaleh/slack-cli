@@ -465,6 +465,10 @@ warning on stderr. Check for `replaced_draft_id` on every update and track
 the new id (`--fields` cannot strip the key). On a draft
 that was already sent it fails with `draft_already_sent` and writes nothing.
 
+`draft delete` prints `{"id","status"}` per draft: `status` is `deleted`, or
+`already_deleted` when Slack had already marked the draft deleted. Both are
+success (exit 0), so rerunning a delete is safe.
+
 Write the body as Markdown with `--markdown` unless you need a block shape
 the subset below cannot express. Hand-rolled rich_text JSON is where the
 bugs live (lost `*italic*`, unrecognized `1.` lists, reordered blocks).

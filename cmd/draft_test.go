@@ -2228,8 +2228,111 @@ func TestDraftDelete_Single(t *testing.T) {
 	}
 	lines := nonEmptyLines(out)
 	item := parseJSON(t, lines[0])
-	if item["deleted"] != true {
-		t.Errorf("expected deleted=true, got %v", item["deleted"])
+	assertKeys(t, item, "id", "status")
+	if item["id"] != "Dr01234" || item["status"] != "deleted" {
+		t.Errorf("expected {id, status: deleted}, got %v", item)
+	}
+}
+
+// A draft the list already shows deleted is the caller's goal state. The row
+// says so, no drafts.delete is sent, and the run is a success.
+func TestDraftDelete_AlreadyDeleted(t *testing.T) {
+	tomb := liveDraft(map[string]any{"is_deleted": true})
+	live := liveDraft(map[string]any{"id": "Dr05678", "is_deleted": false})
+	var deletedIDs []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", draftsListHandler(t, []map[string]any{tomb, live}, false))
+	mux.HandleFunc("/api/drafts.delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		deletedIDs = append(deletedIDs, r.PostForm.Get("draft_id"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	})
+
+	out, err := runWithMockSession(t, mux, "draft", "delete", "Dr01234", "Dr05678")
+	if err != nil {
+		t.Fatalf("an already-deleted draft must not fail the run: %v", err)
+	}
+	if len(deletedIDs) != 1 || deletedIDs[0] != "Dr05678" {
+		t.Errorf("drafts.delete should be sent for the live draft only, got %v", deletedIDs)
+	}
+	lines := nonEmptyLines(out)
+	if len(lines) != 3 {
+		t.Fatalf("expected 2 rows and a trailer, got %d:\n%s", len(lines), out)
+	}
+	first := parseJSON(t, lines[0])
+	assertKeys(t, first, "id", "status")
+	if first["id"] != "Dr01234" || first["status"] != "already_deleted" {
+		t.Errorf("expected already_deleted for Dr01234, got %v", first)
+	}
+	if second := parseJSON(t, lines[1]); second["id"] != "Dr05678" || second["status"] != "deleted" {
+		t.Errorf("expected deleted for Dr05678, got %v", second)
+	}
+	meta, _ := parseJSON(t, lines[2])["_meta"].(map[string]any)
+	if _, has := meta["error_count"]; has {
+		t.Errorf("an already-deleted draft is not an error, got %v", meta)
+	}
+}
+
+// deleteRaceMux serves first on the first drafts.list call and refetch on
+// later ones, and fails drafts.delete with deleteErr.
+func deleteRaceMux(first, refetch map[string]any, deleteErr string, lists *int) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/drafts.list", func(w http.ResponseWriter, r *http.Request) {
+		*lists++
+		d := first
+		if *lists > 1 {
+			d = refetch
+		}
+		drafts := []map[string]any{}
+		if d != nil {
+			drafts = append(drafts, d)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "drafts": drafts})
+	})
+	mux.HandleFunc("/api/drafts.delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": deleteErr})
+	})
+	return mux
+}
+
+// The lookup showed a live draft, drafts.delete failed, and a second look
+// decides. The outcome follows the draft's state, never Slack's error string.
+func TestDraftDelete_FailedDeleteBranchesOnRefetchedState(t *testing.T) {
+	tests := []struct {
+		name       string
+		refetch    map[string]any
+		deleteErr  string
+		wantStatus string
+		wantError  string
+	}{
+		{"now deleted", liveDraft(map[string]any{"is_deleted": true}), "some_new_slack_code", "already_deleted", ""},
+		{"gone from the list", nil, "draft_delete_invalid", "", "draft_delete_invalid"},
+		{"still live", liveDraft(nil), "draft_delete_invalid", "", "draft_delete_invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var lists int
+			mux := deleteRaceMux(liveDraft(nil), tt.refetch, tt.deleteErr, &lists)
+			out, err := runWithMockSession(t, mux, "draft", "delete", "Dr01234")
+			row := parseJSON(t, nonEmptyLines(out)[0])
+			if lists != 2 {
+				t.Errorf("expected one re-read of drafts.list, got %d calls", lists)
+			}
+			if tt.wantError != "" {
+				assertExitError(t, err)
+				if row["error"] != tt.wantError || row["input"] != "Dr01234" {
+					t.Errorf("expected %s error row, got %v", tt.wantError, row)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected success, got %v", err)
+			}
+			assertKeys(t, row, "id", "status")
+			if row["status"] != tt.wantStatus {
+				t.Errorf("status = %v, want %s", row["status"], tt.wantStatus)
+			}
+		})
 	}
 }
 
@@ -2399,7 +2502,7 @@ func TestDraftDelete_LookupMissOnTruncatedPage(t *testing.T) {
 	if hint, _ := missing["hint"].(string); !strings.Contains(hint, "newest 100") {
 		t.Errorf("row should carry the hint, got %v", missing)
 	}
-	if done := parseJSON(t, lines[1]); done["deleted"] != true {
+	if done := parseJSON(t, lines[1]); done["status"] != "deleted" {
 		t.Errorf("the reachable draft should still be deleted, got %v", done)
 	}
 	meta, _ := parseJSON(t, lines[2])["_meta"].(map[string]any)
