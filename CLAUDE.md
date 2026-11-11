@@ -317,6 +317,10 @@ is not. Reasoning that a release is "outward-facing", "irreversible",
 rule exists to stop - a published version is the normal, expected
 output of this repo, and none of those adjectives make it a question.
 
+## Breaking changes are fine
+
+Do not weigh breakage when choosing a design. Tammer is effectively the only consumer of this CLI, and he uses it through Claude, which reads SKILL.md and the help text and adapts to changed behavior. Pick the behavior that makes the CLI work best, even when it changes output shape, exit codes, defaults, or flag meanings. Never keep a worse behavior for compatibility, never add a compatibility flag or a deprecation period, and never present "it is a breaking change" as a cost when laying out options. Mark the commit `feat!:` or `fix!:` so the version is accurate, and update SKILL.md, SPEC.md, and the help text in the same change, because those are how the consumer learns the new behavior. (Tammer, 2026-11-10)
+
 ## Autonomy
 
 Work through features independently. Never stop to ask "should I
