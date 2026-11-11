@@ -2438,9 +2438,12 @@ So the default listing makes up to two requests:
    reaches live drafts older than the first page. Rows already printed are
    skipped.
 
-`has_more` in the trailer of a default listing is then the second answer's:
-`true` means more than `--limit` active drafts exist. Raise `--limit`. Past
-100 active drafts the oldest cannot be listed.
+`--limit` is the page size of each request, not a cap on rows: the listing is
+the union of the two answers. `has_more` in the trailer of a default listing
+is then the second answer's: `true` means Slack holds more active drafts than
+`--limit`. Raise `--limit`. Past 100 active drafts the oldest cannot be
+listed. If the second request fails, the rows already printed stand and the
+trailer is `{"has_more":true,"error":"<code>"}`.
 
 `is_active=true` was measured on an account whose one live draft was a
 scheduled composer draft. That it returns every live draft (unscheduled ones,
@@ -2795,8 +2798,9 @@ Each error row is `{"input":"<draft id>","error":...,"detail":...}` plus
 `hint` when the error has one. When the lookup shows a live draft and
 `drafts.delete` fails anyway, the command reads `drafts.list` once more and
 decides on the draft's state, not on Slack's error string: a draft now marked
-deleted is `already_deleted`, and anything else (still live, or gone from the
-list) is an error row carrying Slack's code as returned. A rate limit, auth
+deleted is `already_deleted`, and anything else (still live, or not found by
+the lookup, which cannot see a deleted draft older than the newest 100) is an
+error row carrying Slack's code as returned. A rate limit, auth
 failure, or timeout stops the run with no second look.
 An id that the lookup does not hold is `draft_not_found`, or
 `draft_lookup_incomplete` when Slack reported more drafts than the lookup

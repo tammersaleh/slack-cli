@@ -48,7 +48,8 @@ Slack's drafts.list returns at most 100 drafts of every state and cannot page.
 When that page is truncated, the default listing makes a second request for
 the drafts Slack counts as active (neither sent nor deleted, filtered before
 the limit), so an unsent draft older than the newest page is still listed.
-has_more: true then means more than --limit active drafts exist.
+--limit is the page size of each request. has_more: true then means Slack
+holds more active drafts than --limit. Past 100 they cannot be listed.
 
 --include-sent and --include-deleted read only the most recently updated
 --limit drafts of every state. has_more: true there means older drafts exist

@@ -451,7 +451,8 @@ recently updated first, including ones older than Slack's 100-draft page. The
 trailer's `suppressed_sent` and `suppressed_deleted` count the sent and
 deleted drafts in the newest page. Rows carry `is_sent`, `is_deleted`, and
 `is_from_composer`. `has_more: true` on a plain `draft list` means more
-unsent drafts than `--limit` exist: rerun with `--limit 100`.
+unsent drafts than `--limit` exist: rerun with `--limit 100`. If it is still
+`true` at 100, the oldest unsent drafts cannot be listed.
 
 `--include-sent` and `--include-deleted` list only the most recently updated
 `--limit` drafts of every state (1-100, no cursor), so `has_more: true` there
