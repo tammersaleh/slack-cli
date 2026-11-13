@@ -147,14 +147,11 @@ refactor - follows the same workflow. No shortcuts for "small" fixes:
    `version "X.Y.Z"` appears (the cask artifact lags the git tag by minutes -
    `brew upgrade` says "already installed" until then), then upgrade and
    verify in the main session. The
-   release flow: release-please opens a release PR that auto-merges once CI
-   is green, then GoReleaser tags it and pushes the Homebrew artifact -
-   minutes, not instant. Pushing a non-releasing commit (`chore:`, `docs:`)
-   to main after the release PR opens leaves that PR `BEHIND` and
-   auto-merge never fires (seen 2026-09-21: 70 minutes stalled with green
-   CI). Either push the cleanup commit before the `fix:`/`feat:` or, when
-   `gh pr view N --json mergeStateStatus` says `BEHIND`, run
-   `gh pr update-branch N` - CI reruns and auto-merge completes. The Bash
+   release flow: `release.yml` runs `verify` on the push, release-please
+   then opens a release PR and merges it at once, and the merge push cuts
+   the tag and runs GoReleaser, which pushes the Homebrew artifact -
+   minutes, not instant. If `verify` fails, nothing releases: fix it and
+   push again. The Bash
    tool caps a command at 10 minutes, so a poll loop must fit inside that
    and be re-launched, not written as a one-hour loop. The artifact is a
    **cask**, not a formula: it lives at `Casks/tammersaleh-slack-cli.rb` in the tap (not
@@ -258,11 +255,17 @@ in the streaming loops).
 ## Release versioning
 
 Releases are fully automated via release-please + GoReleaser.
-Release-please watches main; when a commit with a version-bumping type
-lands, it opens a release PR which auto-merges once CI passes. The
-merged PR cuts a tag + GitHub Release; GoReleaser builds binaries and
-pushes an updated cask to `tammersaleh/homebrew-tap`. Nobody runs
-`git tag` by hand - and nobody clicks Merge on the release PR either.
+`release.yml` runs `verify` (the steps in `ci.yml` plus govulncheck) on
+every push to main except the release commit itself. Release-please runs
+only after `verify` passes. A commit with a version-bumping type opens a
+release PR that merges at once. The merge push cuts a tag + GitHub
+Release; GoReleaser builds binaries and pushes an updated cask to
+`tammersaleh/homebrew-tap`. Nobody runs `git tag` by hand - and nobody
+clicks Merge on the release PR either.
+
+Two repo secrets drive it. `RELEASE_PAT` (fine-grained, the six CLI repos,
+contents and pull requests write) opens and merges the release PR. It
+cannot write the tap. `HOMEBREW_TAP_TOKEN` (tap repo only) pushes the cask.
 
 The cask token is `tammersaleh-slack-cli`, not `slack-cli`: homebrew/cask
 ships its own `slack-cli` (Slack's platform CLI, binary also `slack`), and
@@ -411,8 +414,19 @@ For functions only accessible within `package cmd` (like `padDraftTS`), put unit
 This is a personal project. The workflow is entirely local: commit
 on a branch (or directly on main for small fixes), merge to main,
 push. Don't open pull requests. `gh pr create` is not part of any
-flow here. The only PR that exists is the release-please automation
-PR, and that's created and merged without human involvement.
+flow here. The only PRs that exist are release-please's and Dependabot's,
+and both are created and merged without human involvement.
+
+Dependabot opens monthly grouped PRs for `gomod` and `github-actions`, and
+`pr.yml` merges them once tests pass. A merged bump cuts no release by
+itself. It ships with the next pushed release. Major versions are ignored,
+so bump those by hand.
+
+Three workflow files: `ci.yml` holds the test steps and is reusable only,
+`pr.yml` calls it for pull requests and merges Dependabot PRs, `release.yml`
+calls it as `verify` for pushes to main. Jobs in `ci.yml` must stay at
+`contents: read`. A called workflow cannot request more than its caller
+grants.
 
 ## Output
 

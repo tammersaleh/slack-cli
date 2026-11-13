@@ -1,6 +1,8 @@
 [tools]
 go = "1.25"
 "go:github.com/golangci/golangci-lint/cmd/golangci-lint" = "1.64.8"
+# govulncheck is pinned to 1.1.4 because newer releases need Go 1.26.
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.1.4"
 
 [tasks.build]
 description = "Build the slack binary"
