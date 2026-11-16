@@ -9,8 +9,8 @@
 - [x] Record findings in `docs/draft-messages.md`
 - [x] Tests, then implementation
 - [x] SPEC.md, SKILL.md, help text, CLAUDE.md
-- [ ] `feature-dev:code-reviewer` pass, before and after fixes
-- [ ] Push, release, install, verify with the installed binary
+- [x] `feature-dev:code-reviewer` pass, before and after fixes
+- [x] Push, release, install, verify with the installed binary (6.0.0, 2026-11-16, see "Verified on 6.0.0")
 - [ ] Tammer checks Desktop: the file renders in the composer, the draft survives an open Drafts panel, send posts the file
 
 ## Measured 2026-11-16
@@ -56,6 +56,19 @@ All three live drafts were alive (`is_deleted: false`) 78s after create with Sla
 ### Not measured
 
 Desktop rendering of a CLI-attached file, sending such a draft, an open Drafts panel, a scheduled draft with a file, `--broadcast`, a workspace (T) token, the request sequence the composer itself makes, size and blocked-type errors, the `drafts.update` response shape (assumed `{ok, draft, files}` like create).
+
+## Verified on 6.0.0
+
+Installed binary, 2026-11-16, self-DM, same Grid org and session token. Two drafts were left in the self-DM for the Desktop check.
+
+- `draft create --markdown --file x.pdf`: exit 0, row has one `file_ids` entry and a `files` summary. `filetype` and `mimetype` were absent on the create row (Slack had not typed the PDF yet) and present on the next read.
+- `draft create --file x.pdf` with no stdin: exit 0, `blocks: []`, one file.
+- `draft update --markdown` on the first draft: same id, file kept.
+- `draft update --file x.pdf --file notes.txt`: same id, two files in flag order. So `drafts.update` answers `{ok, draft, files}` like create.
+- `draft create --file nope.pdf`: `invalid_input` naming the path. `--print-payload --file`: `invalid_input`.
+- `draft list`: both drafts listed with `file_ids` and `files`, `is_deleted: false`.
+
+Not exercised live: any cleanup branch, the tombstone replacement with files, `--no-files`.
 
 ## Design
 
