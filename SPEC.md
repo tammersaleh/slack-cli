@@ -2660,11 +2660,10 @@ Measured 2026-11-16 (Enterprise Grid, desktop session token, self-DM,
 file id, two file ids on a thread destination (order kept), and a file id
 already on another live draft were all accepted. An id that does not exist,
 or whose upload was never completed, is `file_not_found`. All three live
-drafts were not tombstoned 78 seconds later with Desktop running. Not
-measured: how Desktop renders a CLI-attached file, sending such a draft, an
-open Drafts panel (a file-only draft in particular), a scheduled draft with a
-file, a workspace (T) token, and Slack's errors for an oversized or blocked
-file. The CLI's own `--file` path is mock-tested only.
+drafts were not tombstoned 78 seconds later with Desktop running. Checked in Slack Desktop 2026-11-16 on drafts staged by 6.0.0 in a self-DM: a text draft with a PDF and a txt file, and a file-only draft (the panel shows it as "No message"), both stayed in the open Drafts panel with their file icons, and both sent as messages carrying their files. Not
+measured: a scheduled draft with a file, a workspace (T) token, and Slack's
+errors for an oversized or blocked file. The CLI's cleanup branches,
+`--no-files`, and the tombstone replacement with files are mock-tested only.
 
 ##### Markdown input
 

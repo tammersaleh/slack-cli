@@ -460,11 +460,12 @@ Mock-tested only (`cmd/draft_files_test.go`): the whole `--file` path
 through the CLI, every cleanup branch, and the row join. The mock models the
 measurements above.
 
-Not measured: Desktop rendering of a CLI-attached file, sending such a
-draft, an open Drafts panel, a scheduled draft with a file, `--broadcast`, a
+Checked in Slack Desktop 2026-11-16 on drafts staged by 6.0.0 in a self-DM: a text draft with a PDF and a txt file, and a file-only draft (the panel shows it as "No message"), both stayed in the open Drafts panel with their file icons, and both sent as messages carrying their files. On the same build `draft update --file` returned a row with the joined
+`files`, so `drafts.update` answers `{ok, draft, files}` like create.
+
+Not measured: a scheduled draft with a file, `--broadcast`, a
 workspace (T) token, the request sequence the composer itself makes, the
-errors for an oversized or blocked file, the `drafts.update` response shape
-(assumed `{ok, draft, files}` like create), and what `files.delete` answers
+errors for an oversized or blocked file, and what `files.delete` answers
 for an id whose upload was never completed (the CLI treats `file_not_found`
 there as nothing left to delete).
 

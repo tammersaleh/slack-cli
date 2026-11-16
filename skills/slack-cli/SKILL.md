@@ -514,9 +514,7 @@ to see whether the draft exists before retrying, or the retry uploads a
 second copy. The CLI cannot delete a file. Tell the user about any id the
 `detail` names.
 
-Not yet checked in Slack Desktop: how an attached file renders in the draft
-composer, and whether a file-only draft survives the Drafts panel. After
-staging one, ask the user to confirm the file shows on the draft.
+Checked in Slack Desktop 2026-11-16 on drafts staged by 6.0.0 in a self-DM: a text draft with a PDF and a txt file, and a file-only draft (the panel shows it as "No message"), both stayed in the open Drafts panel with their file icons, and both sent as messages carrying their files.
 
 `draft list` prints the drafts that are neither sent nor deleted, most
 recently updated first, including ones older than Slack's 100-draft page. The

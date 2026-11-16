@@ -11,7 +11,7 @@
 - [x] SPEC.md, SKILL.md, help text, CLAUDE.md
 - [x] `feature-dev:code-reviewer` pass, before and after fixes
 - [x] Push, release, install, verify with the installed binary (6.0.0, 2026-11-16, see "Verified on 6.0.0")
-- [ ] Tammer checks Desktop: the file renders in the composer, the draft survives an open Drafts panel, send posts the file
+- [x] Desktop check (Tammer, 2026-11-16): both drafts stayed in the open Drafts panel with their file icons, the file-only one shown as "No message", and both sent with their files attached
 
 ## Measured 2026-11-16
 
