@@ -1198,6 +1198,45 @@ func TestDraftUpdateFile_UnknownOutcomeKeepsFiles(t *testing.T) {
 	}
 }
 
+// A 500 from drafts.update is not systemic, so the re-fetch runs. The update
+// may have applied, so whatever the re-fetch shows, nothing is deleted.
+func TestDraftUpdateFile_ServerErrorThenChangedState(t *testing.T) {
+	t.Run("sent: files kept and named", func(t *testing.T) {
+		s := newUpdateStore(t, fileDraft(nil))
+		s.failAll("drafts.update", 500, "boom")
+		s.listAfterWrite = []map[string]any{fileDraft(map[string]any{"is_sent": true})}
+		path := tempFile(t, "new.txt", "x")
+
+		r := runDraftFiles(t, s, "", "draft", "update", "Dr01234", "--file", path)
+		oErr := draftErr(t, r.err, "draft_already_sent")
+		assertDeleted(t, s)
+		if !strings.Contains(oErr.Detail, "F01ABC") {
+			t.Errorf("detail %q does not name the uploaded file", oErr.Detail)
+		}
+		if s.count("drafts.create") != 0 {
+			t.Errorf("no replacement expected, got %d creates", s.count("drafts.create"))
+		}
+	})
+	t.Run("tombstoned: replacement reuses the uploads", func(t *testing.T) {
+		s := newUpdateStore(t, fileDraft(nil))
+		s.failAll("drafts.update", 500, "boom")
+		s.listAfterWrite = []map[string]any{fileDraft(map[string]any{"is_deleted": true})}
+		path := tempFile(t, "new.txt", "x")
+
+		r := runDraftFiles(t, s, "", "draft", "update", "Dr01234", "--file", path)
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		assertDeleted(t, s)
+		if got := s.lastForm("drafts.create")["file_ids"]; got != `["F01ABC"]` {
+			t.Errorf("replacement file_ids = %q, want the file uploaded for the update", got)
+		}
+		if s.count("files.getUploadURLExternal") != 1 {
+			t.Errorf("uploads = %d, want 1", s.count("files.getUploadURLExternal"))
+		}
+	})
+}
+
 // An update that preserved existing files and failed names none of them: the
 // CLI uploaded nothing.
 func TestDraftUpdateFile_FailedUpdateWithoutUploads(t *testing.T) {
