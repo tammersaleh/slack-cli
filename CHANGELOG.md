@@ -1,5 +1,38 @@
 # Changelog
 
+## [6.0.0](https://github.com/tammersaleh/slack-cli/compare/v5.13.1...v6.0.0) (2026-11-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* `message list --after X` and `--unread` without `--before` return rows newest first across pages, and `--limit N` is the newest N messages in the window. A cursor produced under `--after` alone by an earlier version must be discarded.
+* draft list --active is removed. The default listing now includes everything it returned. has_more on a default listing reports whether more active drafts exist than --limit, not whether Slack holds more drafts of any state.
+* a deleted draft's row is {"id","status":"deleted"}. The
+* an unresolved row no longer has name or is_archived, and section channels and section find exit 1 when any row is marked.
+* a name held by two or more users of equal rank is now an ambiguous_user error instead of resolving to one of them.
+* commands that take an @name or email can now exit 2, 3, or 4 with invalid_auth, rate_limited, timeout, network_error, or a Slack code where they used to exit 1 with user_not_found. The five per-user commands print no rows when a lookup fails, where they used to print the rows before the failing input.
+* commands that take a channel name can now exit 2, 3, or 4 with invalid_auth, rate_limited, timeout, network_error, or a Slack code where they used to exit 1 with channel_not_found. channel info prints no rows when a name lookup fails.
+
+### Features
+
+* add channel create ([362ce2f](https://github.com/tammersaleh/slack-cli/commit/362ce2f5951e2a2c214f005b60592e3b900e7f7c))
+* attach uploaded files to drafts with --file ([a600519](https://github.com/tammersaleh/slack-cli/commit/a600519753cd0df53034bdba9265b0ed9fed10d4))
+* list and find unsent drafts older than Slack's 100-draft page ([9983608](https://github.com/tammersaleh/slack-cli/commit/998360888f2fa28c69f39be2ea4cce82af85a627))
+
+
+### Bug Fixes
+
+* keep deleted: true on user info and manager-chain rows under --fields ([3b72c9e](https://github.com/tammersaleh/slack-cli/commit/3b72c9e5820dde19ea4db1d9502cc291a73458b4))
+* make message list --after and --unread one newest-first stream ([1e90eb0](https://github.com/tammersaleh/slack-cli/commit/1e90eb0e32df05d8419b74d9328317f75ba36863))
+* rank users sharing a name and fail on a tie instead of picking one ([5c8ae75](https://github.com/tammersaleh/slack-cli/commit/5c8ae756b401e7741b41c8916e49f0fd9f2bfeb4))
+* read a fresh user file cache before walking users.list for a name ([c839424](https://github.com/tammersaleh/slack-cli/commit/c83942491693b0234a98ef73122144d08a5c6b17))
+* report a failed channel lookup under its own error code ([501ba76](https://github.com/tammersaleh/slack-cli/commit/501ba7606283b4e65884b95b985f98efab0f6194))
+* report a failed user lookup under its own error code ([efeaa4a](https://github.com/tammersaleh/slack-cli/commit/efeaa4a76df285d0979073536c456e9d8f2e6727))
+* report an already-deleted draft as a successful delete ([23de6ac](https://github.com/tammersaleh/slack-cli/commit/23de6ace3101a8594e2894692de181302765c132))
+* send the [@name](https://github.com/name) rejection to a plain user info lookup ([e0ab2b2](https://github.com/tammersaleh/slack-cli/commit/e0ab2b29d81a15a4a4580e9fd9f2ffffd00e06ae))
+* stop section channels and find from hiding failed name lookups ([30d4c33](https://github.com/tammersaleh/slack-cli/commit/30d4c3360637ad27e828d983476c0857c04849bb))
+* treat an email followed by words as a name, not an email ([675f9ea](https://github.com/tammersaleh/slack-cli/commit/675f9eabf3d5a4aa5f8719b357cd648b0ded7a7c))
+
 ## [5.13.1](https://github.com/tammersaleh/slack-cli/compare/v5.13.0...v5.13.1) (2026-11-11)
 
 
