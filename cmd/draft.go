@@ -530,9 +530,10 @@ are kept, --file PATH (repeatable) uploads and replaces them with the given
 files, and --no-files removes them all. Neither deletes the files it
 displaces. A file counts as content, so a file-only draft can be
 rescheduled, and --no-files on one is refused (invalid_blocks) unless a body
-comes with it. If Slack refuses the update the files uploaded for it are
-deleted; if the update's outcome is unknown they are left in place and the
-error's detail names their ids.
+or a table comes with it. If Slack refuses the update the files uploaded for
+it are deleted (or, when the draft turns out to be tombstoned, attached to
+its replacement); if the update's outcome is unknown they are left in place
+and the error's detail names their ids.
 
 A draft that was already sent is refused with draft_already_sent and
 nothing is written; use draft create for a new message.
