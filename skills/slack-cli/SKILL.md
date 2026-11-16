@@ -65,7 +65,7 @@ Common errors and their recovery:
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
-| `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. |
+| `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. A draft with `--file` needs no body. |
 | `rate_limited` | Exit 3. Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait. `user info` lookups, internal reads (`section list`, `draft list`, `saved counts`, `channel managers`), the name lookups in `section channels`/`find`, and `section move`/`rename`/`emoji` are retried too. Other single-shot commands (`message get`, `reaction list`, `channel info`, `file info`) and creates and draft and list writes are not: wait (`detail` names Slack's `Retry-After` when it sent one) and rerun. Slack's raw `ratelimited` string is always reported as `rate_limited` |
 | `invalid_cursor` | The cursor is void. Rerun without `--cursor`; a cursor only works for the same command, flags, and workspace that produced it |
 | `search_page_limit` / `file_page_limit` | The run asked for a page above 100, the last one Slack serves (10,000 results at `--limit 100`). Terminal, no cursor. Search: split the query with `before:`/`after:` and run each window with `--all --limit 100`. `file list`: narrow with `--channel`, `--user`, or `--types` |
@@ -470,11 +470,53 @@ shortcut.
 
 ```
 slack draft list [--include-sent] [--include-deleted] [--limit N]
-slack draft create <recipient>... --markdown [--print-payload] [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] < body.md
-slack draft create <recipient>... [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] < payload.json
-slack draft update <draft-id> [--markdown [--print-payload]] [--at RFC3339] [--clear-schedule] [--table FILE] [< body]
+slack draft create <recipient>... --markdown [--print-payload] [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] [--file PATH]... < body.md
+slack draft create <recipient>... [--thread TS [--broadcast]] [--at RFC3339] [--table FILE] [--file PATH]... < payload.json
+slack draft create <recipient>... --file PATH [--file PATH]...        # file-only draft, no stdin
+slack draft update <draft-id> [--markdown [--print-payload]] [--at RFC3339] [--clear-schedule] [--table FILE] [--file PATH]... [--no-files] [< body]
 slack draft delete <draft-id>...
 ```
+
+#### Files on drafts (`--file`)
+
+`--file PATH` uploads a local file and attaches it to the draft. Repeat it
+for several files (kept in flag order). The file stays private to the user
+until they send the draft. A file is content by itself, so
+`slack draft create @alice --file report.pdf` with no stdin is a valid
+file-only draft.
+
+```bash
+cat body.md | slack draft create '#general' --markdown --file report.pdf
+slack draft update Dr01234 --file v2.pdf     # REPLACES the draft's files with v2.pdf
+slack draft update Dr01234 --no-files        # removes every file from the draft
+```
+
+On `update`, no file flag keeps the draft's files. `--file` replaces the
+whole list, it does not append: pass every file the draft should end up
+with. `--no-files` clears it and is refused (`invalid_blocks`) on a
+file-only draft unless the same update pipes a body. Neither flag deletes
+the displaced files from Slack, and `draft delete` leaves a draft's files in
+place.
+
+Every draft row carries `file_ids` (always an array, `[]` for none) and,
+when the files still exist, `files`: `[{id, name, title, size, filetype,
+mimetype}]` in the same order. An id in `file_ids` with no entry in `files`
+is a file that was deleted. Confirm an attachment by reading `files` on the
+row the command printed.
+
+A path must be a readable, non-empty regular file, else `invalid_input`
+before any request. `--file` cannot be combined with `--print-payload`. If
+the upload or the draft write fails, read the error's `detail`: when Slack
+refused the draft the CLI already deleted the files it uploaded, and when the
+outcome is unknown (`timeout`, `rate_limited`, `http_error`) it left them in
+place and names their ids. In that case run `slack draft list --limit 100`
+to see whether the draft exists before retrying, or the retry uploads a
+second copy. The CLI cannot delete a file. Tell the user about any id the
+`detail` names.
+
+Not yet checked in Slack Desktop: how an attached file renders in the draft
+composer, and whether a file-only draft survives the Drafts panel. After
+staging one, ask the user to confirm the file shows on the draft.
 
 `draft list` prints the drafts that are neither sent nor deleted, most
 recently updated first, including ones older than Slack's 100-draft page. The
@@ -627,7 +669,7 @@ the small heading (inspected 2026-11-06).
 string are `invalid_message` server-side, so the CLI rejects them locally.
 A `divider` needs only its `type`. A draft needs renderable content: at
 least one `rich_text` block with non-empty `elements`, a `header`, a
-`divider`, **or** a table attachment - one with none
+`divider`, a table attachment, **or** a file (`--file`) - one with none
 of those is tombstoned. **Tables go in attachments,
 not top-level blocks** (see Tabular data). The CLI rejects bad shapes up
 front with `invalid_blocks`.

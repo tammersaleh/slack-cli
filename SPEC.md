@@ -4,7 +4,7 @@ A non-interactive CLI for Slack, built in Go. Designed for agents and automation
 
 ## Design Principles
 
-- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, `channel create`, channel membership (`channel invite`, `channel kick`), draft staging (unsent messages the user sends from the Slack app), and sidebar `section` management (personal sidebar only).
+- **No message sending**: The CLI never posts messages to Slack. `chat.postMessage` is intentionally not wrapped - too risky for agent use. Write operations are limited to `channel mark`, `channel create`, channel membership (`channel invite`, `channel kick`), draft staging (unsent messages the user sends from the Slack app, including uploading a file to attach to one), and sidebar `section` management (personal sidebar only).
 - **Agent-first**: JSONL output. No interactive prompts. Deterministic, scriptable.
 - **Thin wrapper**: One API page per call by default. The caller controls data volume. The single exception is `channel list --query`, which searches every page of your own conversations because a partial client-side search reports "not found" for something that exists; it is bounded and cheap, and every other path still requires `--all`.
 - **Resource-verb pattern**: `slack <resource> <verb> [flags]`, consistent with `gh`, `kubectl`, `aws`.
@@ -2553,9 +2553,25 @@ sent or deleted draft older than the newest 100.
 
 ```
 $ slack draft list
-{"id":"Dr01234","client_msg_id":"3b2f...","destinations":[{"channel_id":"C01ABC"}],"blocks":[{"type":"rich_text",...}],"date_created":1713300000,"date_created_iso":"2024-04-17T00:00:00Z","date_scheduled":0,"last_updated_ts":"1713300000.1234567","is_sent":false,"is_deleted":false,"is_from_composer":true}
+{"id":"Dr01234","client_msg_id":"3b2f...","destinations":[{"channel_id":"C01ABC"}],"blocks":[{"type":"rich_text",...}],"date_created":1713300000,"date_created_iso":"2024-04-17T00:00:00Z","date_scheduled":0,"last_updated_ts":"1713300000.1234567","file_ids":[],"is_sent":false,"is_deleted":false,"is_from_composer":true}
 {"_meta":{"has_more":false,"suppressed_sent":0,"suppressed_deleted":0}}
 ```
+
+Every draft row (from `list`, `create`, and `update`) carries `file_ids`, the
+ids of the files attached to the draft, in order. It is always an array, `[]`
+when the draft has none. When the Slack response the row came from carried
+file objects for those ids, the row also has `files`, one entry per id that
+still exists, in `file_ids` order:
+
+```
+"file_ids":["F01ABC","F02DEF"],"files":[{"id":"F01ABC","name":"report.pdf","title":"report.pdf","size":600,"filetype":"pdf","mimetype":"application/pdf"}]
+```
+
+`name`, `title`, `filetype`, and `mimetype` are omitted when Slack sent them
+empty (`filetype` and `mimetype` are empty for some seconds after an upload).
+A file that was deleted stays in `file_ids` and has no entry in `files`, so an
+id in `file_ids` with no match in `files` is a dangling attachment. `files` is
+absent when no entry would be in it.
 
 Every draft row (from `list`, `create`, and `update`) carries `is_sent`,
 `is_deleted`, and `is_from_composer` when Slack sent them. `drafts.list` sent
@@ -2584,6 +2600,7 @@ slack draft create <recipient>... [flags]
   --date-scheduled    Schedule send at Unix epoch (alternative to --at).
   --table             Build a table from a CSV/TSV file and attach it.
   --no-header         With --table, treat the first row as data, not a bold header.
+  --file PATH         Upload a file and attach it. Repeatable; kept in flag order.
   --markdown          stdin is Markdown, converted to header, divider, and rich_text blocks.
   --print-payload     With --markdown: print the converted payload, create nothing.
 
@@ -2591,7 +2608,63 @@ Body on stdin. Block Kit JSON by default: either a bare array of top-level
 blocks, or an object {"blocks":[...],"attachments":[...]}. Top-level blocks
 must be rich_text, header, or divider; tables go in attachments[].blocks[] (or use --table).
 With --markdown, stdin is Markdown (subset below). No plain-text shortcut.
+With --file the body is optional.
 ```
+
+##### Files
+
+`--file PATH` uploads the file and attaches it to the draft. Repeat the flag
+for several files. The draft's `file_ids` keep flag order. A file is
+renderable content, so `--file` with no stdin stages a file-only draft, sent
+as an empty `blocks` array, the shape Slack's own composer produces.
+
+Each path is checked before any request: it must be a readable regular file
+of non-zero size, else `invalid_input` naming the path. There is no local
+size cap or type check. Slack validates those.
+
+The upload is Slack's three-step external upload, once per file, on the
+session credential: `files.getUploadURLExternal`, a multipart POST of the
+bytes to the URL it returns, and `files.completeUploadExternal` with no
+channel. The file's name and title are the path's base name. The result is a
+private file with no shares, visible only to the uploader until the draft is
+sent. Under `--trace` the three steps are `call` events named
+`files.getUploadURLExternal`, `files.upload`, and
+`files.completeUploadExternal`. None of the three is retried.
+
+Uploads run last, after the body is validated and the recipients are
+resolved, so an input error never uploads anything. What happens to the
+uploaded files when a later step fails:
+
+- An upload fails partway. No draft was written, so every file id Slack
+  handed out in this run is deleted (`files.delete`), and the upload's own
+  error is returned.
+- `drafts.create` is refused (Slack answered `ok: false` with an error code
+  other than a rate limit). The draft does not exist, so the uploaded files
+  are deleted and Slack's error is returned.
+- `drafts.create` fails any other way (timeout, network error, HTTP 5xx,
+  rate limit, an unreadable answer). The draft may exist. The files are left
+  in place and the error's `detail` names their ids. Check `slack draft list`
+  before retrying.
+- A delete that fails is reported the same way: the `detail` names the ids
+  that could not be deleted. A `file_not_found` answer to the delete counts
+  as deleted.
+
+The deletes run on their own 10-second deadline, so they still happen when
+`--timeout` is what ended the upload. The CLI has no command that deletes a
+file. A leftover file is private to the uploader. Delete it from the Slack
+app.
+
+Measured 2026-11-16 (Enterprise Grid, desktop session token, self-DM,
+`docs/draft-files-plan.md`): the upload works on the session client. Sent to
+`drafts.create`, a rich_text body plus one file id, `blocks: []` plus one
+file id, two file ids on a thread destination (order kept), and a file id
+already on another live draft were all accepted. An id that does not exist,
+or whose upload was never completed, is `file_not_found`. All three live
+drafts were not tombstoned 78 seconds later with Desktop running. Not
+measured: how Desktop renders a CLI-attached file, sending such a draft, an
+open Drafts panel (a file-only draft in particular), a scheduled draft with a
+file, a workspace (T) token, and Slack's errors for an oversized or blocked
+file. The CLI's own `--file` path is mock-tested only.
 
 ##### Markdown input
 
@@ -2658,8 +2731,8 @@ character is not a letter, digit, `_`, or `<` (`alice@example.com` is an
 email, which linkify turns into a `mailto:` link).
 
 `--print-payload` requires `--markdown` and rejects `--at`,
-`--date-scheduled`, `--thread`, and `--broadcast` (on `update`: any schedule
-flag) as `invalid_input`. It converts, applies `--table`, validates, prints
+`--date-scheduled`, `--thread`, `--broadcast`, and `--file` (on `update`: any
+schedule flag, `--file`, and `--no-files`) as `invalid_input`. It converts, applies `--table`, validates, prints
 one row - `{"blocks":[...]}` plus `"attachments"` when present - and the
 `_meta` trailer, and makes no API call: recipients and the draft id are
 accepted syntactically but never resolved. On `update` it shows what this
@@ -2760,24 +2833,34 @@ $ slack draft create #general --table report.tsv
 $ slack draft create #general < payload.json   # {"blocks":[...],"attachments":[{"blocks":[{"type":"table","rows":[...]}]}]}
 ```
 
+Files (with a body, or alone):
+
+```
+$ cat body.md | slack draft create #general --markdown --file report.pdf
+$ slack draft create @alice --file a.png --file b.png
+{"id":"Dr01234","destinations":[{"user_ids":["U01XYZ"]}],"blocks":[],"file_ids":["F01ABC","F02DEF"],"files":[{"id":"F01ABC","name":"a.png","title":"a.png","size":48211},{"id":"F02DEF","name":"b.png","title":"b.png","size":51007}],...}
+{"_meta":{"has_more":false}}
+```
+
 Errors:
 
 - `channel_not_found` (exit 1): No channel matching the input.
 - `user_not_found` (exit 1): One or more user recipients matched no user (the message lists every unresolved input).
 - `ambiguous_user` (exit 1): A user recipient's name matches several users of equal rank. Reported for the first such recipient, with its `candidates`. No write is made.
 - Any other code from resolving a recipient (`invalid_auth`, `rate_limited`, `timeout`, `enterprise_is_restricted`, ...): the lookup failed. No write is made.
-- `missing_blocks` (exit 1): Nothing piped on stdin and no `--table`.
+- `missing_blocks` (exit 1): Nothing piped on stdin, no `--table`, and no `--file`.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset above; the detail names the line.
-- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, `header`, or `divider`, a `header` lacks `plain_text` text or has empty text or a `level` that isn't an integer of at least 1, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body, no `header`, no `divider`, and no table attachment).
-- `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, `--print-payload` without `--markdown` or with a schedule/thread flag, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
+- `invalid_blocks` (exit 1): stdin isn't a blocks array or `{blocks, attachments}` object, a top-level block isn't `rich_text`, `header`, or `divider`, a `header` lacks `plain_text` text or has empty text or a `level` that isn't an integer of at least 1, a caller-supplied attachment block isn't a `table` (a `data_table` is rejected - not draftable), or the draft has no renderable content (no non-empty `rich_text` body, no `header`, no `divider`, no table attachment, and no `--file`).
+- `invalid_input` (exit 1): `--broadcast` without `--thread`, conflicting schedule flags, `--table` together with stdin attachments, `--print-payload` without `--markdown` or with a schedule/thread flag or `--file`, a `--file` path that is missing, unreadable, not a regular file, or empty, mixing channel and user recipients, more than one channel recipient, or `--thread`/`--broadcast` with a user destination.
 - `invalid_timestamp` (exit 1): Cannot parse `--at`.
+- Any code from an upload step or from `drafts.create` (`file_not_found`, `rate_limited`, `timeout`, `http_error`, ...): see "Files" above for what became of the uploaded files. The `detail` names any file id left behind.
 - `not_authed` (exit 2): No session token, or - for a `#name`/bare-name
   channel recipient only - the selected workspace credential cannot be
   resolved.
 
-Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`, `header`, or `divider`; a `header` has `text` `{"type":"plain_text","text":<non-empty>}` and, when present, an integer `level` of at least 1 (no upper bound - the composer emits 1 through 3, and the API stores 4, which Desktop renders as the small heading; `emoji` and a server-assigned `block_id` pass through); a `divider` needs only its `type` (every other field, including a server-assigned `block_id`, passes through); caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block, a `header`, a `divider`, or a table attachment - a header-only draft and a divider-only draft both survive reconciliation, measured 2026-11-06). A `header` is an absorption boundary: a `rich_text_section` without a trailing `\n` followed by a header and then a list is accepted, since Desktop renders it as paragraph, heading, bullet with no glue (inspected 2026-11-06). A `divider` is not yet treated as one (pending a Desktop check), so the section-before-container state carries across it and `[section without "\n", divider, list]` is rejected. The same section directly before a list, in one `rich_text` or across adjacent `rich_text` blocks, is still rejected. Slack's API accepts other top-level block types, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
+Local validation enforces: stdin parses as a blocks array or a `{blocks, attachments}` object; every top-level block is `rich_text`, `header`, or `divider`; a `header` has `text` `{"type":"plain_text","text":<non-empty>}` and, when present, an integer `level` of at least 1 (no upper bound - the composer emits 1 through 3, and the API stores 4, which Desktop renders as the small heading; `emoji` and a server-assigned `block_id` pass through); a `divider` needs only its `type` (every other field, including a server-assigned `block_id`, passes through); caller-supplied attachment blocks are `table` (`data_table` is rejected - not draftable); and the draft has renderable content (a non-empty `rich_text` block, a `header`, a `divider`, a table attachment, or a `--file` - a header-only draft and a divider-only draft both survive reconciliation, measured 2026-11-06). A `header` is an absorption boundary: a `rich_text_section` without a trailing `\n` followed by a header and then a list is accepted, since Desktop renders it as paragraph, heading, bullet with no glue (inspected 2026-11-06). A `divider` is not yet treated as one (pending a Desktop check), so the section-before-container state carries across it and `[section without "\n", divider, list]` is rejected. The same section directly before a list, in one `rich_text` or across adjacent `rich_text` blocks, is still rejected. Slack's API accepts other top-level block types, but the Drafts compose editor strips them on open - so the CLI rejects them locally and steers tables into `attachments`, where they survive. Semantic errors inside blocks (required subfields, unknown inline types) defer to Slack's upstream response.
 
-Slack API: `drafts.create`
+Slack API: `drafts.create`, and per `--file`: `files.getUploadURLExternal`, the upload URL, `files.completeUploadExternal` (`files.delete` on cleanup)
 
 #### slack draft update
 
@@ -2788,6 +2871,8 @@ slack draft update <draft_id> [flags]
   --clear-schedule    Remove scheduled send.
   --table             Replace attachments with a table built from a CSV/TSV file.
   --no-header         With --table, treat the first row as data, not a bold header.
+  --file PATH         Upload a file and replace the draft's files. Repeatable.
+  --no-files          Remove every file from the draft.
   --markdown          stdin is Markdown; replaces blocks, preserves attachments.
   --print-payload     With --markdown: print what would be submitted, update nothing.
 
@@ -2796,8 +2881,36 @@ Optional body on stdin. Block Kit JSON: a bare blocks array, or an object
 field replaces, an absent one is preserved; {"attachments":[]} clears
 attachments. With --markdown the body converts to a bare blocks array, so
 it replaces blocks and preserves attachments through the same rule. Omit
-stdin entirely for a schedule-only update.
+stdin entirely for a schedule-only or files-only update.
 ```
+
+Files are a third independent field. With neither flag the draft's
+`file_ids` are sent back unchanged. `--file PATH` (repeatable) uploads the
+given files and replaces the whole list with them, in flag order. It does not
+append: to keep an existing file, pass it again. `--no-files` sends an empty
+list. `--file` with `--no-files` is `invalid_input`. Either flag alone is a
+valid update. Neither deletes the files it displaces, and `draft delete`
+never deletes a draft's files: the CLI cannot tell a file it uploaded from
+one the user attached, and one file can sit on several drafts.
+
+The renderable-content rule runs on the draft as it will be after the
+update, and a file counts: a non-empty `rich_text`, a `header`, a `divider`,
+a table attachment, or at least one file. So a file-only draft can be
+rescheduled or have its blocks set to `[]`, and `--no-files` on a file-only
+draft is `invalid_blocks` unless the same update gives it a body. A file id
+whose file was deleted still counts. Slack keeps it in `file_ids`.
+
+Order of work: flags and every `--file` path are checked locally, the draft
+is looked up and a sent one refused, the effective draft is validated, the
+files are uploaded (as in `draft create`), then the draft is written. A
+failed upload deletes what it uploaded and writes nothing. When the write
+fails, the files uploaded by this run are settled by the write's own error
+after the second look described below: a refusal from Slack deletes them, any
+other failure (timeout, network error, HTTP 5xx, rate limit) leaves them in
+place with their ids in the error's `detail`. The one exception is a refused
+update whose second look shows a tombstone: the replacement draft takes the
+uploaded files, and nothing is deleted unless the replacement create is
+itself refused. Files the draft already had are never deleted.
 
 `client_last_updated_ts` is fetched from `drafts.list` and padded to 7
 decimal places before calling `drafts.update`. Callers never see it.
@@ -2806,7 +2919,8 @@ Auto-replace on tombstoned drafts: when Slack Desktop marks a draft
 `is_deleted: true` (can happen after viewing a CLI-created draft in the
 Desktop client), `drafts.update` and `drafts.delete` both reject the
 draft. This CLI detects the tombstone and transparently creates a fresh
-draft at the same destination, carrying its blocks and attachments. The
+draft at the same destination, carrying its blocks, attachments, and files
+(Slack accepts one file id on two drafts, measured 2026-11-16). The
 warning goes to stderr; the new draft object lands on stdout as usual,
 with one extra key: `replaced_draft_id`, the id the caller passed. An
 in-place update never carries that key, so its presence is the stdout signal
@@ -2848,12 +2962,13 @@ Errors:
 - `draft_not_found` (exit 1): No draft with the given id, and the lookup saw every draft.
 - `draft_already_sent` (exit 1): The draft was already sent. Nothing was written and no replacement was created.
 - `draft_lookup_incomplete` (exit 1): The id is not among the newest 100 drafts or the active drafts, and Slack reported more. It may be a sent or deleted draft out of reach, or not exist. Nothing was written.
-- `invalid_input` (exit 1): No change specified, conflicting schedule flags, or `--table` together with stdin attachments.
-- `invalid_blocks` (exit 1): stdin isn't a valid blocks array / `{blocks, attachments}` object, or the resulting draft has no renderable content.
+- `invalid_input` (exit 1): No change specified, conflicting schedule flags, `--table` together with stdin attachments, `--file` together with `--no-files`, `--print-payload` with either, or a `--file` path that is missing, unreadable, not a regular file, or empty.
+- `invalid_blocks` (exit 1): stdin isn't a valid blocks array / `{blocks, attachments}` object, or the resulting draft has no renderable content (files included).
+- Any code from an upload step: the upload failed, its files were deleted, and nothing was written.
 - `invalid_markdown` (exit 1): With `--markdown`, the body uses a construct outside the subset (see `draft create`).
 - `not_authed` (exit 2): No session token.
 
-Slack API: `drafts.update` (or `drafts.create` on auto-replace)
+Slack API: `drafts.update` (or `drafts.create` on auto-replace), and per `--file` the same upload calls as `draft create`
 
 #### slack draft delete
 

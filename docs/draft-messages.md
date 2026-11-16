@@ -221,8 +221,12 @@ Body fields:
 Response:
 
 ```json
-{"ok": true, "drafts": [...], "files": [], "has_more": false}
+{"ok": true, "drafts": [...], "files": [...], "has_more": false}
 ```
+
+`files` holds one full file object per distinct file that a draft on the
+page references and that still exists. It is `[]` when no draft on the page
+has a file. See "Files on drafts" below.
 
 #### Measured 2026-11-10
 
@@ -245,8 +249,9 @@ returned the same 100 ids: `cursor`, `page`, `offset`, `skip`, `marker`,
 changed nothing, and neither did `is_sent=false`, `is_deleted=false`,
 `include_sent=false`, `include_deleted=false`, or `is_scheduled=true`. The
 response has no cursor and no `response_metadata`: its top-level keys are
-`ok`, `drafts`, `files`, and `has_more`. The Slack web client's own request
-was not captured.
+`ok`, `drafts`, `files`, and `has_more` (`files` was empty in these probes
+and went unexamined until 2026-11-16, see "Files on drafts"). The Slack web
+client's own request was not captured.
 
 `last_updated_ts` is the one parameter that changed the answer. Set to the
 last draft's value it returned 99 drafts, the page minus that draft. Set to 0
@@ -294,15 +299,20 @@ Same URL pattern, method `drafts.create`. Body fields:
 - `destinations` - JSON array of one destination object. Example:
   `[{"channel_id":"D09..."}]` or `[{"channel_id":"C01...","thread_ts":"1709.1"}]`.
 - `client_msg_id` - lowercase UUID v4. Other formats fail with `invalid_client_msg_id`.
-- `file_ids` - JSON array, `"[]"` when no attachments.
+- `file_ids` - JSON array of `F…` file ids, `"[]"` for none. Required:
+  omitting the param is `invalid_arguments`. An id that does not exist, or
+  whose upload was never completed, is `file_not_found`.
 - `is_from_composer` - `"false"` from the API. Desktop sends `"true"`.
 - `date_scheduled` - optional Unix seconds for scheduled send.
 
 Response:
 
 ```json
-{"ok": true, "draft": {...}}
+{"ok": true, "draft": {...}, "files": [...]}
 ```
+
+`files` holds the file objects for the draft's `file_ids`, in the same
+order.
 
 Each destination channel can have at most one active draft. Creating a
 second draft for a destination that already has one returns
@@ -351,7 +361,7 @@ only when the draft is now marked deleted.
   "last_updated_ts": "1776538579.203325",
   "last_updated_client": "Slack SSB Mac (Atom)",
   "blocks": [...],
-  "file_ids": [],
+  "file_ids": ["F0..."],
   "is_from_composer": false,
   "is_deleted": false,
   "is_sent": false,
@@ -371,6 +381,92 @@ Slack reflects DM destinations back with both `channel_id` and
 destinations that also have `channel_id`, or the API rejects with
 `both_user_ids_and_channel_id_provided_in_destination`. See
 `normalizeDestinationsForWrite` in `cmd/draft.go`.
+
+`file_ids` is `[]` on a draft with no files. A draft with a file has the same
+key set as one without. The file objects are not inside the draft: they are
+in the response's top-level `files` array.
+
+### Files on drafts (2026-11-16)
+
+Measured on an Enterprise Grid org with a desktop session token (E-org
+context), through the out-of-tree probe module, in a self-DM only. Every
+probe draft and file was deleted afterwards. The plan and the design that
+came out of it are in `docs/draft-files-plan.md`.
+
+Read-only, from `drafts.list limit=100`: 4 of 100 drafts carried a non-empty
+`file_ids`, all four of them sent.
+
+- `file_ids` is a JSON array of `F…` file id strings.
+- The top-level `files` array holds one full file object (the `files.info`
+  shape: `id`, `name`, `title`, `size`, `filetype`, `mimetype`, `mode`,
+  `shares`, thumbnails, and more) per distinct file that still exists and is
+  referenced by a draft on the page. It is deduplicated. A deleted file is
+  absent from it while its id stays in the draft's `file_ids`.
+- Two of the four were composer drafts (`is_from_composer: true`) with
+  `blocks: []` and one file. The composer's own file-only shape is an empty
+  blocks array.
+
+Upload: slack-go v0.18.0's helpers work on the session client (the xoxc
+token plus the `d` cookie): `GetUploadURLExternalContext`, `UploadToURL` (a
+multipart POST to `files.slack.com`), and `CompleteUploadExternalContext`
+with no channel. The result is a file with no shares, `is_public: false`,
+visible to the uploader.
+
+- A 29-byte `.txt` became `mode: snippet`, a 600-byte PDF `mode: hosted`.
+  The PDF's `filetype` and `mimetype` were empty on a `files.info` seconds
+  after the upload and `pdf` / `application/pdf` a minute later.
+- `files.getUploadURLExternal` with `length=0` is `invalid_arguments`. With
+  `length=99999999999999` it answered ok, so no size limit shows at that
+  step.
+- A file id whose upload was never completed is `file_not_found` on
+  `drafts.create`.
+
+`drafts.create` with files:
+
+| request | result |
+|---|---|
+| rich_text plus one file id | ok. Response is `{ok, draft, files}`, `draft.file_ids` holds the id, `files` the file object |
+| `blocks=[]` plus one file id | ok, `is_deleted: false` |
+| a file id already on another live draft | ok |
+| two file ids (PDF, txt), thread destination | ok, order kept in `draft.file_ids` and `files` |
+| an id that does not exist | `file_not_found` |
+| `file_ids` param omitted | `invalid_arguments` |
+
+All three live drafts were alive (`is_deleted: false`) 78 seconds after
+create with Slack Desktop running. The Drafts panel was not known to be
+open, so survival of panel reconciliation is unverified, for the file-only
+draft in particular.
+
+Update and delete:
+
+- `slack draft update <id> --markdown` on the text-plus-file draft kept the
+  file: the `file_ids` round trip in `buildIntent` works.
+- `drafts.delete` leaves the files in place (`files.info` still answers).
+- `files.delete` on a file a live draft references answers ok. The draft
+  keeps the dangling id in `file_ids` and the file drops out of the
+  top-level `files`. What Desktop shows for such a draft is unknown.
+
+What the CLI does with this: `draft create --file` and `draft update --file`
+upload through those three steps and send the ids as `file_ids`,
+`draft update --no-files` sends `[]`, a file counts as renderable content,
+the tombstone replacement carries `file_ids` across, and every draft row has
+`file_ids` plus a `files` summary joined from the response's top-level
+array. Uploaded files are deleted when the upload fails or Slack refuses the
+draft write, and left in place (ids in the error's `detail`) when the
+write's outcome is unknown. The CLI never deletes a file it did not upload
+in the same invocation.
+
+Mock-tested only (`cmd/draft_files_test.go`): the whole `--file` path
+through the CLI, every cleanup branch, and the row join. The mock models the
+measurements above.
+
+Not measured: Desktop rendering of a CLI-attached file, sending such a
+draft, an open Drafts panel, a scheduled draft with a file, `--broadcast`, a
+workspace (T) token, the request sequence the composer itself makes, the
+errors for an oversized or blocked file, the `drafts.update` response shape
+(assumed `{ok, draft, files}` like create), and what `files.delete` answers
+for an id whose upload was never completed (the CLI treats `file_not_found`
+there as nothing left to delete).
 
 ### Drafting to a conversation that doesn't exist yet
 
@@ -754,7 +850,8 @@ same way - block content, nothing else.
 payload:
 
 1. Arrays with no non-empty `rich_text` block, no `header`, and no
-   `divider` (would ghost).
+   `divider` (would ghost), unless the draft has a table attachment or a
+   file.
 2. Arrays containing a top-level block that is not `rich_text`, `header`,
    or `divider` (would ship fine but get stripped by Desktop's compose
    editor).
@@ -774,7 +871,8 @@ through `drafts.update` and ghost or strip again.
 ### Auto-replace
 
 `DraftUpdateCmd.Run` detects `is_deleted=true` on the existing draft and
-transparently calls `drafts.create` at the same destination. The new
+transparently calls `drafts.create` at the same destination, carrying the
+draft's blocks, attachments, and `file_ids`. The new
 draft lands on stdout with `replaced_draft_id` naming the old ID, and a
 `warnTombstoned` warning lands on stderr, so the caller knows the ID changed.
 

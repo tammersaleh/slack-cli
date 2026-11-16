@@ -231,6 +231,13 @@ func TestSkill_DraftGuidance(t *testing.T) {
 		// data_table (interactive variant) is NOT draftable - the skill must
 		// warn so agents don't reach for it.
 		"data_table",
+		// Files: the flags, that update replaces rather than appends, and
+		// the row keys an agent confirms an attachment with.
+		"[--file PATH]...",
+		"--no-files",
+		"it does not append",
+		"`file_ids`",
+		"is a file that was deleted",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected skill output to mention %q for draft rendering guidance", want)

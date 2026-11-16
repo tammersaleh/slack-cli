@@ -81,6 +81,10 @@ type draftData struct {
 	IsDeleted      *bool           `json:"is_deleted"`
 	IsSent         *bool           `json:"is_sent"`
 	Destinations   []destination   `json:"destinations"`
+
+	// files holds the file objects the same response carried for FileIDs,
+	// joined by joinDraftFiles. It is not part of the draft object on the wire.
+	files []draftFile
 }
 
 // sent reports whether Slack marked the draft as already sent.
@@ -114,6 +118,7 @@ func normalizeDestinationsForWrite(dests []destination) []destination {
 
 type draftsListResponse struct {
 	Drafts  []draftData `json:"drafts"`
+	Files   []draftFile `json:"files"`
 	HasMore bool        `json:"has_more"`
 }
 
@@ -200,6 +205,7 @@ func fetchDrafts(ctx context.Context, client *api.Client, activeOnly bool, limit
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, false, err
 	}
+	joinDraftFiles(resp.Drafts, resp.Files)
 	return resp.Drafts, resp.HasMore, nil
 }
 
@@ -271,6 +277,7 @@ type DraftCreateCmd struct {
 	DateScheduled int64    `help:"Schedule send at Unix epoch (alternative to --at)."`
 	Table         string   `help:"Build a table from a CSV/TSV file and attach it (first row bold)."`
 	NoHeader      bool     `help:"With --table, treat the first row as data, not a bold header."`
+	File          []string `sep:"none" placeholder:"PATH" help:"Upload a file and attach it to the draft (repeatable; kept in flag order). Alone, it makes a file-only draft."`
 	Markdown      bool     `help:"Read Markdown on stdin instead of Block Kit JSON (see --help for the subset)."`
 	PrintPayload  bool     `help:"With --markdown, print the converted payload as JSON and create nothing."`
 }
@@ -325,6 +332,18 @@ With a table (the table block lives in an attachment):
   slack draft create '#general' < payload.json   # {"blocks":[...],"attachments":[{"blocks":[{"type":"table",...}]}]}
   slack draft create '#general' --table report.tsv   # build the table from a file (first row bold; --no-header to disable)
 
+With files (each --file is uploaded, then attached in flag order; the body
+is optional, so --file alone stages a file-only draft):
+
+  cat body.md | slack draft create '#general' --markdown --file report.pdf
+  slack draft create @alice --file a.png --file b.png
+
+The upload happens last, after the body and recipients are validated. If
+Slack then refuses the draft, the uploaded files are deleted. If the draft
+write's outcome is unknown (timeout, rate limit, server error) they are left
+in place and the error's detail names their ids. Nothing shares the file
+with anyone until the draft is sent.
+
 Thread reply / scheduled send:
 
   slack draft create '#general' --thread 1713299000.123456 < blocks.json
@@ -342,9 +361,12 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--at and --date-scheduled are mutually exclusive", Code: output.ExitGeneral}
 	}
 	if c.PrintPayload {
-		if err := checkPrintPayloadFlags(c.Markdown, c.At != "" || c.DateScheduled > 0 || c.Thread != "" || c.Broadcast); err != nil {
+		if err := checkPrintPayloadFlags(c.Markdown, c.At != "" || c.DateScheduled > 0 || c.Thread != "" || c.Broadcast || len(c.File) > 0); err != nil {
 			return err
 		}
+	}
+	if err := validateDraftFiles(c.File); err != nil {
+		return err
 	}
 
 	payload, err := readDraftPayload(cli, c.Markdown)
@@ -354,11 +376,15 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 	if payload, err = applyTableFlag(payload, c.Table, !c.NoHeader); err != nil {
 		return err
 	}
-	if payload.empty() {
-		return output.MissingBlocks()
-	}
-	if !payload.hasRenderableContent() {
-		return errNoRenderableContent()
+	// A file is renderable content by itself: the composer's own file-only
+	// draft is an empty blocks array plus file_ids.
+	if len(c.File) == 0 {
+		if payload.empty() {
+			return output.MissingBlocks()
+		}
+		if !payload.hasRenderableContent() {
+			return errNoRenderableContent()
+		}
 	}
 	if c.PrintPayload {
 		return printPayload(cli, payload)
@@ -434,11 +460,22 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "encode_error", Detail: err.Error(), Code: output.ExitGeneral}
 	}
 
+	// Upload last, once nothing local can still fail: an input error must
+	// never leave an uploaded file behind.
+	uploaded, err := cli.uploadDraftFiles(ctx, client, c.File)
+	if err != nil {
+		return err
+	}
+	fileIDs, err := fileIDsJSON(uploaded)
+	if err != nil {
+		return err
+	}
+
 	params := map[string]string{
 		"blocks":           payload.blocksOrEmpty(),
 		"destinations":     string(destsJSON),
 		"client_msg_id":    uuid.NewString(),
-		"file_ids":         "[]",
+		"file_ids":         fileIDs,
 		"is_from_composer": "true",
 	}
 	if payload.hasAttachments {
@@ -450,30 +487,31 @@ func (c *DraftCreateCmd) Run(cli *CLI) error {
 
 	data, err := client.PostInternalForm(ctx, "drafts.create", params)
 	if err != nil {
-		return cli.ClassifyError(err)
+		return settleUploads(ctx, client, err, cli.ClassifyError(err), uploaded)
 	}
 
-	var resp struct {
-		Draft draftData `json:"draft"`
+	// The write succeeded, so a response that does not parse deletes nothing.
+	draft, err := parseDraftWrite(data, "drafts.create")
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return &output.Error{Err: "parse_error", Detail: "Failed to parse drafts.create response", Code: output.ExitGeneral}
-	}
-	if err := p.PrintItem(formatDraft(resp.Draft)); err != nil {
+	if err := p.PrintItem(formatDraft(draft)); err != nil {
 		return err
 	}
 	return p.PrintMeta(output.Meta{})
 }
 
 type DraftUpdateCmd struct {
-	DraftID       string `arg:"" required:"" help:"Draft ID to update."`
-	At            string `help:"Reschedule send at RFC 3339 timestamp or YYYY-MM-DD."`
-	DateScheduled int64  `help:"Reschedule send at Unix epoch (use --clear-schedule to remove)."`
-	ClearSchedule bool   `help:"Remove scheduled send."`
-	Table         string `help:"Replace attachments with a table built from a CSV/TSV file (first row bold)."`
-	NoHeader      bool   `help:"With --table, treat the first row as data, not a bold header."`
-	Markdown      bool   `help:"Read Markdown on stdin instead of Block Kit JSON; replaces the blocks, keeps attachments."`
-	PrintPayload  bool   `help:"With --markdown, print the converted payload as JSON and update nothing."`
+	DraftID       string   `arg:"" required:"" help:"Draft ID to update."`
+	At            string   `help:"Reschedule send at RFC 3339 timestamp or YYYY-MM-DD."`
+	DateScheduled int64    `help:"Reschedule send at Unix epoch (use --clear-schedule to remove)."`
+	ClearSchedule bool     `help:"Remove scheduled send."`
+	Table         string   `help:"Replace attachments with a table built from a CSV/TSV file (first row bold)."`
+	NoHeader      bool     `help:"With --table, treat the first row as data, not a bold header."`
+	File          []string `sep:"none" placeholder:"PATH" help:"Upload a file and replace the draft's files with it (repeatable; kept in flag order). Without --file the draft's files are kept."`
+	NoFiles       bool     `help:"Remove every file from the draft. The files themselves are not deleted."`
+	Markdown      bool     `help:"Read Markdown on stdin instead of Block Kit JSON; replaces the blocks, keeps attachments."`
+	PrintPayload  bool     `help:"With --markdown, print the converted payload as JSON and update nothing."`
 }
 
 func (DraftUpdateCmd) Help() string {
@@ -487,12 +525,21 @@ from a CSV/TSV file. Same rich_text-only rule for top-level blocks as draft
 create. --print-payload prints what this invocation would submit (not the
 merged draft - the existing draft is not fetched) and updates nothing.
 
+Files are a third independent field: with no file flag the draft's files
+are kept, --file PATH (repeatable) uploads and replaces them with the given
+files, and --no-files removes them all. Neither deletes the files it
+displaces. A file counts as content, so a file-only draft can be
+rescheduled, and --no-files on one is refused (invalid_blocks) unless a body
+comes with it. If Slack refuses the update the files uploaded for it are
+deleted; if the update's outcome is unknown they are left in place and the
+error's detail names their ids.
+
 A draft that was already sent is refused with draft_already_sent and
 nothing is written; use draft create for a new message.
 
 If Slack Desktop has already tombstoned the draft (is_deleted=true), the
 CLI transparently creates a replacement at the same destination - carrying
-its blocks and attachments - and emits the new draft to stdout with
+its blocks, attachments, and files - and emits the new draft to stdout with
 replaced_draft_id naming the old one. A changed id means a tombstone was
 replaced, never that a sent draft was.
 
@@ -502,6 +549,8 @@ Examples:
   slack draft update Dr01234 < blocks.json           # replace blocks
   echo '{"attachments":[{"blocks":[{"type":"table","rows":[...]}]}]}' | slack draft update Dr01234
   slack draft update Dr01234 --table report.tsv      # replace attachments with a table
+  slack draft update Dr01234 --file report.pdf       # replace the draft's files
+  slack draft update Dr01234 --no-files              # remove the draft's files
   slack draft update Dr01234 --at 2026-04-22         # reschedule only
   slack draft update Dr01234 --clear-schedule        # drop scheduled send`
 }
@@ -521,10 +570,18 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 		return &output.Error{Err: "invalid_input", Detail: "--at, --date-scheduled, and --clear-schedule are mutually exclusive", Code: output.ExitGeneral}
 	}
 
+	if len(c.File) > 0 && c.NoFiles {
+		return &output.Error{Err: "invalid_input", Detail: "--file and --no-files are mutually exclusive: --file already replaces the draft's files", Code: output.ExitGeneral}
+	}
+	fileFlags := len(c.File) > 0 || c.NoFiles
+
 	if c.PrintPayload {
-		if err := checkPrintPayloadFlags(c.Markdown, scheduledFlags > 0); err != nil {
+		if err := checkPrintPayloadFlags(c.Markdown, scheduledFlags > 0 || fileFlags); err != nil {
 			return err
 		}
+	}
+	if err := validateDraftFiles(c.File); err != nil {
+		return err
 	}
 
 	// stdin payload (blocks and/or attachments); absent fields keep their
@@ -536,8 +593,8 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 	if payload, err = applyTableFlag(payload, c.Table, !c.NoHeader); err != nil {
 		return err
 	}
-	if payload.empty() && scheduledFlags == 0 {
-		return &output.Error{Err: "invalid_input", Detail: "No update specified: pipe Block Kit JSON (blocks and/or attachments) on stdin, pass --table, or pass --at / --date-scheduled / --clear-schedule", Code: output.ExitGeneral}
+	if payload.empty() && scheduledFlags == 0 && !fileFlags {
+		return &output.Error{Err: "invalid_input", Detail: "No update specified: pipe Block Kit JSON (blocks and/or attachments) on stdin, pass --table, pass --file / --no-files, or pass --at / --date-scheduled / --clear-schedule", Code: output.ExitGeneral}
 	}
 	if c.PrintPayload {
 		// Preview shows what this invocation would submit, not the merged
@@ -581,9 +638,21 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 	// out of band too. Once tombstoned, drafts.update and drafts.delete both
 	// reject the draft. The only path forward is to create a fresh draft at
 	// the same destination.
+	// Upload once the effective draft is known to be valid, and before the
+	// tombstone branch: the replacement create carries the same ids.
+	uploaded, err := cli.uploadDraftFiles(ctx, client, c.File)
+	if err != nil {
+		return err
+	}
+	if len(c.File) > 0 {
+		if intent.fileIDs, err = fileIDsJSON(uploaded); err != nil {
+			return err
+		}
+	}
+
 	if existing.deleted() {
 		warnTombstoned(p.Err, c.DraftID)
-		return c.createReplacement(ctx, cli, client, p, intent)
+		return c.createReplacement(ctx, cli, client, p, intent, uploaded)
 	}
 
 	params := map[string]string{
@@ -602,34 +671,37 @@ func (c *DraftUpdateCmd) Run(cli *CLI) error {
 
 	data, err := client.PostInternalForm(ctx, "drafts.update", params)
 	if err != nil {
+		// Every exit below but the replacement settles the files uploaded
+		// for this update against the write's own error: deleted when Slack
+		// refused it, left in place and named when its outcome is unknown.
 		oErr := cli.ClassifyError(err)
 		if isSystemicErr(oErr) {
-			return oErr
+			return settleUploads(ctx, client, err, oErr, uploaded)
 		}
 		// The draft may have been sent or tombstoned between the lookup and
 		// the write. Slack's error string does not say which (a sent draft
 		// and a tombstone were both seen as draft_update_invalid), so the
 		// draft's state on a second look decides: sent is refused, deleted is
-		// replaced, and anything else is Slack's own error.
+		// replaced, and anything else is Slack's own error. The second look
+		// comes before any cleanup, because the replacement reuses the files.
 		current, lookupErr := findDraftByID(ctx, client, c.DraftID)
 		switch {
 		case lookupErr != nil:
-			return oErr
+			return settleUploads(ctx, client, err, oErr, uploaded)
 		case current.sent():
-			return output.DraftAlreadySent(c.DraftID)
+			return settleUploads(ctx, client, err, output.DraftAlreadySent(c.DraftID), uploaded)
 		case current.deleted():
 			warnTombstoned(p.Err, c.DraftID)
-			return c.createReplacement(ctx, cli, client, p, intent)
+			return c.createReplacement(ctx, cli, client, p, intent, uploaded)
 		}
-		return oErr
+		return settleUploads(ctx, client, err, oErr, uploaded)
 	}
-	var resp struct {
-		Draft draftData `json:"draft"`
+	// The write succeeded, so a response that does not parse deletes nothing.
+	draft, err := parseDraftWrite(data, "drafts.update")
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return &output.Error{Err: "parse_error", Detail: "Failed to parse drafts.update response", Code: output.ExitGeneral}
-	}
-	if err := p.PrintItem(formatDraft(resp.Draft)); err != nil {
+	if err := p.PrintItem(formatDraft(draft)); err != nil {
 		return err
 	}
 	return p.PrintMeta(output.Meta{})
@@ -641,7 +713,7 @@ type draftWriteIntent struct {
 	blocks       string // JSON-encoded Block Kit array
 	attachments  string // JSON-encoded attachments array; "" omits the param
 	destinations string // JSON-encoded destinations array (normalized)
-	fileIDs      string // JSON-encoded file_ids array
+	fileIDs      string // JSON-encoded file_ids array; --file overwrites it after the upload
 	scheduled    int64
 }
 
@@ -675,7 +747,16 @@ func (c *DraftUpdateCmd) buildIntent(existing *draftData, payload draftPayload) 
 	if err != nil {
 		return nil, err
 	}
-	if !hasBody && !attachmentsContainTable([]byte(attachmentsJSON)) {
+	// Files are the third kind of content. --no-files leaves none, --file
+	// will leave at least one once uploaded, and otherwise the draft keeps
+	// what it has. A dangling id (its file deleted) still counts: Slack keeps
+	// it in file_ids and the CLI cannot tell from the draft alone.
+	keptFileIDs := existing.FileIDs
+	if c.NoFiles || len(c.File) > 0 {
+		keptFileIDs = nil
+	}
+	hasFiles := len(keptFileIDs) > 0 || len(c.File) > 0
+	if !hasBody && !attachmentsContainTable([]byte(attachmentsJSON)) && !hasFiles {
 		return nil, errNoRenderableContent()
 	}
 
@@ -698,13 +779,9 @@ func (c *DraftUpdateCmd) buildIntent(existing *draftData, payload draftPayload) 
 		scheduled = c.DateScheduled
 	}
 
-	fileIDs := "[]"
-	if len(existing.FileIDs) > 0 {
-		b, err := json.Marshal(existing.FileIDs)
-		if err != nil {
-			return nil, &output.Error{Err: "encode_error", Detail: err.Error(), Code: output.ExitGeneral}
-		}
-		fileIDs = string(b)
+	fileIDs, err := fileIDsJSON(keptFileIDs)
+	if err != nil {
+		return nil, err
 	}
 
 	return &draftWriteIntent{
@@ -716,12 +793,16 @@ func (c *DraftUpdateCmd) buildIntent(existing *draftData, payload draftPayload) 
 	}, nil
 }
 
-func (c *DraftUpdateCmd) createReplacement(ctx context.Context, cli *CLI, client *api.Client, p *output.Printer, intent *draftWriteIntent) error {
+// createReplacement creates a fresh draft from intent in place of a
+// tombstoned one. uploaded names the files this invocation uploaded, which a
+// failed create has to settle; files the old draft already had are in
+// intent.fileIDs too and are never deleted.
+func (c *DraftUpdateCmd) createReplacement(ctx context.Context, cli *CLI, client *api.Client, p *output.Printer, intent *draftWriteIntent, uploaded []string) error {
 	params := map[string]string{
 		"blocks":           intent.blocks,
 		"destinations":     intent.destinations,
 		"client_msg_id":    uuid.NewString(),
-		"file_ids":         "[]", // uploaded files don't carry across to a replacement
+		"file_ids":         intent.fileIDs, // one file id on two drafts is accepted
 		"is_from_composer": "true",
 	}
 	// Block attachments (e.g. a table) DO carry across - dropping them here
@@ -735,17 +816,15 @@ func (c *DraftUpdateCmd) createReplacement(ctx context.Context, cli *CLI, client
 
 	data, err := client.PostInternalForm(ctx, "drafts.create", params)
 	if err != nil {
-		return cli.ClassifyError(err)
+		return settleUploads(ctx, client, err, cli.ClassifyError(err), uploaded)
 	}
-	var resp struct {
-		Draft draftData `json:"draft"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return &output.Error{Err: "parse_error", Detail: "Failed to parse drafts.create response", Code: output.ExitGeneral}
+	draft, err := parseDraftWrite(data, "drafts.create")
+	if err != nil {
+		return err
 	}
 	// The row's id is not the one the caller passed. Say so on stdout, where
 	// a JSONL consumer reads it, not only in the stderr warning.
-	row := formatDraft(resp.Draft)
+	row := formatDraft(draft)
 	row["replaced_draft_id"] = c.DraftID
 	if err := p.PrintItem(row); err != nil {
 		return err
@@ -974,8 +1053,8 @@ func (p draftPayload) blocksOrEmpty() string {
 
 // hasRenderableContent reports whether a freshly-provided payload carries a
 // non-empty rich_text body, a header or divider block, or a table attachment. A draft
-// with none of those gets tombstoned by Slack's reconciliation pass. Inputs
-// are already shape-valid.
+// with none of those, and no file, gets tombstoned by Slack's reconciliation
+// pass. Inputs are already shape-valid. Files are the caller's to count.
 func (p draftPayload) hasRenderableContent() bool {
 	if p.hasBlocks {
 		if has, _ := validateBlockShapes([]byte(p.blocks)); has {
@@ -989,7 +1068,7 @@ func (p draftPayload) hasRenderableContent() bool {
 func errNoRenderableContent() error {
 	return &output.Error{
 		Err:    "invalid_blocks",
-		Detail: "a draft needs a non-empty rich_text block, a header block, a divider block, or a table attachment - Slack tombstones drafts with no renderable content.",
+		Detail: "a draft needs a non-empty rich_text block, a header block, a divider block, a table attachment, or a file (--file) - Slack tombstones drafts with no renderable content.",
 		Hint:   skillHint,
 		Code:   output.ExitGeneral,
 	}
@@ -1076,14 +1155,14 @@ func boldTableCell(s string) map[string]any {
 
 // checkPrintPayloadFlags rejects --print-payload combinations that would
 // silently do nothing: it needs --markdown (there is nothing to preview for
-// JSON the caller already has), and write-only flags (scheduling, thread)
-// have no effect on a preview.
+// JSON the caller already has), and write-only flags (scheduling, thread,
+// files) have no effect on a preview that promises zero API calls.
 func checkPrintPayloadFlags(markdown, writeOnlyFlags bool) error {
 	if !markdown {
 		return &output.Error{Err: "invalid_input", Detail: "--print-payload requires --markdown; it previews the Markdown conversion", Code: output.ExitGeneral}
 	}
 	if writeOnlyFlags {
-		return &output.Error{Err: "invalid_input", Detail: "--print-payload creates nothing, so --at, --date-scheduled, --clear-schedule, --thread, and --broadcast cannot be combined with it", Code: output.ExitGeneral}
+		return &output.Error{Err: "invalid_input", Detail: "--print-payload creates nothing, so --at, --date-scheduled, --clear-schedule, --thread, --broadcast, --file, and --no-files cannot be combined with it", Code: output.ExitGeneral}
 	}
 	return nil
 }
@@ -1517,8 +1596,16 @@ func parseScheduledTime(s string) (int64, error) {
 	return 0, fmt.Errorf("unparseable time: %s", s)
 }
 
+// formatDraft is the row for one draft. file_ids is always an array, empty
+// when the draft has no files. files is present only when the response the
+// draft came from carried file objects for those ids.
 func formatDraft(d draftData) map[string]any {
+	fileIDs := d.FileIDs
+	if fileIDs == nil {
+		fileIDs = []string{}
+	}
 	m := map[string]any{
+		"file_ids":         fileIDs,
 		"id":               d.ID,
 		"client_msg_id":    d.ClientMsgID,
 		"destinations":     d.Destinations,
@@ -1530,6 +1617,9 @@ func formatDraft(d draftData) map[string]any {
 	}
 	if len(d.Attachments) > 0 {
 		m["attachments"] = d.Attachments
+	}
+	if len(d.files) > 0 {
+		m["files"] = d.files
 	}
 	// State flags are emitted only when Slack sent them.
 	for key, v := range map[string]*bool{
