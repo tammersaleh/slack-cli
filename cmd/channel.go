@@ -132,7 +132,7 @@ func (c *ChannelListCmd) Run(cli *CLI) error {
 			// Slack only reports DMs the user has open, and a closed DM is not
 			// unread. Absent means excluded, same as has_unreads=false.
 			state, counted := unread[ch.ID]
-			if c.HasUnread && !(counted && state.HasUnreads) {
+			if c.HasUnread && (!counted || !state.HasUnreads) {
 				continue
 			}
 			if c.Query != "" && !strings.Contains(strings.ToLower(ch.Name), strings.ToLower(c.Query)) {

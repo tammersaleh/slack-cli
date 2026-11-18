@@ -81,7 +81,7 @@ func newChromeTLSTransport(extraCAs *x509.CertPool) *chromeTLSTransport {
 				return nil, err
 			}
 			if conn.ConnectionState().NegotiatedProtocol != "h2" {
-				conn.Close()
+				_ = conn.Close()
 				return nil, errHTTP1Negotiated
 			}
 			return conn, nil
@@ -104,7 +104,7 @@ func (t *chromeTLSTransport) dialTLS(network, addr string) (*utls.UConn, error) 
 
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 
@@ -117,7 +117,7 @@ func (t *chromeTLSTransport) dialTLS(network, addr string) (*utls.UConn, error) 
 
 	uconn := utls.UClient(conn, tlsConfig, utls.HelloChrome_Auto)
 	if err := uconn.Handshake(); err != nil {
-		uconn.Close()
+		_ = uconn.Close()
 		return nil, err
 	}
 

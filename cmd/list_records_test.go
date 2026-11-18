@@ -212,7 +212,7 @@ func richTextPlain(v any) string {
 	for _, blk := range v.([]any) {
 		for _, sec := range blk.(map[string]any)["elements"].([]any) {
 			for _, el := range sec.(map[string]any)["elements"].([]any) {
-				b.WriteString(fmt.Sprint(el.(map[string]any)["text"]))
+				fmt.Fprint(&b, el.(map[string]any)["text"])
 			}
 		}
 	}

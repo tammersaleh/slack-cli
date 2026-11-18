@@ -1,6 +1,9 @@
 [tools]
 go = "1.25"
-"go:github.com/golangci/golangci-lint/cmd/golangci-lint" = "1.64.8"
+# golangci-lint must be built with a Go at least as new as the code. Rebuild it
+# after a Go bump:
+# `mise install --force go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint`.
+"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.15.0"
 # govulncheck is pinned to 1.1.4 because newer releases need Go 1.26.
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.1.4"
 

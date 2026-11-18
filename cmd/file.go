@@ -232,7 +232,7 @@ func (c *FileDownloadCmd) Run(cli *CLI) error {
 
 	cw := &countingWriter{w: f}
 	if err := client.Bot().GetFileContext(ctx, file.URLPrivateDownload, cw); err != nil {
-		f.Close()
+		_ = f.Close()
 		_ = os.Remove(outPath)
 		return cli.ClassifyError(err)
 	}

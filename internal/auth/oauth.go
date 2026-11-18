@@ -48,7 +48,7 @@ func login(ctx context.Context, baseURL, clientID, clientSecret string) (*Worksp
 	if err != nil {
 		return nil, fmt.Errorf("starting callback server: %w", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
@@ -102,7 +102,7 @@ func callbackHandler(expectedState string, codeCh chan<- string, errCh chan<- er
 			if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 				desc := r.URL.Query().Get("error_description")
 				errCh <- fmt.Errorf("oauth error: %s (%s)", errMsg, desc)
-				fmt.Fprint(w, "Authentication failed. You can close this tab.")
+				_, _ = fmt.Fprint(w, "Authentication failed. You can close this tab.")
 				return
 			}
 
@@ -114,7 +114,7 @@ func callbackHandler(expectedState string, codeCh chan<- string, errCh chan<- er
 			}
 
 			codeCh <- code
-			fmt.Fprint(w, "Authentication successful! You can close this tab.")
+			_, _ = fmt.Fprint(w, "Authentication successful! You can close this tab.")
 		})
 	})
 }
@@ -175,7 +175,7 @@ func postForm(ctx context.Context, endpoint string, data url.Values) (map[string
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {

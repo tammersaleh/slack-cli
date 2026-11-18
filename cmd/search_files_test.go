@@ -79,17 +79,18 @@ func TestSearchFiles_Pagination(t *testing.T) {
 		_ = r.ParseForm()
 		page := r.Form.Get("page")
 
-		if page == "" || page == "1" {
+		switch page {
+		case "", "1":
 			_ = json.NewEncoder(w).Encode(searchFilesResponse(
 				[]map[string]any{fileMatch("F01", "page1.pdf", "Page 1", "pdf", "https://acme.slack.com/files/F01")},
 				1, 2, 2,
 			))
-		} else if page == "2" {
+		case "2":
 			_ = json.NewEncoder(w).Encode(searchFilesResponse(
 				[]map[string]any{fileMatch("F02", "page2.pdf", "Page 2", "pdf", "https://acme.slack.com/files/F02")},
 				2, 2, 2,
 			))
-		} else {
+		default:
 			t.Fatalf("unexpected page %q", page)
 		}
 	})

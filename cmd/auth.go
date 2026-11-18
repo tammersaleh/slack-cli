@@ -176,18 +176,18 @@ func printWorkspaceHints(w io.Writer, current, currentOrg string, saved map[stri
 		candidates = orgs
 	}
 
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	if ws, ok := saved[current]; ok && current != "" {
-		fmt.Fprintf(w, "SLACK_WORKSPACE is set to %s  # %s\n", current, ws.TeamName)
+		_, _ = fmt.Fprintf(w, "SLACK_WORKSPACE is set to %s  # %s\n", current, ws.TeamName)
 	} else {
 		if current != "" {
-			fmt.Fprintf(w, "SLACK_WORKSPACE=%s does not match any saved workspace. Set one of:\n", current)
+			_, _ = fmt.Fprintf(w, "SLACK_WORKSPACE=%s does not match any saved workspace. Set one of:\n", current)
 		} else {
-			fmt.Fprintln(w, "Set your default workspace:")
+			_, _ = fmt.Fprintln(w, "Set your default workspace:")
 		}
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 		for _, ws := range candidates {
-			fmt.Fprintf(w, "  export SLACK_WORKSPACE=%s  # %s\n", ws.TeamID, ws.TeamName)
+			_, _ = fmt.Fprintf(w, "  export SLACK_WORKSPACE=%s  # %s\n", ws.TeamID, ws.TeamName)
 		}
 	}
 
@@ -195,23 +195,23 @@ func printWorkspaceHints(w io.Writer, current, currentOrg string, saved map[stri
 	// T-prefixed id there is a real credential but the wrong kind, and the
 	// internal APIs answer team_is_restricted on it.
 	if ws, ok := saved[currentOrg]; ok && isOrgWorkspace(currentOrg) {
-		fmt.Fprintf(w, "SLACK_WORKSPACE_ORG is set to %s  # %s (org)\n", currentOrg, ws.TeamName)
+		_, _ = fmt.Fprintf(w, "SLACK_WORKSPACE_ORG is set to %s  # %s (org)\n", currentOrg, ws.TeamName)
 	} else if currentOrg != "" || len(orgs) > 0 {
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 		if currentOrg != "" {
-			fmt.Fprintf(w, "SLACK_WORKSPACE_ORG=%s does not match any saved org.\n", currentOrg)
+			_, _ = fmt.Fprintf(w, "SLACK_WORKSPACE_ORG=%s does not match any saved org.\n", currentOrg)
 		} else {
-			fmt.Fprintln(w, "Enterprise Grid detected. Internal APIs (saved items, sidebar")
-			fmt.Fprintln(w, "sections) require the org-level token:")
+			_, _ = fmt.Fprintln(w, "Enterprise Grid detected. Internal APIs (saved items, sidebar")
+			_, _ = fmt.Fprintln(w, "sections) require the org-level token:")
 		}
 		if len(orgs) > 0 {
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 			for _, ws := range orgs {
-				fmt.Fprintf(w, "  export SLACK_WORKSPACE_ORG=%s  # %s (org)\n", ws.TeamID, ws.TeamName)
+				_, _ = fmt.Fprintf(w, "  export SLACK_WORKSPACE_ORG=%s  # %s (org)\n", ws.TeamID, ws.TeamName)
 			}
 		}
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 }
 
 type AuthLogoutCmd struct {

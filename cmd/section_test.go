@@ -37,7 +37,7 @@ type sectionStore struct {
 	setCalls []map[string][]string
 	// setHook runs after a successful applySet, under the lock, so a test can
 	// corrupt the stored state and simulate an ok:true that didn't take.
-	setHook func()
+	setHook   func()
 	listCalls int
 	// failListCall, when > 0, makes the Nth users.channelSections.list call
 	// (1-based) answer ok:false with failListErr, so a test can fail the
@@ -446,9 +446,10 @@ func TestSectionChannels(t *testing.T) {
 		_ = r.ParseForm()
 		ch := r.FormValue("channel")
 		name := "unknown"
-		if ch == "C01" {
+		switch ch {
+		case "C01":
 			name = "ext-acme"
-		} else if ch == "C02" {
+		case "C02":
 			name = "ext-globex"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{

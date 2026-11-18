@@ -93,7 +93,7 @@ func TestExtractTokensFromLevelDB(t *testing.T) {
 	if err := db.Put([]byte("localConfig_v2"), configJSON, nil); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	teams, err := extractTokensFromLevelDB(dbPath)
 	if err != nil {
@@ -131,7 +131,7 @@ func TestExtractTokensFromLevelDB_V3(t *testing.T) {
 	if err := db.Put([]byte("localConfig_v3"), configJSON, nil); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	teams, err := extractTokensFromLevelDB(dbPath)
 	if err != nil {

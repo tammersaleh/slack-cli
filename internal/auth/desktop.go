@@ -71,7 +71,7 @@ func DesktopLogin(ctx context.Context, opts DesktopLoginOptions) ([]WorkspaceCre
 	if err != nil {
 		return nil, fmt.Errorf("copying LevelDB: %w", err)
 	}
-	defer os.RemoveAll(tmpDB)
+	defer func() { _ = os.RemoveAll(tmpDB) }()
 
 	status("Extracting tokens...")
 	teams, err := extractTokensFromLevelDB(tmpDB)
@@ -139,7 +139,7 @@ func extractTokensFromLevelDB(dbPath string) (map[string]desktopTeam, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening LevelDB: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var configData []byte
 	iter := db.NewIterator(nil, nil)
@@ -191,13 +191,13 @@ func extractCookie(cookiesPath, password string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("copying cookies DB: %w", err)
 	}
-	defer os.Remove(tmpFile)
+	defer func() { _ = os.Remove(tmpFile) }()
 
 	db, err := sql.Open("sqlite", tmpFile+"?mode=ro")
 	if err != nil {
 		return "", fmt.Errorf("opening cookies DB: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rows, err := db.Query(
 		"SELECT value, encrypted_value FROM cookies WHERE name='d' AND host_key LIKE '%slack.com' ORDER BY length(encrypted_value) DESC",
@@ -205,7 +205,7 @@ func extractCookie(cookiesPath, password string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("querying cookies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var plainValue string
@@ -304,7 +304,7 @@ func validateDesktopCredentials(ctx context.Context, client *http.Client, token,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		OK     bool   `json:"ok"`
@@ -339,11 +339,11 @@ func copyDir(src string) (string, error) {
 	}
 	cmd := exec.Command("cp", "-R", src+"/.", tmp)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp)
 		return "", fmt.Errorf("cp: %s: %w", out, err)
 	}
 	// Remove LOCK file so goleveldb can open it.
-	os.Remove(filepath.Join(tmp, "LOCK"))
+	_ = os.Remove(filepath.Join(tmp, "LOCK"))
 	return tmp, nil
 }
 
@@ -358,10 +358,10 @@ func copyFile(src string) (string, error) {
 		return "", err
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(f.Name())
+		_ = f.Close()
+		_ = os.Remove(f.Name())
 		return "", err
 	}
-	f.Close()
+	_ = f.Close()
 	return f.Name(), nil
 }

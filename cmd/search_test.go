@@ -99,14 +99,15 @@ func TestSearchMessages_Pagination(t *testing.T) {
 		_ = r.ParseForm()
 		page := r.Form.Get("page")
 
-		if page == "" || page == "1" {
+		switch page {
+		case "", "1":
 			_ = json.NewEncoder(w).Encode(searchResponse(
 				[]map[string]any{
 					searchMatch("1709251200.000100", "msg1", "U01", "tammer", "C01", "general", "https://x/p1"),
 				},
 				1, 2, 2,
 			))
-		} else if page == "2" {
+		case "2":
 			_ = json.NewEncoder(w).Encode(searchResponse(
 				[]map[string]any{
 					searchMatch("1709164800.000050", "msg2", "U02", "alice", "C01", "general", "https://x/p2"),
