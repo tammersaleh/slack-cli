@@ -65,7 +65,7 @@ Common errors and their recovery:
 | `section_not_found` | `slack section list` |
 | `thread_not_found` | `slack message list <channel> --has-replies` to find threads |
 | `invalid_timestamp` | RFC 3339, `YYYY-MM-DD`, or raw Slack ts (`1713300000.123456`). Match the `hint`. |
-| `invalid_blocks` / `missing_blocks` | Block Kit JSON on stdin; drafts require only `rich_text` top-level blocks. See draft docs below. A draft with `--file` needs no body. |
+| `invalid_blocks` / `missing_blocks` | Pipe Markdown with `--markdown`, or Block Kit JSON whose top-level blocks are `rich_text`, `header`, or `divider`. See draft docs below. A draft with `--file` needs no body. |
 | `rate_limited` | Exit 3. Pages are retried automatically; if it still fails, resume from `_meta.next_cursor` after a wait. `user info` lookups, internal reads (`section list`, `draft list`, `saved counts`, `channel managers`), the name lookups in `section channels`/`find`, and `section move`/`rename`/`emoji` are retried too. Other single-shot commands (`message get`, `reaction list`, `channel info`, `file info`) and creates and draft and list writes are not: wait (`detail` names Slack's `Retry-After` when it sent one) and rerun. Slack's raw `ratelimited` string is always reported as `rate_limited` |
 | `invalid_cursor` | The cursor is void. Rerun without `--cursor`; a cursor only works for the same command, flags, and workspace that produced it |
 | `search_page_limit` / `file_page_limit` | The run asked for a page above 100, the last one Slack serves (10,000 results at `--limit 100`). Terminal, no cursor. Search: split the query with `before:`/`after:` and run each window with `--all --limit 100`. `file list`: narrow with `--channel`, `--user`, or `--types` |
@@ -109,7 +109,7 @@ is rejected as `invalid_input`.
 ### Messages
 
 ```
-slack message list <channel> [--limit N] [--after TS] [--before TS] [--has-replies] [--has-reactions]
+slack message list <channel> [--limit N] [--all] [--cursor C] [--after TS] [--before TS] [--unread] [--has-replies] [--has-reactions]
 slack message get <channel> <ts>...
 slack message get <message-url>...
 slack message permalink <channel> <ts>...
@@ -296,9 +296,9 @@ slack user info [--full] <user>...
 slack user manager-chain [--manager-field LABEL] <user>...
 ```
 
-User arguments accept IDs (`U...`), emails, or `@name` (display
-name, username, or real name). On Enterprise Grid with a session
-token, email lookup may fail - prefer `@name` there.
+User arguments accept IDs (`U...`), emails, or `@name` (handle, display
+name, or real name). See Channel and User Resolution for how a shared
+name is settled and when an email lookup can fail.
 
 Use `--full` whenever you need to know anything about a person beyond
 their name. Plain `slack user info` returns `profile.fields: []` - it does
@@ -465,8 +465,8 @@ section has `"name":""`.
 ### Drafts (requires session token)
 
 Stage unsent messages. The CLI never sends - the human sends from the
-Slack app. Block Kit JSON is piped on stdin; there is no plain-text
-shortcut.
+Slack app. The body is piped on stdin: Markdown with `--markdown`
+(preferred), or Block Kit JSON.
 
 ```
 slack draft list [--include-sent] [--include-deleted] [--limit N]
@@ -514,7 +514,7 @@ to see whether the draft exists before retrying, or the retry uploads a
 second copy. The CLI cannot delete a file. Tell the user about any id the
 `detail` names.
 
-Checked in Slack Desktop 2026-11-16 on drafts staged by 6.0.0 in a self-DM: a text draft with a PDF and a txt file, and a file-only draft (the panel shows it as "No message"), both stayed in the open Drafts panel with their file icons, and both sent as messages carrying their files.
+The Drafts panel shows a file-only draft as "No message" with its file icons. It sends as a message carrying the files.
 
 `draft list` prints the drafts that are neither sent nor deleted, most
 recently updated first, including ones older than Slack's 100-draft page. The
@@ -631,21 +631,13 @@ with its handle or ID. If the row carries `deleted: true`, the account is
 deactivated: do not mention it. `draft create` stages a `<@Uxxx>` mention as
 written without checking the account.
 
-Verified live 2026-10-16 through the drafts API: every construct above round-trips
-through `drafts.create` and `drafts.list` byte for byte and survives the
-reconciliation window; header blocks the same way on 2026-11-06 (a
-header-only draft and a header / rich_text / header mix, alive after 60s);
-divider blocks too (a divider-only draft and a divider / rich_text / divider
-/ divider / header / divider mix, alive after 100s; Desktop rendering of
-dividers is pending a check).
-Desktop compose box, inspected 2026-11-06: headings render at three sizes,
-`level` 4 as the small heading, `:emoji:` in a header as the emoji, and a
-paragraph before a header looks the same with or without its trailing `\n`.
-Desktop compose-box rendering of italic/strike,
-unbordered ordered-list `offset` (bordered: rendered `1.`, 2026-11-03), and
-whether the trailing `\n` between two paragraphs shows as a blank line or a
-single line break was not inspected by the CLI author; check the draft in
-the client the first time you rely on one of those.
+Every construct above is stored by Slack exactly as converted and survives
+in the Drafts panel. In the Desktop compose box, headings render at three
+sizes and `:emoji:` in a heading renders as the emoji. Four renderings were
+never inspected: dividers, italic and strike, the start number of an
+unquoted ordered list, and whether the `\n` between two paragraphs shows as
+a blank line or a single line break. Check the draft in the client the
+first time you rely on one of those.
 
 #### Block Kit for drafts
 
@@ -662,7 +654,7 @@ is the composer's own heading shape and a `divider` its horizontal rule:
 
 `level` 1, 2, 3 are the composer's big, medium, and small headings; the
 API also stores an omitted level and a higher one, which Desktop renders as
-the small heading (inspected 2026-11-06).
+the small heading.
 `text` must be `plain_text` with non-empty text - `mrkdwn` and an empty
 string are `invalid_message` server-side, so the CLI rejects them locally.
 A `divider` needs only its `type`. A draft needs renderable content: at
@@ -708,9 +700,7 @@ the rejection less surprising and discourages bypassing the CLI:
   the user sees only the rich_text, header, and divider content.
   Section-only or context-only arrays - i.e. no rich_text, header, or
   divider at all - get tombstoned by the reconciliation pass within
-  seconds, same mechanism as the previous bullet. (`divider` was in
-  this list until 2026-11-06, when the composer was observed emitting
-  it.)
+  seconds, same mechanism as the previous bullet.
 - **Multiple top-level `rich_text` blocks expecting paragraph
   breaks between them**: Desktop flattens adjacent rich_text blocks
   into one before rendering. Emit one `rich_text` block per run of
@@ -718,8 +708,7 @@ the rejection less surprising and discourages bypassing the CLI:
   there are neither); use multiple inner containers (`rich_text_section`,
   `rich_text_list`, `rich_text_preformatted`, `rich_text_quote`) for
   structure. A `header` between two rich_text blocks is a boundary: the
-  section terminator rule below does not apply across one (inspected
-  2026-11-06).
+  section terminator rule below does not apply across one.
 - **`rich_text_section` whose text doesn't end with `\n`
   directly followed by `rich_text_list`,
   `rich_text_preformatted`, or `rich_text_quote`**:
@@ -731,9 +720,8 @@ the rejection less surprising and discourages bypassing the CLI:
   `{"type":"text","text":"\n"}`, or grow the last
   text element). The check spans adjacent rich_text blocks, because
   Desktop flattens them first, but a `header` between them resets it.
-  A `divider` between them does not (yet): whether Desktop treats a
-  divider as a boundary is pending a check, so terminate the section
-  with `\n` before a divider too.
+  A `divider` between them does not: terminate the section with `\n`
+  before a divider too.
 
 ##### rich_text (structured)
 
@@ -994,8 +982,9 @@ terminator rule above).
 The CLI checks: non-empty JSON array; every top-level block is a
 `rich_text`, a `header`, or a `divider`; a `header` has `plain_text` text
 that is non-empty and, when `level` is present, an integer of at least 1;
-a `divider` needs only its `type`; at least one `rich_text` has a non-empty
-`elements` array or a `header` or `divider` is present;
+a `divider` needs only its `type`; the draft has renderable content (a
+`rich_text` with a non-empty `elements` array, a `header`, a `divider`, a
+table attachment, or a `--file`);
 and a `rich_text_section`
 directly preceding `rich_text_list`, `rich_text_preformatted`,
 or `rich_text_quote` must terminate with a text inline whose
@@ -1031,8 +1020,8 @@ Compose commands to solve typical agent tasks. Use `jq` to thread IDs between st
 ### Find a user, get their recent messages in a channel
 
 ```
-UID=$(slack user info @alice | jq -r 'select(._meta == null) | .id')
-slack message list '#general' --limit 50 | jq -c "select(.user == \"$UID\")"
+USER_ID=$(slack user info @alice | jq -r 'select(._meta == null) | .id')
+slack message list '#general' --limit 50 | jq -c --arg u "$USER_ID" 'select(.user == $u)'
 ```
 
 ### Find a thread by content and read the whole thread
@@ -1048,14 +1037,9 @@ slack thread list "$PERMA"
 ### Stage a draft reply to a message you found
 
 ```
-HIT=$(slack search messages "deploy blocker in:#ext-acme" --limit 1 | jq -c 'select(._meta == null)')
-CH=$(echo "$HIT" | jq -r '.channel.id')
-TS=$(echo "$HIT" | jq -r '.ts')
-cat <<JSON | slack draft create "$CH" --thread "$TS"
-[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
-  {"type":"text","text":"Noted - following up by Friday."}
-]}]}]
-JSON
+read -r CH TS < <(slack search messages "deploy blocker in:#ext-acme" --limit 1 \
+  | jq -r 'select(._meta == null) | "\(.channel.id) \(.ts)"')
+echo 'Noted - following up by Friday.' | slack draft create "$CH" --thread "$TS" --markdown
 ```
 
 ### Find a 1:1 DM channel with a user
@@ -1064,8 +1048,8 @@ DMs come back with `user` set to the other party's user ID and an
 empty `name`. Resolve the user, then match:
 
 ```
-UID=$(slack user info @alice --fields id | jq -r 'select(._meta == null) | .id')
-CH=$(slack channel list --type im --all | jq -r --arg u "$UID" 'select(.user == $u) | .id')
+USER_ID=$(slack user info @alice --fields id | jq -r 'select(._meta == null) | .id')
+CH=$(slack channel list --type im --all | jq -r --arg u "$USER_ID" 'select(.user == $u) | .id')
 ```
 
 ### Recover from a `channel_not_found`
@@ -1094,7 +1078,7 @@ markdown in chat so they can read it. One TSV block is one table. Keep emoji and
 wide glyphs in the last column. Never stage or post it yourself.
 
 ```
-printf 'Person\tCount\nWilly\t3\n' | pbcopy && pbpaste | cat -A
+printf 'Person\tCount\nWilly\t3\n' | pbcopy && pbpaste | cat -vet   # tabs show as ^I
 ```
 
 ## Enrichment
@@ -1145,12 +1129,12 @@ a third of the way through.
 
 ## Channel and User Resolution
 
-Prefer URLs (see Inputs at the top of Commands). When you don't have a link,
+Prefer URLs (see the top of Commands). When you don't have a link,
 every channel/user argument also accepts:
 
 - Channels: `C…`/`G…`/`D…` IDs, `#name` or bare `name`, a channel link, or a
   message permalink (resolves to its channel).
-- Users: `U…` IDs, emails, `@display-name`, or a profile link.
+- Users: `U…` IDs, emails, `@name` (handle, display name, or real name), or a profile link.
 
 Channel types (`--type` flag on `slack channel list`):
 
