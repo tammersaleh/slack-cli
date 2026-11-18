@@ -409,6 +409,16 @@ Test helpers call `isolateTestEnv(t)` (in `cmd/channel_test.go`) to clear worksp
 
 For functions only accessible within `package cmd` (like `padDraftTS`), put unit tests in a file that uses `package cmd` rather than `package cmd_test` - see `cmd/padding_test.go` for the pattern.
 
+Go is 1.27 (`.mise.toml`, `go.mod`). golangci-lint is v2 with its default linters and no config file, so errcheck applies to tests too. mise builds golangci-lint and govulncheck with the pinned Go. After a Go bump, rebuild both with `mise install --force` or they cannot read the new standard library.
+
+Every build uses the `http2legacy` build tag. On Go 1.27, x/net reimplements `http2.Transport` on top of net/http, and the tag keeps x/net's own HTTP/2 client, the one the Chrome TLS transport was verified against Slack with. `.mise.toml` sets `GOFLAGS=-tags=http2legacy` for build, test, lint, and govulncheck, and mise-action exports it in CI. `.goreleaser.yml` sets the tag again for the release. A bare `go build` or `go test` outside mise compiles the other implementation, so use `mise run` or `mise exec`. Check a binary with `go version -m ./slack`. Removing the tag is part of moving the transport to net/http.
+
+Dependabot ignores `golang.org/x/net`, because a newer x/net may drop the legacy implementation and the tag would then do nothing, with no error. Bump x/net by hand. govulncheck in `verify` fails the release when a called x/net vulnerability appears, and that is the signal to bump. Another module's bump can still raise x/net through its own requirement. `TestHTTP2LegacyImplementation` (internal/api/http2legacy_test.go) catches that: it fails when the tests were built without the tag, or when x/net under the tag no longer compiles `transport.go`. It runs in `mise run test`, so it fails `verify` and blocks the release. A bare `go test ./...` without `-tags http2legacy` fails it on purpose. The same check by hand:
+
+```bash
+mise exec -- go list -deps -f '{{if eq .ImportPath "golang.org/x/net/http2"}}{{.GoFiles}}{{end}}' ./cmd/slack
+```
+
 ## Git
 
 This is a personal project. The workflow is entirely local: commit

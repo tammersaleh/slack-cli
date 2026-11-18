@@ -10,6 +10,9 @@ builds:
     binary: slack
     env:
       - CGO_ENABLED=0
+    # Keeps x/net's own HTTP/2 client on Go 1.27. See GOFLAGS in .mise.toml.
+    tags:
+      - http2legacy
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     ldflags:

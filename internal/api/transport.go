@@ -58,7 +58,7 @@ func (t *slackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 type chromeTLSTransport struct {
 	extraCAs *x509.CertPool
 	h1       *http.Transport
-	h2       *http2.Transport
+	h2       *http2.Transport //nolint:staticcheck // SA1019: deprecated in x/net 0.60.0, needed until the transport moves to net/http
 }
 
 // errHTTP1Negotiated signals that the TLS handshake negotiated http/1.1
@@ -74,8 +74,8 @@ func newChromeTLSTransport(extraCAs *x509.CertPool) *chromeTLSTransport {
 	// If the server picks http/1.1 via ALPN we reject the conn here, so
 	// http2 never tries to frame a request over it; the caller falls back
 	// to h1.
-	t.h2 = &http2.Transport{
-		DialTLSContext: func(_ context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+	t.h2 = &http2.Transport{ //nolint:staticcheck // SA1019: deprecated in x/net 0.60.0, needed until the transport moves to net/http
+		DialTLSContext: func(_ context.Context, network, addr string, _ *tls.Config) (net.Conn, error) { //nolint:staticcheck // SA1019: deprecated in x/net 0.60.0, needed until the transport moves to net/http
 			conn, err := t.dialTLS(network, addr)
 			if err != nil {
 				return nil, err
@@ -131,7 +131,7 @@ func (t *chromeTLSTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 	// Prefer h2: the transport pools ClientConns per host, so repeated
 	// requests to slack.com reuse the same HTTP/2 multiplexed connection.
-	resp, err := t.h2.RoundTrip(req)
+	resp, err := t.h2.RoundTrip(req) //nolint:staticcheck // SA1019: deprecated in x/net 0.60.0, needed until the transport moves to net/http
 	if err == nil {
 		return resp, nil
 	}

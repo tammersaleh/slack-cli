@@ -1,11 +1,19 @@
 [tools]
-go = "1.25"
+go = "1.27"
 # golangci-lint must be built with a Go at least as new as the code. Rebuild it
 # after a Go bump:
 # `mise install --force go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint`.
 "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.15.0"
-# govulncheck is pinned to 1.1.4 because newer releases need Go 1.26.
-"go:golang.org/x/vuln/cmd/govulncheck" = "1.1.4"
+# govulncheck must run on the Go above so it scans that standard library.
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+
+# x/net 0.60.0 on Go 1.27 reimplements http2.Transport on top of net/http.
+# http2legacy keeps x/net's own HTTP/2 client, the one the Chrome TLS transport
+# was verified against Slack with. mise exports GOFLAGS to its tasks and, through
+# mise-action, to every later CI step, so build, test, lint, and govulncheck
+# compile the same files. .goreleaser.yml sets the tag again for the release.
+[env]
+GOFLAGS = "-tags=http2legacy"
 
 [tasks.build]
 description = "Build the slack binary"

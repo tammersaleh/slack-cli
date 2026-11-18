@@ -15,6 +15,10 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # The release builds with the http2legacy tag. A newer x/net may drop the legacy
+      # implementation, and the tag would then do nothing. Bump x/net by hand and rerun
+      # the go list check in CLAUDE.md.
+      - dependency-name: golang.org/x/net
     commit-message:
       # The Go dependency ships in the binary, so a bump is a patch release.
       prefix: fix(deps)

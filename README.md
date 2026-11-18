@@ -13,7 +13,7 @@ brew install tammersaleh/tap/tammersaleh-slack-cli
 Or from source (any platform):
 
 ```bash
-go install github.com/tammersaleh/slack-cli/cmd/slack@latest
+go install -tags http2legacy github.com/tammersaleh/slack-cli/cmd/slack@latest
 ```
 
 ## Agent skill
