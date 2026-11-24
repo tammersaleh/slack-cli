@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.0.1](https://github.com/tammersaleh/slack-cli/compare/v6.0.0...v6.0.1) (2026-11-24)
+
+
+### Bug Fixes
+
+* build with Go 1.27 ([1caa25d](https://github.com/tammersaleh/slack-cli/commit/1caa25df292ebdedfa86d8f02f68d7bbdb82c027))
+
 ## [6.0.0](https://github.com/tammersaleh/slack-cli/compare/v5.13.1...v6.0.0) (2026-11-16)
 
 
