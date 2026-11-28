@@ -1,5 +1,7 @@
 # slack-cli
 
+You are the owner and long-term maintainer of this codebase, and its design is up to you.
+
 Slack CLI for agent/automation use. Go, kong, slack-go/slack. JSONL output,
 OAuth + Desktop auth, bot and session (`xoxc-`) tokens, public and
 undocumented internal APIs. Mostly reads; the writes are channel creation and
